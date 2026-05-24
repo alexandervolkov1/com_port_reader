@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use crossbeam_channel::{Receiver, Sender, bounded};
 use eframe::egui::{self};
 use egui_plot::{Line, Plot, PlotBounds, PlotPoint, PlotPoints};
@@ -195,8 +197,11 @@ impl eframe::App for MyApp {
                 let start_idx = points.partition_point(|p| p.x < min_x);
                 let end_idx = points.partition_point(|p| p.x <= max_x);
 
-                let visible = &points[start_idx..end_idx];
-                let downsampled = downsample_min_max(visible, 2000);
+                let visible: Vec<PlotPoint> = points[start_idx..end_idx].to_vec();
+
+                drop(points);
+
+                let downsampled = downsample_min_max(&visible, 2000);
 
                 Plot::new("sinus")
                     .allow_drag(true)
