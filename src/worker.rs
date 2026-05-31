@@ -6,7 +6,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -46,6 +46,11 @@ impl Worker {
                 if now >= next_poll {
                     let delta_t = start_time.elapsed().as_secs_f64();
 
+                    let timestamp = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs_f64();
+
                     let sinus_sum: f64 = (1..=10_000)
                         .step_by(2)
                         .map(|i| {
@@ -56,7 +61,7 @@ impl Worker {
 
                     if let Ok(mut points) = points.lock() {
                         points.push(PlotPoint {
-                            x: delta_t,
+                            x: timestamp,
                             y: sinus_sum,
                         });
                     }

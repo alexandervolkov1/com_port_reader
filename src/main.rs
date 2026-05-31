@@ -108,10 +108,11 @@ impl eframe::App for MyApp {
                 ui.label(format!("{}", points.len()));
 
                 let latest_x = points.last().map(|p| p.x).unwrap_or(0.0);
+                let first_x = points.first().map(|p| p.x).unwrap_or(0.0);
 
                 let (min_x, max_x) = if self.follow_latest {
-                    if latest_x < WINDOW_SECONDS {
-                        (0.0, latest_x.max(1.0))
+                    if latest_x - first_x < WINDOW_SECONDS {
+                        (first_x, latest_x.max(1.0))
                     } else {
                         (latest_x - WINDOW_SECONDS, latest_x)
                     }
