@@ -136,11 +136,11 @@ impl eframe::App for MyApp {
                         let span = input.bounds.1 - input.bounds.0;
 
                         if span < 60.0 {
-                            [10.0, 5.0, 1.0]
-                        } else if span < 3600.0 {
-                            [600.0, 60.0, 10.0]
+                            [30.0, 10.0, 5.0]
+                        } else if span < 600.0 {
+                            [300.0, 60.0, 30.0]
                         } else {
-                            [3600.0, 600.0, 60.0]
+                            [1800.0, 1200.0, 600.0]
                         }
                     }))
                     .x_axis_formatter(|mark, _range| {
