@@ -107,12 +107,12 @@ impl eframe::App for MyApp {
             if let Ok(points) = self.points.lock() {
                 ui.label(format!("{}", points.len()));
 
-                let latest_x = points.last().map(|p| p.x).unwrap_or(0.0);
                 let first_x = points.first().map(|p| p.x).unwrap_or(0.0);
+                let latest_x = points.last().map(|p| p.x).unwrap_or(10.0);
 
                 let (min_x, max_x) = if self.follow_latest {
                     if latest_x - first_x < WINDOW_SECONDS {
-                        (first_x, latest_x.max(1.0))
+                        (first_x, latest_x)
                     } else {
                         (latest_x - WINDOW_SECONDS, latest_x)
                     }
@@ -132,6 +132,15 @@ impl eframe::App for MyApp {
                 Plot::new("sinus")
                     .allow_drag(true)
                     .allow_zoom(true)
+                    .x_axis_formatter(|mark, _range| {
+                        let seconds = mark.value as i64;
+
+                        let time_mark = chrono::DateTime::from_timestamp(seconds, 0)
+                            .unwrap()
+                            .with_timezone(&chrono::Local);
+
+                        time_mark.format("%H:%M:%S").to_string()
+                    })
                     .show(ui, |plot_ui| {
                         if self.follow_latest {
                             plot_ui.set_plot_bounds(PlotBounds::from_min_max(
