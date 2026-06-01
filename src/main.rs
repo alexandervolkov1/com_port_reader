@@ -2,7 +2,7 @@
 
 use crossbeam_channel::{Receiver, Sender, bounded};
 use eframe::egui::{self};
-use egui_plot::{Line, Plot, PlotBounds, PlotPoint, PlotPoints};
+use egui_plot::{Line, Plot, PlotBounds, PlotPoint, PlotPoints, uniform_grid_spacer};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -132,6 +132,17 @@ impl eframe::App for MyApp {
                 Plot::new("sinus")
                     .allow_drag(true)
                     .allow_zoom(true)
+                    .x_grid_spacer(uniform_grid_spacer(|input| {
+                        let span = input.bounds.1 - input.bounds.0;
+
+                        if span < 60.0 {
+                            [10.0, 5.0, 1.0]
+                        } else if span < 3600.0 {
+                            [600.0, 60.0, 10.0]
+                        } else {
+                            [3600.0, 600.0, 60.0]
+                        }
+                    }))
                     .x_axis_formatter(|mark, _range| {
                         let seconds = mark.value as i64;
 
