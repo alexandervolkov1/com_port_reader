@@ -4,7 +4,7 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 use eframe::egui::{self};
 use egui_plot::{Line, Plot, PlotBounds, PlotPoint, PlotPoints, uniform_grid_spacer};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 mod worker;
 
@@ -107,8 +107,11 @@ impl eframe::App for MyApp {
             if let Ok(points) = self.points.lock() {
                 ui.label(format!("{}", points.len()));
 
-                let first_x = points.first().map(|p| p.x).unwrap_or(0.0);
-                let latest_x = points.last().map(|p| p.x).unwrap_or(10.0);
+                let first_x = points.first().map(|p| p.x).unwrap_or(current_time_f64());
+                let latest_x = points
+                    .last()
+                    .map(|p| p.x)
+                    .unwrap_or(current_time_f64() + 60.0);
 
                 let (min_x, max_x) = if self.follow_latest {
                     if latest_x - first_x < WINDOW_SECONDS {
@@ -135,12 +138,12 @@ impl eframe::App for MyApp {
                     .x_grid_spacer(uniform_grid_spacer(|input| {
                         let span = input.bounds.1 - input.bounds.0;
 
-                        if span < 60.0 {
-                            [30.0, 10.0, 5.0]
-                        } else if span < 600.0 {
+                        if span < 600.0 {
+                            [60.0, 10.0, 1.0]
+                        } else if span < 1800.0 {
                             [300.0, 60.0, 30.0]
                         } else {
-                            [1800.0, 1200.0, 600.0]
+                            [1800.0, 600.0, 60.0]
                         }
                     }))
                     .x_axis_formatter(|mark, _range| {
@@ -229,4 +232,11 @@ fn downsample_min_max(points: &[PlotPoint], target_points: usize) -> Vec<PlotPoi
     }
 
     result
+}
+
+fn current_time_f64() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
 }
