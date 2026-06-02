@@ -1,8 +1,8 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::{Receiver, Sender};
 use eframe::egui::{self};
-use egui_plot::{Line, Plot, PlotBounds, PlotPoint, PlotPoints, uniform_grid_spacer};
+use egui_plot::{Line, Plot, PlotBounds, PlotPoint, PlotPoints};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -19,9 +19,8 @@ fn main() -> eframe::Result<()> {
 }
 
 struct MyApp {
-    command_buffer: String,
-
     points: Arc<Mutex<Vec<PlotPoint>>>,
+    worker: worker::Worker,
 
     command_sender: Sender<String>,
     command_receiver: Receiver<String>,
@@ -29,35 +28,31 @@ struct MyApp {
     response_sender: Sender<String>,
     response_receiver: Receiver<String>,
 
+    command_buffer: String,
     last_response: String,
 
     follow_latest: bool,
     last_plot_x: f64,
-
-    worker: worker::Worker,
 }
 
 impl MyApp {
     fn new() -> Self {
-        let (command_sender, command_receiver) = bounded(32);
-        let (response_sender, response_receiver) = bounded(32);
+        let (command_sender, command_receiver) = crossbeam_channel::bounded(32);
+        let (response_sender, response_receiver) = crossbeam_channel::bounded(32);
         Self {
-            command_buffer: String::new(),
-
             points: Arc::new(Mutex::new(Vec::new())),
+            worker: worker::Worker::new(),
 
             command_sender,
             command_receiver,
-
             response_sender,
             response_receiver,
 
+            command_buffer: String::new(),
             last_response: String::new(),
 
             follow_latest: true,
             last_plot_x: 0.0,
-
-            worker: worker::Worker::new(),
         }
     }
 }
@@ -135,7 +130,7 @@ impl eframe::App for MyApp {
                 Plot::new("sinus")
                     .allow_drag(true)
                     .allow_zoom(true)
-                    .x_grid_spacer(uniform_grid_spacer(|input| {
+                    .x_grid_spacer(egui_plot::uniform_grid_spacer(|input| {
                         let span = input.bounds.1 - input.bounds.0;
 
                         if span < 600.0 {
@@ -155,6 +150,17 @@ impl eframe::App for MyApp {
 
                         time_mark.format("%H:%M:%S").to_string()
                     })
+                    .label_formatter(|_s, val| {
+                        let seconds = val.x as i64;
+
+                        let time_mark = chrono::DateTime::from_timestamp(seconds, 0)
+                            .unwrap()
+                            .with_timezone(&chrono::Local)
+                            .format("%H:%M:%S")
+                            .to_string();
+
+                        format!("{}\n{:.1}", time_mark, val.y)
+                    })
                     .show(ui, |plot_ui| {
                         if self.follow_latest {
                             plot_ui.set_plot_bounds(PlotBounds::from_min_max(
@@ -163,7 +169,7 @@ impl eframe::App for MyApp {
                             ));
                         }
 
-                        plot_ui.line(Line::new("sinus", PlotPoints::Owned(downsampled)));
+                        plot_ui.line(Line::new("sinus", PlotPoints::Owned(downsampled)).width(4.0));
 
                         let bounds = plot_ui.plot_bounds();
 
