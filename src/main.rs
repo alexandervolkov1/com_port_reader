@@ -141,25 +141,9 @@ impl eframe::App for MyApp {
                             [1800.0, 600.0, 60.0]
                         }
                     }))
-                    .x_axis_formatter(|mark, _range| {
-                        let seconds = mark.value as i64;
-
-                        let time_mark = chrono::DateTime::from_timestamp(seconds, 0)
-                            .unwrap()
-                            .with_timezone(&chrono::Local);
-
-                        time_mark.format("%H:%M:%S").to_string()
-                    })
+                    .x_axis_formatter(|mark, _range| mark_for_timestamp(mark.value))
                     .label_formatter(|_s, val| {
-                        let seconds = val.x as i64;
-
-                        let time_mark = chrono::DateTime::from_timestamp(seconds, 0)
-                            .unwrap()
-                            .with_timezone(&chrono::Local)
-                            .format("%H:%M:%S")
-                            .to_string();
-
-                        format!("{}\n{:.1}", time_mark, val.y)
+                        format!("{}\n{:.1}", mark_for_timestamp(val.x), val.y)
                     })
                     .show(ui, |plot_ui| {
                         if self.follow_latest {
@@ -171,9 +155,7 @@ impl eframe::App for MyApp {
 
                         plot_ui.line(Line::new("sinus", PlotPoints::Owned(downsampled)).width(4.0));
 
-                        let bounds = plot_ui.plot_bounds();
-
-                        self.last_plot_x = bounds.min()[0];
+                        self.last_plot_x = plot_ui.plot_bounds().min()[0];
 
                         let response = plot_ui.response();
 
@@ -238,6 +220,14 @@ fn downsample_min_max(points: &[PlotPoint], target_points: usize) -> Vec<PlotPoi
     }
 
     result
+}
+
+fn mark_for_timestamp(timestamp: f64) -> String {
+    chrono::DateTime::from_timestamp(timestamp as i64, 0)
+        .unwrap()
+        .with_timezone(&chrono::Local)
+        .format("%H:%M:%S")
+        .to_string()
 }
 
 fn current_time_f64() -> f64 {
