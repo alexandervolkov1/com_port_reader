@@ -6,6 +6,8 @@ use egui_plot::{Line, Plot, PlotBounds, PlotPoint, PlotPoints};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::worker::Signal;
+
 mod worker;
 
 const WINDOW_SECONDS: f64 = 3600.0;
@@ -22,8 +24,8 @@ struct MyApp {
     points: Arc<Mutex<Vec<PlotPoint>>>,
     worker: worker::Worker,
 
-    command_sender: Sender<String>,
-    command_receiver: Receiver<String>,
+    command_sender: Sender<Signal>,
+    command_receiver: Receiver<Signal>,
 
     response_sender: Sender<String>,
     response_receiver: Receiver<String>,
@@ -89,11 +91,15 @@ impl eframe::App for MyApp {
                 let response = ui.text_edit_singleline(&mut self.command_buffer);
 
                 if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    if !self.command_buffer.is_empty() {
-                        let _ = self.command_sender.send(self.command_buffer.clone());
-                        self.command_buffer.clear();
-                    }
-                    response.request_focus();
+                    match Signal::from_string(self.command_buffer.clone().as_str()) {
+                        Ok(signal) => {
+                            let _ = self.command_sender.send(signal);
+                            self.command_buffer.clear();
+                        }
+                        Err(e) => {
+                            self.command_buffer.clear();
+                        }
+                    };
                 }
             });
 
