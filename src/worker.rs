@@ -1,6 +1,7 @@
 use crossbeam_channel::{Receiver, Sender};
 use egui_plot::PlotPoint;
 use std::f64::consts::PI;
+use std::fmt::Display;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -14,21 +15,21 @@ const POLL_INTERVAL: Duration = Duration::from_millis(100);
 pub enum Signal {
     SineWave {
         amplitude: f64,
-        frequency: f64,
+        period: f64,
         phase: f64,
     },
     SquareWave {
         amplitude: f64,
-        frequency: f64,
+        period: f64,
         duty_cycle: f64,
     },
     TriangleWave {
         amplitude: f64,
-        frequency: f64,
+        period: f64,
     },
     SawtoothWave {
         amplitude: f64,
-        frequency: f64,
+        period: f64,
     },
     Constant {
         value: f64,
@@ -39,7 +40,7 @@ impl Default for Signal {
     fn default() -> Self {
         Signal::SineWave {
             amplitude: (100.0),
-            frequency: (50.0),
+            period: (50.0),
             phase: (0.0),
         }
     }
@@ -56,18 +57,18 @@ impl Signal {
         match tokens[0].to_lowercase().as_str() {
             "sin" | "sine" => {
                 let amplitude = parse_parameter(tokens.get(1), 100.0)?;
-                let frequency = parse_parameter(tokens.get(2), 50.0)?;
+                let period = parse_parameter(tokens.get(2), 50.0)?;
                 let phase = parse_parameter(tokens.get(3), 0.0)?;
 
                 Ok(Signal::SineWave {
                     amplitude,
-                    frequency,
+                    period,
                     phase,
                 })
             }
             "square" | "sq" => {
                 let amplitude = parse_parameter(tokens.get(1), 100.0)?;
-                let frequency = parse_parameter(tokens.get(2), 1.0)?;
+                let period = parse_parameter(tokens.get(2), 1.0)?;
                 let duty_cycle = parse_parameter(tokens.get(3), 0.5)?;
 
                 if duty_cycle < 0.0 || duty_cycle > 1.0 {
@@ -76,27 +77,21 @@ impl Signal {
 
                 Ok(Signal::SquareWave {
                     amplitude,
-                    frequency,
+                    period,
                     duty_cycle,
                 })
             }
             "triangle" | "tri" => {
                 let amplitude = parse_parameter(tokens.get(1), 100.0)?;
-                let frequency = parse_parameter(tokens.get(2), 1.0)?;
+                let period = parse_parameter(tokens.get(2), 1.0)?;
 
-                Ok(Signal::TriangleWave {
-                    amplitude,
-                    frequency,
-                })
+                Ok(Signal::TriangleWave { amplitude, period })
             }
             "saw" | "sawtooth" => {
                 let amplitude = parse_parameter(tokens.get(1), 100.0)?;
-                let frequency = parse_parameter(tokens.get(2), 1.0)?;
+                let period = parse_parameter(tokens.get(2), 1.0)?;
 
-                Ok(Signal::SawtoothWave {
-                    amplitude,
-                    frequency,
-                })
+                Ok(Signal::SawtoothWave { amplitude, period })
             }
             "const" | "constant" => {
                 let value = parse_parameter(tokens.get(1), 0.0)?;
@@ -108,45 +103,39 @@ impl Signal {
     }
 }
 
-impl std::fmt::Debug for Signal {
+impl Display for Signal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Signal::SineWave {
                 amplitude,
-                frequency,
+                period,
                 phase,
             } => {
                 write!(
                     f,
-                    "SineWave(amp={}, freq={}, phase={})",
-                    amplitude, frequency, phase
+                    "SineWave(amp={}, period={}, phase={})",
+                    amplitude, period, phase
                 )
             }
             Signal::SquareWave {
                 amplitude,
-                frequency,
+                period,
                 duty_cycle,
             } => {
                 write!(
                     f,
-                    "SquareWave(amp={}, freq={}, duty={})",
-                    amplitude, frequency, duty_cycle
+                    "SquareWave(amp={}, period={}, duty={})",
+                    amplitude, period, duty_cycle
                 )
             }
-            Signal::TriangleWave {
-                amplitude,
-                frequency,
-            } => {
-                write!(f, "TriangleWave(amp={}, freq={})", amplitude, frequency)
+            Signal::TriangleWave { amplitude, period } => {
+                write!(f, "TriangleWave(amp={}, period={})", amplitude, period)
             }
-            Signal::SawtoothWave {
-                amplitude,
-                frequency,
-            } => {
-                write!(f, "SawtootWave(amp={}, freq={})", amplitude, frequency)
+            Signal::SawtoothWave { amplitude, period } => {
+                write!(f, "SawtoothWave(amp={}, period={})", amplitude, period)
             }
             Signal::Constant { value } => {
-                write!(f, "SawtootWave(val={})", value)
+                write!(f, "Constant(val={})", value)
             }
         }
     }
@@ -221,7 +210,7 @@ impl Worker {
                     Ok(new_signal) => {
                         if let Ok(mut signal) = current_signal.lock() {
                             *signal = new_signal.clone();
-                            let response = format!("Signal changed to: {:?}", new_signal);
+                            let response = format!("Signal changed to: {}", new_signal);
 
                             let _ = response_sender.send(response);
                         }
@@ -252,15 +241,14 @@ fn calculate_signal_value(signal: &Signal, t: f64) -> f64 {
     match signal {
         Signal::SineWave {
             amplitude,
-            frequency,
+            period,
             phase,
-        } => amplitude * (2.0 * PI * frequency * t + phase).sin(),
+        } => amplitude * (2.0 * PI / period * t + phase).sin(),
         Signal::SquareWave {
             amplitude,
-            frequency,
+            period,
             duty_cycle,
         } => {
-            let period = 1.0 / frequency;
             let t_mod = t % period;
             if t_mod < period * duty_cycle {
                 *amplitude
@@ -268,11 +256,7 @@ fn calculate_signal_value(signal: &Signal, t: f64) -> f64 {
                 -(*amplitude)
             }
         }
-        Signal::TriangleWave {
-            amplitude,
-            frequency,
-        } => {
-            let period = 1.0 / frequency;
+        Signal::TriangleWave { amplitude, period } => {
             let t_mod = t % period;
             let normalized = t_mod / period;
             let value = if normalized < 0.5 {
@@ -282,11 +266,7 @@ fn calculate_signal_value(signal: &Signal, t: f64) -> f64 {
             };
             amplitude * value
         }
-        Signal::SawtoothWave {
-            amplitude,
-            frequency,
-        } => {
-            let period = 1.0 / frequency;
+        Signal::SawtoothWave { amplitude, period } => {
             let t_mod = t % period;
             let normalized = t_mod / period;
             amplitude * (2.0 * normalized - 1.0)
