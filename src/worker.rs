@@ -38,27 +38,21 @@ pub enum Signal {
 
 impl Default for Signal {
     fn default() -> Self {
-        Signal::SineWave {
-            amplitude: (100.0),
-            period: (50.0),
-            phase: (0.0),
-        }
+        Signal::Constant { value: 0.0 }
     }
 }
 
 impl Signal {
     pub fn from_string(str: &str) -> Result<Self, String> {
-        let tokens: Vec<&str> = str.trim().split_whitespace().collect();
+        let mut tokens = str.trim().split_whitespace();
 
-        if tokens.is_empty() {
-            return Err("Empty input".to_string());
-        }
+        let kind = tokens.next().ok_or("Empty input")?;
 
-        match tokens[0].to_lowercase().as_str() {
+        match kind.to_lowercase().as_str() {
             "sin" | "sine" => {
-                let amplitude = parse_parameter(tokens.get(1), 100.0)?;
-                let period = parse_parameter(tokens.get(2), 50.0)?;
-                let phase = parse_parameter(tokens.get(3), 0.0)?;
+                let amplitude = parse_parameter(tokens.next(), 100.0)?;
+                let period = parse_parameter(tokens.next(), 100.0)?;
+                let phase = parse_parameter(tokens.next(), 0.0)?;
 
                 Ok(Signal::SineWave {
                     amplitude,
@@ -67,9 +61,9 @@ impl Signal {
                 })
             }
             "square" | "sq" => {
-                let amplitude = parse_parameter(tokens.get(1), 100.0)?;
-                let period = parse_parameter(tokens.get(2), 1.0)?;
-                let duty_cycle = parse_parameter(tokens.get(3), 0.5)?;
+                let amplitude = parse_parameter(tokens.next(), 100.0)?;
+                let period = parse_parameter(tokens.next(), 100.0)?;
+                let duty_cycle = parse_parameter(tokens.next(), 0.5)?;
 
                 if duty_cycle < 0.0 || duty_cycle > 1.0 {
                     return Err("Duty cycle must be between 0 and 1".to_string());
@@ -82,23 +76,23 @@ impl Signal {
                 })
             }
             "triangle" | "tri" => {
-                let amplitude = parse_parameter(tokens.get(1), 100.0)?;
-                let period = parse_parameter(tokens.get(2), 1.0)?;
+                let amplitude = parse_parameter(tokens.next(), 100.0)?;
+                let period = parse_parameter(tokens.next(), 100.0)?;
 
                 Ok(Signal::TriangleWave { amplitude, period })
             }
             "saw" | "sawtooth" => {
-                let amplitude = parse_parameter(tokens.get(1), 100.0)?;
-                let period = parse_parameter(tokens.get(2), 1.0)?;
+                let amplitude = parse_parameter(tokens.next(), 100.0)?;
+                let period = parse_parameter(tokens.next(), 100.0)?;
 
                 Ok(Signal::SawtoothWave { amplitude, period })
             }
             "const" | "constant" => {
-                let value = parse_parameter(tokens.get(1), 0.0)?;
+                let value = parse_parameter(tokens.next(), 50.0)?;
 
                 Ok(Signal::Constant { value })
             }
-            _ => Err(format!("Unknown signal type: {}", tokens[0])),
+            _ => Err(format!("Unknown signal type: {}", kind)),
         }
     }
 }
@@ -144,7 +138,6 @@ impl Display for Signal {
 pub struct Worker {
     handle: Option<JoinHandle<()>>,
     running: Arc<AtomicBool>,
-    current_signal: Arc<Mutex<Signal>>,
 }
 
 impl Worker {
@@ -152,7 +145,6 @@ impl Worker {
         Self {
             handle: None,
             running: Arc::new(AtomicBool::new(false)),
-            current_signal: Arc::new(Mutex::new(Signal::default())),
         }
     }
 
@@ -168,9 +160,9 @@ impl Worker {
 
         self.running.store(true, Ordering::Release);
         let running = self.running.clone();
-        let current_signal = self.current_signal.clone();
 
         self.handle = Some(thread::spawn(move || {
+            let mut current_signal = Signal::default();
             let start_time = Instant::now();
             let mut next_poll = start_time + POLL_INTERVAL;
 
@@ -185,10 +177,7 @@ impl Worker {
                         .unwrap()
                         .as_secs_f64();
 
-                    let signal_value = {
-                        let signal = current_signal.lock().unwrap();
-                        calculate_signal_value(&*signal, delta_t)
-                    };
+                    let signal_value = { calculate_signal_value(&current_signal, delta_t) };
 
                     if let Ok(mut points) = points.lock() {
                         points.push(PlotPoint {
@@ -208,12 +197,9 @@ impl Worker {
 
                 match command_receiver.recv_timeout(timeout) {
                     Ok(new_signal) => {
-                        if let Ok(mut signal) = current_signal.lock() {
-                            *signal = new_signal.clone();
-                            let response = format!("Signal changed to: {}", new_signal);
-
-                            let _ = response_sender.send(response);
-                        }
+                        let response = format!("Signal changed to: {}", new_signal);
+                        current_signal = new_signal;
+                        let _ = response_sender.send(response);
                     }
 
                     Err(_) => {}
@@ -275,7 +261,7 @@ fn calculate_signal_value(signal: &Signal, t: f64) -> f64 {
     }
 }
 
-fn parse_parameter(param: Option<&&str>, default: f64) -> Result<f64, String> {
+fn parse_parameter(param: Option<&str>, default: f64) -> Result<f64, String> {
     match param {
         Some(s) => s
             .parse::<f64>()
