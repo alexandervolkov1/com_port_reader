@@ -9,7 +9,7 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const POLL_INTERVAL: Duration = Duration::from_millis(100);
+const POLL_INTERVAL: Duration = Duration::from_millis(1000);
 
 #[derive(Clone)]
 pub enum Signal {
@@ -135,6 +135,12 @@ impl Display for Signal {
     }
 }
 
+#[derive(Clone)]
+pub struct SignalSeries {
+    pub signal: Signal,
+    pub points: Vec<PlotPoint>,
+}
+
 pub struct Worker {
     handle: Option<JoinHandle<()>>,
     running: Arc<AtomicBool>,
@@ -152,7 +158,7 @@ impl Worker {
         &mut self,
         command_receiver: Receiver<Signal>,
         response_sender: Sender<String>,
-        points: Arc<Mutex<Vec<PlotPoint>>>,
+        series: Arc<Mutex<Vec<SignalSeries>>>,
     ) {
         if self.handle.is_some() {
             return;
@@ -162,7 +168,6 @@ impl Worker {
         let running = self.running.clone();
 
         self.handle = Some(thread::spawn(move || {
-            let mut current_signal = Signal::default();
             let start_time = Instant::now();
             let mut next_poll = start_time + POLL_INTERVAL;
 
@@ -177,13 +182,15 @@ impl Worker {
                         .unwrap()
                         .as_secs_f64();
 
-                    let signal_value = { calculate_signal_value(&current_signal, delta_t) };
+                    if let Ok(mut all_series) = series.lock() {
+                        for signal_series in all_series.iter_mut() {
+                            let value = calculate_signal_value(&signal_series.signal, delta_t);
 
-                    if let Ok(mut points) = points.lock() {
-                        points.push(PlotPoint {
-                            x: timestamp,
-                            y: signal_value,
-                        });
+                            signal_series.points.push(PlotPoint {
+                                x: timestamp,
+                                y: value,
+                            });
+                        }
                     }
                     next_poll += POLL_INTERVAL;
 
@@ -198,7 +205,12 @@ impl Worker {
                 match command_receiver.recv_timeout(timeout) {
                     Ok(new_signal) => {
                         let response = format!("Signal changed to: {}", new_signal);
-                        current_signal = new_signal;
+                        if let Ok(mut all_series) = series.lock() {
+                            all_series.push(SignalSeries {
+                                signal: new_signal.clone(),
+                                points: Vec::new(),
+                            });
+                        }
                         let _ = response_sender.send(response);
                     }
 

@@ -6,7 +6,7 @@ use egui_plot::{Line, Plot, PlotBounds, PlotPoint, PlotPoints};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::worker::Signal;
+use crate::worker::{Signal, SignalSeries};
 
 mod worker;
 
@@ -21,7 +21,7 @@ fn main() -> eframe::Result<()> {
 }
 
 struct MyApp {
-    points: Arc<Mutex<Vec<PlotPoint>>>,
+    series: Arc<Mutex<Vec<SignalSeries>>>,
     worker: worker::Worker,
 
     command_sender: Sender<Signal>,
@@ -42,7 +42,7 @@ impl MyApp {
         let (command_sender, command_receiver) = crossbeam_channel::bounded(32);
         let (response_sender, response_receiver) = crossbeam_channel::bounded(32);
         Self {
-            points: Arc::new(Mutex::new(Vec::new())),
+            series: Arc::new(Mutex::new(Vec::new())),
             worker: worker::Worker::new(),
 
             command_sender,
@@ -71,7 +71,7 @@ impl eframe::App for MyApp {
                     self.worker.start(
                         self.command_receiver.clone(),
                         self.response_sender.clone(),
-                        self.points.clone(),
+                        self.series.clone(),
                     );
                 }
 
@@ -80,8 +80,8 @@ impl eframe::App for MyApp {
                 }
 
                 if ui.button("Clear").clicked() {
-                    if let Ok(mut points) = self.points.lock() {
-                        points.clear();
+                    if let Ok(mut series) = self.series.lock() {
+                        series.clear();
                     }
                 }
             });
@@ -105,14 +105,20 @@ impl eframe::App for MyApp {
 
             ui.label(format!("{}", self.last_response));
 
-            if let Ok(points) = self.points.lock() {
-                ui.label(format!("{}", points.len()));
+            if let Ok(series) = self.series.lock() {
+                ui.label(format!("{}", series.len()));
 
-                let first_x = points.first().map(|p| p.x).unwrap_or(current_time_f64());
-                let latest_x = points
-                    .last()
+                let latest_x = series
+                    .iter()
+                    .filter_map(|s| s.points.last())
                     .map(|p| p.x)
-                    .unwrap_or(current_time_f64() + 60.0);
+                    .fold(current_time_f64(), f64::max);
+
+                let first_x = series
+                    .iter()
+                    .filter_map(|s| s.points.first())
+                    .map(|p| p.x)
+                    .fold(latest_x, f64::min);
 
                 let (min_x, max_x) = if self.follow_latest {
                     if latest_x - first_x < WINDOW_SECONDS {
@@ -123,15 +129,6 @@ impl eframe::App for MyApp {
                 } else {
                     (self.last_plot_x, self.last_plot_x + WINDOW_SECONDS)
                 };
-
-                let start_idx = points.partition_point(|p| p.x < min_x);
-                let end_idx = points.partition_point(|p| p.x <= max_x);
-
-                let visible: Vec<PlotPoint> = points[start_idx..end_idx].to_vec();
-
-                drop(points);
-
-                let downsampled = downsample_min_max(&visible, 2000);
 
                 Plot::new("sinus")
                     .allow_drag(true)
@@ -159,7 +156,22 @@ impl eframe::App for MyApp {
                             ));
                         }
 
-                        plot_ui.line(Line::new("sinus", PlotPoints::Owned(downsampled)).width(4.0));
+                        for (idx, siignal_series) in series.iter().enumerate() {
+                            let start_idx = siignal_series.points.partition_point(|p| p.x < min_x);
+                            let end_idx = siignal_series.points.partition_point(|p| p.x <= max_x);
+
+                            let visible = &siignal_series.points[start_idx..end_idx];
+
+                            let downsampled = downsample_min_max(visible, 2000);
+
+                            plot_ui.line(
+                                Line::new(
+                                    format!("signal {}", idx),
+                                    PlotPoints::Owned(downsampled),
+                                )
+                                .width(4.0),
+                            );
+                        }
 
                         self.last_plot_x = plot_ui.plot_bounds().min()[0];
 
@@ -176,7 +188,7 @@ impl eframe::App for MyApp {
             }
         });
 
-        ui.ctx().request_repaint_after(Duration::from_millis(100));
+        ui.ctx().request_repaint_after(Duration::from_millis(33));
     }
 }
 
