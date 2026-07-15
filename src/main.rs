@@ -2,15 +2,17 @@
 
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui::{self};
-use egui_plot::{Line, Plot, PlotBounds, PlotPoint, PlotPoints};
+
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use crate::worker::{Signal, SignalSeries};
-
+mod data;
+mod ui;
+mod utils;
 mod worker;
 
-const WINDOW_SECONDS: f64 = 3600.0;
+use crate::data::{Signal, SignalSeries};
+use crate::ui::plot::show_plot;
 
 fn main() -> eframe::Result<()> {
     eframe::run_native(
@@ -106,151 +108,15 @@ impl eframe::App for MyApp {
             ui.label(format!("{}", self.last_response));
 
             if let Ok(series) = self.series.lock() {
-                ui.label(format!("{}", series.len()));
-
-                let latest_x = series
-                    .iter()
-                    .filter_map(|s| s.points.last())
-                    .map(|p| p.x)
-                    .fold(current_time_f64(), f64::max);
-
-                let first_x = series
-                    .iter()
-                    .filter_map(|s| s.points.first())
-                    .map(|p| p.x)
-                    .fold(latest_x, f64::min);
-
-                let (min_x, max_x) = if self.follow_latest {
-                    if latest_x - first_x < WINDOW_SECONDS {
-                        (first_x, latest_x)
-                    } else {
-                        (latest_x - WINDOW_SECONDS, latest_x)
-                    }
-                } else {
-                    (self.last_plot_x, self.last_plot_x + WINDOW_SECONDS)
-                };
-
-                Plot::new("sinus")
-                    .allow_drag(true)
-                    .allow_zoom(true)
-                    .x_grid_spacer(egui_plot::uniform_grid_spacer(|input| {
-                        let span = input.bounds.1 - input.bounds.0;
-
-                        if span < 600.0 {
-                            [60.0, 10.0, 1.0]
-                        } else if span < 1800.0 {
-                            [300.0, 60.0, 30.0]
-                        } else {
-                            [1800.0, 600.0, 60.0]
-                        }
-                    }))
-                    .x_axis_formatter(|mark, _range| mark_for_timestamp(mark.value))
-                    .label_formatter(|_s, val| {
-                        format!("{}\n{:.1}", mark_for_timestamp(val.x), val.y)
-                    })
-                    .show(ui, |plot_ui| {
-                        if self.follow_latest {
-                            plot_ui.set_plot_bounds(PlotBounds::from_min_max(
-                                [min_x, -120.0],
-                                [max_x, 120.0],
-                            ));
-                        }
-
-                        for (idx, siignal_series) in series.iter().enumerate() {
-                            let start_idx = siignal_series.points.partition_point(|p| p.x < min_x);
-                            let end_idx = siignal_series.points.partition_point(|p| p.x <= max_x);
-
-                            let visible = &siignal_series.points[start_idx..end_idx];
-
-                            let downsampled = downsample_min_max(visible, 2000);
-
-                            plot_ui.line(
-                                Line::new(
-                                    format!("signal {}", idx),
-                                    PlotPoints::Owned(downsampled),
-                                )
-                                .width(4.0),
-                            );
-                        }
-
-                        self.last_plot_x = plot_ui.plot_bounds().min()[0];
-
-                        let response = plot_ui.response();
-
-                        if response.dragged() {
-                            self.follow_latest = false;
-                        }
-
-                        if response.double_clicked() {
-                            self.follow_latest = true;
-                        }
-                    });
+                show_plot(
+                    ui,
+                    series.as_slice(),
+                    &mut self.follow_latest,
+                    &mut self.last_plot_x,
+                );
             }
         });
 
         ui.ctx().request_repaint_after(Duration::from_millis(33));
     }
-}
-
-fn downsample_min_max(points: &[PlotPoint], target_points: usize) -> Vec<PlotPoint> {
-    if points.len() <= target_points || target_points < 2 {
-        return points.to_vec();
-    }
-
-    let bucket_size = points.len() as f64 / target_points as f64;
-
-    let mut result = Vec::with_capacity(target_points * 2);
-
-    let mut bucket_start = 0.0;
-
-    while (bucket_start as usize) < points.len() {
-        let start = bucket_start as usize;
-        let end = ((bucket_start + bucket_size) as usize).min(points.len());
-
-        if start >= end {
-            break;
-        }
-
-        let slice = &points[start..end];
-
-        let mut min = slice[0];
-        let mut max = slice[0];
-
-        for p in slice {
-            if p.y < min.y {
-                min = *p;
-            }
-
-            if p.y > max.y {
-                max = *p;
-            }
-        }
-
-        if min.x < max.x {
-            result.push(min);
-            result.push(max);
-        } else {
-            result.push(max);
-            result.push(min);
-        }
-
-        bucket_start += bucket_size;
-    }
-
-    result
-}
-
-fn mark_for_timestamp(timestamp: f64) -> String {
-    chrono::DateTime::from_timestamp(timestamp as i64, 0)
-        .unwrap()
-        .with_timezone(&chrono::Local)
-        .format("%H:%M:%S")
-        .to_string()
-}
-
-fn current_time_f64() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64()
 }

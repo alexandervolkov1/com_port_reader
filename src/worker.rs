@@ -1,7 +1,8 @@
+use crate::data::{Signal, SignalSeries};
 use crossbeam_channel::{Receiver, Sender};
 use egui_plot::PlotPoint;
 use std::f64::consts::PI;
-use std::fmt::Display;
+
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -10,136 +11,6 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(1000);
-
-#[derive(Clone)]
-pub enum Signal {
-    SineWave {
-        amplitude: f64,
-        period: f64,
-        phase: f64,
-    },
-    SquareWave {
-        amplitude: f64,
-        period: f64,
-        duty_cycle: f64,
-    },
-    TriangleWave {
-        amplitude: f64,
-        period: f64,
-    },
-    SawtoothWave {
-        amplitude: f64,
-        period: f64,
-    },
-    Constant {
-        value: f64,
-    },
-}
-
-impl Default for Signal {
-    fn default() -> Self {
-        Signal::Constant { value: 0.0 }
-    }
-}
-
-impl Signal {
-    pub fn from_string(str: &str) -> Result<Self, String> {
-        let mut tokens = str.trim().split_whitespace();
-
-        let kind = tokens.next().ok_or("Empty input")?;
-
-        match kind.to_lowercase().as_str() {
-            "sin" | "sine" => {
-                let amplitude = parse_parameter(tokens.next(), 100.0)?;
-                let period = parse_parameter(tokens.next(), 100.0)?;
-                let phase = parse_parameter(tokens.next(), 0.0)?;
-
-                Ok(Signal::SineWave {
-                    amplitude,
-                    period,
-                    phase,
-                })
-            }
-            "square" | "sq" => {
-                let amplitude = parse_parameter(tokens.next(), 100.0)?;
-                let period = parse_parameter(tokens.next(), 100.0)?;
-                let duty_cycle = parse_parameter(tokens.next(), 0.5)?;
-
-                if duty_cycle < 0.0 || duty_cycle > 1.0 {
-                    return Err("Duty cycle must be between 0 and 1".to_string());
-                }
-
-                Ok(Signal::SquareWave {
-                    amplitude,
-                    period,
-                    duty_cycle,
-                })
-            }
-            "triangle" | "tri" => {
-                let amplitude = parse_parameter(tokens.next(), 100.0)?;
-                let period = parse_parameter(tokens.next(), 100.0)?;
-
-                Ok(Signal::TriangleWave { amplitude, period })
-            }
-            "saw" | "sawtooth" => {
-                let amplitude = parse_parameter(tokens.next(), 100.0)?;
-                let period = parse_parameter(tokens.next(), 100.0)?;
-
-                Ok(Signal::SawtoothWave { amplitude, period })
-            }
-            "const" | "constant" => {
-                let value = parse_parameter(tokens.next(), 50.0)?;
-
-                Ok(Signal::Constant { value })
-            }
-            _ => Err(format!("Unknown signal type: {}", kind)),
-        }
-    }
-}
-
-impl Display for Signal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Signal::SineWave {
-                amplitude,
-                period,
-                phase,
-            } => {
-                write!(
-                    f,
-                    "SineWave(amp={}, period={}, phase={})",
-                    amplitude, period, phase
-                )
-            }
-            Signal::SquareWave {
-                amplitude,
-                period,
-                duty_cycle,
-            } => {
-                write!(
-                    f,
-                    "SquareWave(amp={}, period={}, duty={})",
-                    amplitude, period, duty_cycle
-                )
-            }
-            Signal::TriangleWave { amplitude, period } => {
-                write!(f, "TriangleWave(amp={}, period={})", amplitude, period)
-            }
-            Signal::SawtoothWave { amplitude, period } => {
-                write!(f, "SawtoothWave(amp={}, period={})", amplitude, period)
-            }
-            Signal::Constant { value } => {
-                write!(f, "Constant(val={})", value)
-            }
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct SignalSeries {
-    pub signal: Signal,
-    pub points: Vec<PlotPoint>,
-}
 
 pub struct Worker {
     handle: Option<JoinHandle<()>>,
@@ -270,14 +141,5 @@ fn calculate_signal_value(signal: &Signal, t: f64) -> f64 {
             amplitude * (2.0 * normalized - 1.0)
         }
         Signal::Constant { value } => *value,
-    }
-}
-
-fn parse_parameter(param: Option<&str>, default: f64) -> Result<f64, String> {
-    match param {
-        Some(s) => s
-            .parse::<f64>()
-            .map_err(|e| format!("Failed to parse number '{}': {}", s, e)),
-        None => Ok(default),
     }
 }
