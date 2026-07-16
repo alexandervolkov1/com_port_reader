@@ -89,6 +89,7 @@ impl eframe::App for MyApp {
                         }
                     };
                     self.command_buffer.clear();
+                    response.request_focus();
                 }
             });
 

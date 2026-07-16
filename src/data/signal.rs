@@ -25,12 +25,6 @@ pub enum Signal {
     },
 }
 
-impl Default for Signal {
-    fn default() -> Self {
-        Signal::Constant { value: 0.0 }
-    }
-}
-
 impl Signal {
     pub fn from_string(input: &str) -> Result<Self, String> {
         let mut tokens = input.trim().split_whitespace();
