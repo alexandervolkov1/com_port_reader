@@ -25,6 +25,10 @@ impl Worker {
         }
     }
 
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::Acquire)
+    }
+
     pub fn start(
         &mut self,
         command_receiver: Receiver<Signal>,
