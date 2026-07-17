@@ -12,6 +12,7 @@ pub fn show_plot(
     series: &[SignalSeries],
     follow_latest: &mut bool,
     last_plot_x: &mut f64,
+    cache: &mut Vec<Vec<PlotPoint>>,
 ) {
     let latest_x = series
         .iter()
@@ -56,25 +57,33 @@ pub fn show_plot(
                 plot_ui.set_plot_bounds(PlotBounds::from_min_max([min_x, -120.0], [max_x, 120.0]));
             }
 
+            cache.resize(series.len(), Vec::new());
+
             for (idx, siignal_series) in series.iter().enumerate() {
                 let start_idx = siignal_series.points.partition_point(|p| p.x < min_x);
                 let end_idx = siignal_series.points.partition_point(|p| p.x <= max_x);
 
                 let visible = &siignal_series.points[start_idx..end_idx];
 
-                let downsampled = downsample_min_max(visible, 2000);
+                let downsampled = &mut cache[idx];
+                downsampled.clear();
+
+                downsample_min_max_into(visible, 2000, downsampled);
 
                 plot_ui.line(
-                    Line::new(format!("signal {}", idx), PlotPoints::Owned(downsampled)).width(4.0),
+                    Line::new(
+                        format!("signal {}", idx),
+                        PlotPoints::Owned(downsampled.clone()),
+                    )
+                    .width(4.0),
                 );
             }
-
-            *last_plot_x = plot_ui.plot_bounds().min()[0];
 
             let response = plot_ui.response();
 
             if response.dragged() {
                 *follow_latest = false;
+                *last_plot_x = plot_ui.plot_bounds().min()[0];
             }
 
             if response.double_clicked() {
@@ -83,14 +92,18 @@ pub fn show_plot(
         });
 }
 
-fn downsample_min_max(points: &[PlotPoint], target_points: usize) -> Vec<PlotPoint> {
+fn downsample_min_max_into(
+    points: &[PlotPoint],
+    target_points: usize,
+    output: &mut Vec<PlotPoint>,
+) {
     if points.len() <= target_points || target_points < 2 {
-        return points.to_vec();
+        output.extend_from_slice(points);
+        return;
     }
 
     let bucket_size = points.len() as f64 / target_points as f64;
-
-    let mut result = Vec::with_capacity(target_points * 2);
+    output.reserve((target_points * 2).min(1024));
 
     let mut bucket_start = 0.0;
 
@@ -103,7 +116,6 @@ fn downsample_min_max(points: &[PlotPoint], target_points: usize) -> Vec<PlotPoi
         }
 
         let slice = &points[start..end];
-
         let mut min = slice[0];
         let mut max = slice[0];
 
@@ -111,22 +123,19 @@ fn downsample_min_max(points: &[PlotPoint], target_points: usize) -> Vec<PlotPoi
             if p.y < min.y {
                 min = *p;
             }
-
             if p.y > max.y {
                 max = *p;
             }
         }
 
         if min.x < max.x {
-            result.push(min);
-            result.push(max);
+            output.push(min);
+            output.push(max);
         } else {
-            result.push(max);
-            result.push(min);
+            output.push(max);
+            output.push(min);
         }
 
         bucket_start += bucket_size;
     }
-
-    result
 }

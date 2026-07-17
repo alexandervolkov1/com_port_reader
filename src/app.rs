@@ -1,5 +1,6 @@
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
+use egui_plot::PlotPoint;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -24,6 +25,8 @@ pub struct MyApp {
 
     follow_latest: bool,
     last_plot_x: f64,
+
+    plot_cache: Vec<Vec<PlotPoint>>,
 }
 
 impl MyApp {
@@ -44,6 +47,8 @@ impl MyApp {
 
             follow_latest: true,
             last_plot_x: 0.0,
+
+            plot_cache: Vec::new(),
         }
     }
 }
@@ -106,6 +111,7 @@ impl eframe::App for MyApp {
                     series.as_slice(),
                     &mut self.follow_latest,
                     &mut self.last_plot_x,
+                    &mut self.plot_cache,
                 );
             }
         });
