@@ -57,11 +57,11 @@ pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, controls: &ControlsModel) {
 
             plot.plot_cache.resize(series.len(), Vec::new());
 
-            for (idx, siignal_series) in series.iter().enumerate() {
-                let start_idx = siignal_series.points.partition_point(|p| p.x < min_x);
-                let end_idx = siignal_series.points.partition_point(|p| p.x <= max_x);
+            for (idx, signal_series) in series.iter().enumerate() {
+                let start_idx = signal_series.points.partition_point(|p| p.x < min_x);
+                let end_idx = signal_series.points.partition_point(|p| p.x <= max_x);
 
-                let visible = &siignal_series.points[start_idx..end_idx];
+                let visible = &signal_series.points[start_idx..end_idx];
 
                 let downsampled = &mut plot.plot_cache[idx];
                 downsampled.clear();
