@@ -1,10 +1,10 @@
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
-use egui_plot::PlotPoint;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::{
+    components::PlotModel,
     data::{Signal, SignalSeries},
     ui::plot::show_plot,
     worker::Worker,
@@ -23,10 +23,7 @@ pub struct MyApp {
     command_buffer: String,
     last_response: String,
 
-    follow_latest: bool,
-    last_plot_x: f64,
-
-    plot_cache: Vec<Vec<PlotPoint>>,
+    plot_model: PlotModel,
 }
 
 impl MyApp {
@@ -45,10 +42,7 @@ impl MyApp {
             command_buffer: String::new(),
             last_response: String::new(),
 
-            follow_latest: true,
-            last_plot_x: 0.0,
-
-            plot_cache: Vec::new(),
+            plot_model: PlotModel::new(),
         }
     }
 }
@@ -109,9 +103,9 @@ impl eframe::App for MyApp {
                 show_plot(
                     ui,
                     series.as_slice(),
-                    &mut self.follow_latest,
-                    &mut self.last_plot_x,
-                    &mut self.plot_cache,
+                    &mut self.plot_model.follow_latest,
+                    &mut self.plot_model.last_plot_x,
+                    &mut self.plot_model.plot_cache,
                 );
             }
         });
