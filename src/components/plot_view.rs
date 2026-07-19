@@ -1,6 +1,5 @@
 use crate::{
-    components::plot_model::PlotModel,
-    data::SignalSeries,
+    components::{controls_model::ControlsModel, plot_model::PlotModel},
     utils::{current_time_f64, mark_for_timestamp},
 };
 use eframe::egui;
@@ -8,7 +7,11 @@ use egui_plot::{Line, Plot, PlotBounds, PlotPoint, PlotPoints};
 
 const WINDOW_SECONDS: f64 = 3600.0;
 
-pub fn show(ui: &mut egui::Ui, model: &mut PlotModel, series: &[SignalSeries]) {
+pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, controls: &ControlsModel) {
+    let Ok(series) = controls.series().lock() else {
+        return;
+    };
+
     let latest_x = series
         .iter()
         .filter_map(|s| s.points.last())
@@ -21,14 +24,14 @@ pub fn show(ui: &mut egui::Ui, model: &mut PlotModel, series: &[SignalSeries]) {
         .map(|p| p.x)
         .fold(latest_x, f64::min);
 
-    let (min_x, max_x) = if model.follow_latest {
+    let (min_x, max_x) = if plot.follow_latest {
         if latest_x - first_x < WINDOW_SECONDS {
             (first_x, latest_x)
         } else {
             (latest_x - WINDOW_SECONDS, latest_x)
         }
     } else {
-        (model.last_plot_x, model.last_plot_x + WINDOW_SECONDS)
+        (plot.last_plot_x, plot.last_plot_x + WINDOW_SECONDS)
     };
 
     Plot::new("signals")
@@ -48,11 +51,11 @@ pub fn show(ui: &mut egui::Ui, model: &mut PlotModel, series: &[SignalSeries]) {
         .x_axis_formatter(|mark, _range| mark_for_timestamp(mark.value))
         .label_formatter(|_s, val| format!("{}\n{:.1}", mark_for_timestamp(val.x), val.y))
         .show(ui, |plot_ui| {
-            if model.follow_latest {
+            if plot.follow_latest {
                 plot_ui.set_plot_bounds(PlotBounds::from_min_max([min_x, -120.0], [max_x, 120.0]));
             }
 
-            model.plot_cache.resize(series.len(), Vec::new());
+            plot.plot_cache.resize(series.len(), Vec::new());
 
             for (idx, siignal_series) in series.iter().enumerate() {
                 let start_idx = siignal_series.points.partition_point(|p| p.x < min_x);
@@ -60,7 +63,7 @@ pub fn show(ui: &mut egui::Ui, model: &mut PlotModel, series: &[SignalSeries]) {
 
                 let visible = &siignal_series.points[start_idx..end_idx];
 
-                let downsampled = &mut model.plot_cache[idx];
+                let downsampled = &mut plot.plot_cache[idx];
                 downsampled.clear();
 
                 downsample_min_max_into(visible, 2000, downsampled);
@@ -77,12 +80,12 @@ pub fn show(ui: &mut egui::Ui, model: &mut PlotModel, series: &[SignalSeries]) {
             let response = plot_ui.response();
 
             if response.dragged() {
-                model.follow_latest = false;
-                model.last_plot_x = plot_ui.plot_bounds().min()[0];
+                plot.follow_latest = false;
+                plot.last_plot_x = plot_ui.plot_bounds().min()[0];
             }
 
             if response.double_clicked() {
-                model.follow_latest = true;
+                plot.follow_latest = true;
             }
         });
 }

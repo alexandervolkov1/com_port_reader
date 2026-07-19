@@ -1,106 +1,41 @@
-use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::{
-    components::{plot_model::PlotModel, plot_view},
-    data::{Signal, SignalSeries},
-    worker::Worker,
+use crate::components::{
+    command_model::CommandModel, command_view, controls_model::ControlsModel, controls_view,
+    plot_model::PlotModel, plot_view,
 };
 
 pub struct MyApp {
-    series: Arc<Mutex<Vec<SignalSeries>>>,
-    worker: Worker,
-
-    command_sender: Sender<Signal>,
-    command_receiver: Receiver<Signal>,
-
-    response_sender: Sender<String>,
-    response_receiver: Receiver<String>,
-
-    command_buffer: String,
-    last_response: String,
-
-    plot_model: PlotModel,
+    controls: ControlsModel,
+    plot: PlotModel,
+    command: CommandModel,
 }
 
 impl MyApp {
     pub fn new() -> Self {
+        let series = Arc::new(Mutex::new(Vec::new()));
         let (command_sender, command_receiver) = crossbeam_channel::bounded(32);
         let (response_sender, response_receiver) = crossbeam_channel::bounded(32);
         Self {
-            series: Arc::new(Mutex::new(Vec::new())),
-            worker: Worker::new(),
-
-            command_sender,
-            command_receiver,
-            response_sender,
-            response_receiver,
-
-            command_buffer: String::new(),
-            last_response: String::new(),
-
-            plot_model: PlotModel::new(),
+            controls: ControlsModel::new(series, command_receiver, response_sender),
+            command: CommandModel::new(command_sender, response_receiver),
+            plot: PlotModel::new(),
         }
     }
 }
 
 impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        if let Ok(response) = self.response_receiver.try_recv() {
-            self.last_response = response
-        }
+        self.command.update();
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            ui.horizontal(|ui| {
-                if ui.button("Start").clicked() {
-                    self.worker.start(
-                        self.command_receiver.clone(),
-                        self.response_sender.clone(),
-                        self.series.clone(),
-                    );
-                }
+            controls_view::show(ui, &mut self.controls);
 
-                if ui.button("Stop").clicked() {
-                    self.worker.stop();
-                }
+            command_view::show(ui, &mut self.command);
 
-                if ui.button("Clear").clicked() {
-                    if let Ok(mut series) = self.series.lock() {
-                        series.clear();
-                    }
-                }
-                if self.worker.is_running() {
-                    ui.colored_label(egui::Color32::from_rgb(0, 130, 0), "● Running");
-                } else {
-                    ui.colored_label(egui::Color32::from_rgb(130, 0, 0), "● Stopped");
-                }
-            });
-
-            ui.horizontal(|ui| {
-                ui.label("Command:");
-                let response = ui.text_edit_singleline(&mut self.command_buffer);
-
-                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    match Signal::from_string(&self.command_buffer) {
-                        Ok(signal) => {
-                            let _ = self.command_sender.send(signal);
-                        }
-                        Err(e) => {
-                            self.last_response = e;
-                        }
-                    };
-                    self.command_buffer.clear();
-                    response.request_focus();
-                }
-            });
-
-            ui.label(format!("{}", self.last_response));
-
-            if let Ok(series) = self.series.lock() {
-                plot_view::show(ui, &mut self.plot_model, series.as_slice());
-            }
+            plot_view::show(ui, &mut self.plot, &self.controls);
         });
 
         ui.ctx().request_repaint_after(Duration::from_millis(33));
