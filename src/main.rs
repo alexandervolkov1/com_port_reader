@@ -3,7 +3,6 @@
 mod app;
 mod components;
 mod data;
-mod ui;
 mod utils;
 mod worker;
 

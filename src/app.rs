@@ -4,9 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::{
-    components::PlotModel,
+    components::{plot_model::PlotModel, plot_view},
     data::{Signal, SignalSeries},
-    ui::plot::show_plot,
     worker::Worker,
 };
 
@@ -100,13 +99,7 @@ impl eframe::App for MyApp {
             ui.label(format!("{}", self.last_response));
 
             if let Ok(series) = self.series.lock() {
-                show_plot(
-                    ui,
-                    series.as_slice(),
-                    &mut self.plot_model.follow_latest,
-                    &mut self.plot_model.last_plot_x,
-                    &mut self.plot_model.plot_cache,
-                );
+                plot_view::show(ui, &mut self.plot_model, series.as_slice());
             }
         });
 
