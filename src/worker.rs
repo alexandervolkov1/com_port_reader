@@ -1,7 +1,6 @@
 use crate::data::{Signal, SignalSeries};
 use crossbeam_channel::{Receiver, Sender};
 use egui_plot::PlotPoint;
-use std::f64::consts::PI;
 
 use std::sync::{
     Arc, Mutex,
@@ -59,7 +58,7 @@ impl Worker {
 
                     if let Ok(mut all_series) = series.lock() {
                         for signal_series in all_series.iter_mut() {
-                            let value = calculate_signal_value(&signal_series.signal, delta_t);
+                            let value = signal_series.signal.value_at(delta_t);
 
                             signal_series.points.push(PlotPoint {
                                 x: timestamp,
@@ -79,7 +78,7 @@ impl Worker {
 
                 match command_receiver.recv_timeout(timeout) {
                     Ok(new_signal) => {
-                        let response = format!("New signal added.");
+                        let response = "New signal added.".to_string();
                         if let Ok(mut all_series) = series.lock() {
                             all_series.push(SignalSeries {
                                 signal: new_signal.clone(),
@@ -108,43 +107,5 @@ impl Worker {
 impl Drop for Worker {
     fn drop(&mut self) {
         self.stop();
-    }
-}
-
-fn calculate_signal_value(signal: &Signal, t: f64) -> f64 {
-    match signal {
-        Signal::SineWave {
-            amplitude,
-            period,
-            phase,
-        } => amplitude * (2.0 * PI / period * t + phase).sin(),
-        Signal::SquareWave {
-            amplitude,
-            period,
-            duty_cycle,
-        } => {
-            let t_mod = t % period;
-            if t_mod < period * duty_cycle {
-                *amplitude
-            } else {
-                -(*amplitude)
-            }
-        }
-        Signal::TriangleWave { amplitude, period } => {
-            let t_mod = t % period;
-            let normalized = t_mod / period;
-            let value = if normalized < 0.5 {
-                4.0 * normalized - 1.0
-            } else {
-                3.0 - 4.0 * normalized
-            };
-            amplitude * value
-        }
-        Signal::SawtoothWave { amplitude, period } => {
-            let t_mod = t % period;
-            let normalized = t_mod / period;
-            amplitude * (2.0 * normalized - 1.0)
-        }
-        Signal::Constant { value } => *value,
     }
 }

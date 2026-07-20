@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{f64::consts::TAU, fmt::Display};
 
 #[derive(Clone)]
 pub enum Signal {
@@ -26,8 +26,53 @@ pub enum Signal {
 }
 
 impl Signal {
+    pub fn value_at(&self, elapsed_seconds: f64) -> f64 {
+        match self {
+            Signal::SineWave {
+                amplitude,
+                period,
+                phase,
+            } => amplitude * (TAU / period * elapsed_seconds + phase).sin(),
+
+            Signal::SquareWave {
+                amplitude,
+                period,
+                duty_cycle,
+            } => {
+                let time_in_period = elapsed_seconds % period;
+
+                if time_in_period < period * duty_cycle {
+                    *amplitude
+                } else {
+                    -*amplitude
+                }
+            }
+
+            Signal::TriangleWave { amplitude, period } => {
+                let time_in_period = elapsed_seconds % period;
+                let normalized_time = time_in_period / period;
+
+                let normalized_value = if normalized_time < 0.5 {
+                    4.0 * normalized_time - 1.0
+                } else {
+                    3.0 - 4.0 * normalized_time
+                };
+
+                amplitude * normalized_value
+            }
+
+            Signal::SawtoothWave { amplitude, period } => {
+                let time_in_period = elapsed_seconds % period;
+                let normalized_time = time_in_period / period;
+
+                amplitude * (2.0 * normalized_time - 1.0)
+            }
+
+            Signal::Constant { value } => *value,
+        }
+    }
     pub fn from_string(input: &str) -> Result<Self, String> {
-        let mut tokens = input.trim().split_whitespace();
+        let mut tokens = input.split_whitespace();
 
         let kind = tokens.next().ok_or("Empty input")?;
 
@@ -124,5 +169,76 @@ fn parse_parameter(param: Option<&str>, default: f64) -> Result<f64, String> {
             .parse::<f64>()
             .map_err(|e| format!("Failed to parse number '{}': {}", s, e)),
         None => Ok(default),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Signal;
+
+    const EPSILON: f64 = 1e-10;
+
+    fn assert_approx_eq(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < EPSILON,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn calculates_constant_signal() {
+        let signal = Signal::Constant { value: 42.0 };
+
+        assert_approx_eq(signal.value_at(100.0), 42.0);
+    }
+
+    #[test]
+    fn calculates_sine_wave() {
+        let signal = Signal::SineWave {
+            amplitude: 2.0,
+            period: 4.0,
+            phase: 0.0,
+        };
+
+        assert_approx_eq(signal.value_at(0.0), 0.0);
+        assert_approx_eq(signal.value_at(1.0), 2.0);
+        assert_approx_eq(signal.value_at(2.0), 0.0);
+    }
+
+    #[test]
+    fn calculates_square_wave() {
+        let signal = Signal::SquareWave {
+            amplitude: 3.0,
+            period: 4.0,
+            duty_cycle: 0.25,
+        };
+
+        assert_approx_eq(signal.value_at(0.5), 3.0);
+        assert_approx_eq(signal.value_at(2.0), -3.0);
+    }
+
+    #[test]
+    fn calculates_triangle_wave() {
+        let signal = Signal::TriangleWave {
+            amplitude: 2.0,
+            period: 4.0,
+        };
+
+        assert_approx_eq(signal.value_at(0.0), -2.0);
+        assert_approx_eq(signal.value_at(1.0), 0.0);
+        assert_approx_eq(signal.value_at(2.0), 2.0);
+        assert_approx_eq(signal.value_at(3.0), 0.0);
+    }
+
+    #[test]
+    fn calculates_sawtooth_wave() {
+        let signal = Signal::SawtoothWave {
+            amplitude: 2.0,
+            period: 4.0,
+        };
+
+        assert_approx_eq(signal.value_at(0.0), -2.0);
+        assert_approx_eq(signal.value_at(2.0), 0.0);
+        assert_approx_eq(signal.value_at(3.0), 1.0);
     }
 }
