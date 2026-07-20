@@ -1,4 +1,8 @@
-use crate::data::{Signal, SignalSeries};
+mod command;
+
+pub use command::WorkerCommand;
+
+use crate::data::SignalSeries;
 use crossbeam_channel::{Receiver, Sender};
 use egui_plot::PlotPoint;
 
@@ -30,7 +34,7 @@ impl Worker {
 
     pub fn start(
         &mut self,
-        command_receiver: Receiver<Signal>,
+        command_receiver: Receiver<WorkerCommand>,
         response_sender: Sender<String>,
         series: Arc<Mutex<Vec<SignalSeries>>>,
     ) {
@@ -77,16 +81,16 @@ impl Worker {
                 let timeout = next_poll.saturating_duration_since(now);
 
                 match command_receiver.recv_timeout(timeout) {
-                    Ok(new_signal) => {
-                        let response = "New signal added.".to_string();
+                    Ok(WorkerCommand::AddSignal(signal)) => {
                         if let Ok(mut all_series) = series.lock() {
                             all_series.push(SignalSeries {
-                                signal: new_signal.clone(),
+                                signal,
                                 points: Vec::new(),
                                 visible: true,
                             });
                         }
-                        let _ = response_sender.send(response);
+
+                        let _ = response_sender.send("New signal added.".to_owned());
                     }
 
                     Err(_) => {}

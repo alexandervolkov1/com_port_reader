@@ -2,21 +2,21 @@ use crossbeam_channel::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use crate::{
-    data::{Signal, SignalSeries},
-    worker::Worker,
+    data::SignalSeries,
+    worker::{Worker, WorkerCommand},
 };
 
 pub struct ControlsModel {
     worker: Worker,
     series: Arc<Mutex<Vec<SignalSeries>>>,
-    command_receiver: Receiver<Signal>,
+    command_receiver: Receiver<WorkerCommand>,
     response_sender: Sender<String>,
 }
 
 impl ControlsModel {
     pub fn new(
         series: Arc<Mutex<Vec<SignalSeries>>>,
-        command_receiver: Receiver<Signal>,
+        command_receiver: Receiver<WorkerCommand>,
         response_sender: Sender<String>,
     ) -> Self {
         Self {

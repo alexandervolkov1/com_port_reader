@@ -1,15 +1,15 @@
-use crate::data::Signal;
+use crate::{data::Signal, worker::WorkerCommand};
 use crossbeam_channel::{Receiver, Sender};
 
 pub struct CommandModel {
-    command_sender: Sender<Signal>,
+    command_sender: Sender<WorkerCommand>,
     response_receiver: Receiver<String>,
     command_buffer: String,
     last_response: String,
 }
 
 impl CommandModel {
-    pub fn new(command_sender: Sender<Signal>, response_receiver: Receiver<String>) -> Self {
+    pub fn new(command_sender: Sender<WorkerCommand>, response_receiver: Receiver<String>) -> Self {
         Self {
             command_sender,
             response_receiver,
@@ -35,13 +35,13 @@ impl CommandModel {
     pub fn submit(&mut self) {
         match self.parse_command() {
             Ok(signal) => {
-                if let Err(e) = self.command_sender.send(signal) {
+                if let Err(e) = self.command_sender.send(WorkerCommand::AddSignal(signal)) {
                     self.last_response = format!("Failed to send command: {}", e);
                 }
             }
 
-            Err(e) => {
-                self.last_response = e;
+            Err(error) => {
+                self.last_response = error;
             }
         }
 
