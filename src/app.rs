@@ -1,10 +1,11 @@
 use eframe::egui;
+use egui_extras::{Size, StripBuilder};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::components::{
     command_model::CommandModel, command_view, controls_model::ControlsModel, controls_view,
-    plot_model::PlotModel, plot_view,
+    plot_model::PlotModel, plot_view, series_view,
 };
 
 pub struct MyApp {
@@ -30,12 +31,29 @@ impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.command.update();
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             controls_view::show(ui, &mut self.controls);
+
+            ui.separator();
 
             command_view::show(ui, &mut self.command);
 
-            plot_view::show(ui, &mut self.plot, &self.controls);
+            ui.separator();
+
+            const SERIES_PANEL_WIDTH: f32 = 300.0;
+
+            StripBuilder::new(ui)
+                .size(Size::remainder())
+                .size(Size::exact(SERIES_PANEL_WIDTH))
+                .horizontal(|mut strip| {
+                    strip.cell(|ui| {
+                        plot_view::show(ui, &mut self.plot, &self.controls);
+                    });
+
+                    strip.cell(|ui| {
+                        series_view::show(ui, &mut self.controls);
+                    });
+                });
         });
 
         ui.ctx().request_repaint_after(Duration::from_millis(33));

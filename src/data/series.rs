@@ -6,4 +6,5 @@ use super::Signal;
 pub struct SignalSeries {
     pub signal: Signal,
     pub points: Vec<PlotPoint>,
+    pub visible: bool,
 }

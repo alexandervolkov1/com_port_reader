@@ -3,7 +3,7 @@ use crate::{
     utils::{current_time_f64, mark_for_timestamp},
 };
 use eframe::egui;
-use egui_plot::{Line, Plot, PlotBounds, PlotPoint, PlotPoints};
+use egui_plot::{HoverPosition, Line, Plot, PlotBounds, PlotPoint, PlotPoints};
 
 const WINDOW_SECONDS: f64 = 3600.0;
 
@@ -35,6 +35,7 @@ pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, controls: &ControlsModel) {
     };
 
     Plot::new("signals")
+        .height(ui.available_height())
         .allow_drag(true)
         .allow_zoom(true)
         .x_grid_spacer(egui_plot::uniform_grid_spacer(|input| {
@@ -49,7 +50,18 @@ pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, controls: &ControlsModel) {
             }
         }))
         .x_axis_formatter(|mark, _range| mark_for_timestamp(mark.value))
-        .label_formatter(|_s, val| format!("{}\n{:.1}", mark_for_timestamp(val.x), val.y))
+        .label_formatter(|pos| match pos {
+            HoverPosition::NearDataPoint {
+                plot_name,
+                position,
+                ..
+            } if !plot_name.is_empty() => Some(format!(
+                "{}, {:.1}",
+                mark_for_timestamp(position.x),
+                position.y
+            )),
+            _ => None,
+        })
         .show(ui, |plot_ui| {
             if plot.follow_latest {
                 plot_ui.set_plot_bounds(PlotBounds::from_min_max([min_x, -120.0], [max_x, 120.0]));
@@ -58,6 +70,10 @@ pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, controls: &ControlsModel) {
             plot.plot_cache.resize(series.len(), Vec::new());
 
             for (idx, signal_series) in series.iter().enumerate() {
+                if !signal_series.visible {
+                    continue;
+                }
+
                 let start_idx = signal_series.points.partition_point(|p| p.x < min_x);
                 let end_idx = signal_series.points.partition_point(|p| p.x <= max_x);
 

@@ -84,6 +84,7 @@ impl Worker {
                             all_series.push(SignalSeries {
                                 signal: new_signal.clone(),
                                 points: Vec::new(),
+                                visible: true,
                             });
                         }
                         let _ = response_sender.send(response);
