@@ -79,7 +79,7 @@ impl Worker {
 
                 match command_receiver.recv_timeout(timeout) {
                     Ok(new_signal) => {
-                        let response = format!("Signal changed to: {}", new_signal);
+                        let response = format!("New signal added.");
                         if let Ok(mut all_series) = series.lock() {
                             all_series.push(SignalSeries {
                                 signal: new_signal.clone(),
