@@ -32,7 +32,7 @@ impl MyApp {
 
 impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.command.update();
+        self.command.poll_response();
 
         egui::CentralPanel::default().show(ui, |ui| {
             controls_view::show(ui, &mut self.controls);

@@ -26,16 +26,18 @@ impl CommandModel {
         &self.last_response
     }
 
-    pub fn update(&mut self) {
+    pub fn poll_response(&mut self) {
         if let Ok(response) = self.response_receiver.try_recv() {
             self.last_response = response;
         }
     }
 
     pub fn submit(&mut self) {
-        match Signal::from_string(&self.command_buffer) {
+        match self.parse_command() {
             Ok(signal) => {
-                let _ = self.command_sender.send(signal);
+                if let Err(e) = self.command_sender.send(signal) {
+                    self.last_response = format!("Failed to send command: {}", e);
+                }
             }
 
             Err(e) => {
@@ -44,5 +46,9 @@ impl CommandModel {
         }
 
         self.command_buffer.clear();
+    }
+
+    fn parse_command(&self) -> Result<Signal, String> {
+        Signal::from_string(&self.command_buffer)
     }
 }
