@@ -1,4 +1,4 @@
-use crate::{data::Signal, worker::WorkerCommand};
+use crate::{data::Signal, dsl::parse_signal, worker::WorkerCommand};
 use crossbeam_channel::{Receiver, Sender};
 
 pub struct CommandModel {
@@ -49,6 +49,6 @@ impl CommandModel {
     }
 
     fn parse_command(&self) -> Result<Signal, String> {
-        Signal::from_string(&self.command_buffer)
+        parse_signal(&self.command_buffer)
     }
 }

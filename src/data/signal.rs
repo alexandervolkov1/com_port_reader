@@ -1,6 +1,6 @@
 use std::{f64::consts::TAU, fmt::Display};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Signal {
     SineWave {
         amplitude: f64,
@@ -71,58 +71,6 @@ impl Signal {
             Signal::Constant { value } => *value,
         }
     }
-    pub fn from_string(input: &str) -> Result<Self, String> {
-        let mut tokens = input.split_whitespace();
-
-        let kind = tokens.next().ok_or("Empty input")?;
-
-        match kind.to_lowercase().as_str() {
-            "sin" | "sine" => {
-                let amplitude = parse_parameter(tokens.next(), 100.0)?;
-                let period = parse_parameter(tokens.next(), 100.0)?;
-                let phase = parse_parameter(tokens.next(), 0.0)?;
-
-                Ok(Signal::SineWave {
-                    amplitude,
-                    period,
-                    phase,
-                })
-            }
-            "square" | "sq" => {
-                let amplitude = parse_parameter(tokens.next(), 100.0)?;
-                let period = parse_parameter(tokens.next(), 100.0)?;
-                let duty_cycle = parse_parameter(tokens.next(), 0.5)?;
-
-                if !(0.0..=1.0).contains(&duty_cycle) {
-                    return Err("Duty cycle must be between 0 and 1".to_string());
-                }
-
-                Ok(Signal::SquareWave {
-                    amplitude,
-                    period,
-                    duty_cycle,
-                })
-            }
-            "triangle" | "tri" => {
-                let amplitude = parse_parameter(tokens.next(), 100.0)?;
-                let period = parse_parameter(tokens.next(), 100.0)?;
-
-                Ok(Signal::TriangleWave { amplitude, period })
-            }
-            "saw" | "sawtooth" => {
-                let amplitude = parse_parameter(tokens.next(), 100.0)?;
-                let period = parse_parameter(tokens.next(), 100.0)?;
-
-                Ok(Signal::SawtoothWave { amplitude, period })
-            }
-            "const" | "constant" => {
-                let value = parse_parameter(tokens.next(), 50.0)?;
-
-                Ok(Signal::Constant { value })
-            }
-            _ => Err(format!("Unknown signal type: {}", kind)),
-        }
-    }
 }
 
 impl Display for Signal {
@@ -160,15 +108,6 @@ impl Display for Signal {
                 write!(f, "Constant(val={})", value)
             }
         }
-    }
-}
-
-fn parse_parameter(param: Option<&str>, default: f64) -> Result<f64, String> {
-    match param {
-        Some(s) => s
-            .parse::<f64>()
-            .map_err(|e| format!("Failed to parse number '{}': {}", s, e)),
-        None => Ok(default),
     }
 }
 
