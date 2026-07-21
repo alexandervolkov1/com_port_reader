@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use crossbeam_channel::Sender;
 
-use crate::data::Signal;
+use crate::data::{SeriesId, Signal};
 
 use super::command::WorkerCommand;
 
@@ -34,6 +34,18 @@ impl WorkerHandle {
 
     fn send(&self, command: WorkerCommand) -> Result<(), WorkerHandleError> {
         self.sender.send(command).map_err(|_| WorkerHandleError)
+    }
+
+    pub fn remove_series(&self, id: SeriesId) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::RemoveSeries(id))
+    }
+
+    pub fn set_visibility(&self, id: SeriesId, visible: bool) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::SetVisibility { id, visible })
+    }
+
+    pub fn clear_series(&self) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::ClearSeries)
     }
 }
 

@@ -7,7 +7,6 @@ use crate::{
 
 pub struct ControlsModel {
     worker: Worker,
-    series: SeriesStore,
 }
 
 impl ControlsModel {
@@ -17,14 +16,9 @@ impl ControlsModel {
         command_receiver: Receiver<WorkerCommand>,
         response_sender: Sender<String>,
     ) -> Self {
-        let worker = Worker::spawn(
-            worker_handle,
-            command_receiver,
-            response_sender,
-            series.clone(),
-        );
+        let worker = Worker::spawn(worker_handle, command_receiver, response_sender, series);
 
-        Self { worker, series }
+        Self { worker }
     }
 
     pub fn start(&self) {
@@ -36,7 +30,7 @@ impl ControlsModel {
     }
 
     pub fn clear(&self) {
-        self.series.clear();
+        self.worker.clear_series();
     }
 
     pub fn is_running(&self) -> bool {

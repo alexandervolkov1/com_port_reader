@@ -14,6 +14,7 @@ pub struct MyApp {
     plot: PlotModel,
     command: CommandModel,
     series: SeriesStore,
+    worker_handle: WorkerHandle,
 
     series_panel_open: bool,
 }
@@ -35,13 +36,13 @@ impl MyApp {
             response_sender,
         );
 
-        let command = CommandModel::new(worker_handle, response_receiver);
-
+        let command = CommandModel::new(worker_handle.clone(), response_receiver);
         Self {
             controls,
             plot: PlotModel::new(),
             command,
             series,
+            worker_handle,
             series_panel_open: false,
         }
     }
@@ -80,7 +81,7 @@ impl eframe::App for MyApp {
                         });
 
                         strip.cell(|ui| {
-                            series_view::show(ui, &self.series);
+                            series_view::show(ui, &self.series, &self.worker_handle);
                         });
                     });
             } else {

@@ -120,6 +120,18 @@ impl Worker {
                         let _ = response_sender.send("New signal added.".to_owned());
                     }
 
+                    Ok(WorkerCommand::RemoveSeries(id)) => {
+                        series.remove_series(id);
+                    }
+
+                    Ok(WorkerCommand::SetVisibility { id, visible }) => {
+                        series.set_visibility(id, visible);
+                    }
+
+                    Ok(WorkerCommand::ClearSeries) => {
+                        series.clear();
+                    }
+
                     Ok(WorkerCommand::Shutdown) => {
                         break;
                     }
@@ -150,6 +162,10 @@ impl Worker {
 
     pub fn stop(&self) {
         let _ = self.commands.stop();
+    }
+
+    pub fn clear_series(&self) {
+        let _ = self.commands.clear_series();
     }
 
     pub fn is_running(&self) -> bool {

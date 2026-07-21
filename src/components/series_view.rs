@@ -1,8 +1,11 @@
 use eframe::egui::{self, ScrollArea};
 
-use crate::data::{SeriesId, SeriesStore};
+use crate::{
+    data::{SeriesId, SeriesStore},
+    worker::WorkerHandle,
+};
 
-pub fn show(ui: &mut egui::Ui, series_store: &SeriesStore) {
+pub fn show(ui: &mut egui::Ui, series_store: &SeriesStore, worker_handle: &WorkerHandle) {
     ScrollArea::vertical().show(ui, |ui| {
         let series = series_store.metadata();
         let mut remove_id: Option<SeriesId> = None;
@@ -12,7 +15,7 @@ pub fn show(ui: &mut egui::Ui, series_store: &SeriesStore) {
 
             ui.horizontal(|ui| {
                 if ui.checkbox(&mut visible, "").changed() {
-                    series_store.set_visibility(series.id, visible);
+                    let _ = worker_handle.set_visibility(series.id, visible);
                 }
 
                 ui.label(series.signal.to_string());
@@ -24,7 +27,7 @@ pub fn show(ui: &mut egui::Ui, series_store: &SeriesStore) {
         }
 
         if let Some(id) = remove_id {
-            series_store.remove_series(id);
+            let _ = worker_handle.remove_series(id);
         }
     });
 }
