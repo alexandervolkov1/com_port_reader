@@ -25,6 +25,27 @@ impl std::fmt::Display for SignalValidationError {
 
 impl std::error::Error for SignalValidationError {}
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignalKind {
+    Sine,
+    Square,
+    Triangle,
+    Sawtooth,
+    Constant,
+}
+
+impl SignalKind {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Sine => "sine",
+            Self::Square => "square",
+            Self::Triangle => "triangle",
+            Self::Sawtooth => "sawtooth",
+            Self::Constant => "constant",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Signal {
     SineWave {
@@ -137,14 +158,18 @@ impl Signal {
         }
     }
 
-    pub const fn kind_name(&self) -> &'static str {
+    pub const fn kind(&self) -> SignalKind {
         match self {
-            Signal::SineWave { .. } => "sine",
-            Signal::SquareWave { .. } => "square",
-            Signal::TriangleWave { .. } => "triangle",
-            Signal::SawtoothWave { .. } => "sawtooth",
-            Signal::Constant { .. } => "constant",
+            Self::SineWave { .. } => SignalKind::Sine,
+            Self::SquareWave { .. } => SignalKind::Square,
+            Self::TriangleWave { .. } => SignalKind::Triangle,
+            Self::SawtoothWave { .. } => SignalKind::Sawtooth,
+            Self::Constant { .. } => SignalKind::Constant,
         }
+    }
+
+    pub const fn kind_name(&self) -> &'static str {
+        self.kind().name()
     }
 }
 
@@ -206,7 +231,7 @@ fn require_positive(parameter: &'static str, value: f64) -> Result<(), SignalVal
 
 #[cfg(test)]
 mod tests {
-    use super::{Signal, SignalValidationError};
+    use super::{Signal, SignalKind, SignalValidationError};
 
     const EPSILON: f64 = 1e-10;
 
@@ -334,5 +359,55 @@ mod tests {
         };
 
         assert_eq!(signal.validate(), Ok(()));
+    }
+
+    #[test]
+    fn reports_signal_kind_and_name() {
+        let signals = [
+            (
+                Signal::SineWave {
+                    amplitude: 1.0,
+                    period: 1.0,
+                    phase: 0.0,
+                },
+                SignalKind::Sine,
+                "sine",
+            ),
+            (
+                Signal::SquareWave {
+                    amplitude: 1.0,
+                    period: 1.0,
+                    duty_cycle: 0.5,
+                },
+                SignalKind::Square,
+                "square",
+            ),
+            (
+                Signal::TriangleWave {
+                    amplitude: 1.0,
+                    period: 1.0,
+                },
+                SignalKind::Triangle,
+                "triangle",
+            ),
+            (
+                Signal::SawtoothWave {
+                    amplitude: 1.0,
+                    period: 1.0,
+                },
+                SignalKind::Sawtooth,
+                "sawtooth",
+            ),
+            (
+                Signal::Constant { value: 1.0 },
+                SignalKind::Constant,
+                "constant",
+            ),
+        ];
+
+        for (signal, expected_kind, expected_name) in signals {
+            assert_eq!(signal.kind(), expected_kind);
+            assert_eq!(signal.kind_name(), expected_name);
+        }
     }
 }

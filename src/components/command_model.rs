@@ -38,10 +38,8 @@ impl CommandModel {
 
     pub fn submit(&mut self) {
         match parse_command(&self.command_buffer) {
-            Ok(UserCommand::AddSeries(new_series)) => {
-                if let Err(error) = self.worker_handle.add_series(new_series) {
-                    self.set_worker_error(error);
-                }
+            Ok(command) => {
+                self.execute(command);
             }
 
             Err(error) => {
@@ -50,6 +48,16 @@ impl CommandModel {
         }
 
         self.command_buffer.clear();
+    }
+
+    pub fn execute(&mut self, command: UserCommand) {
+        match command {
+            UserCommand::AddSeries(new_series) => {
+                if let Err(error) = self.worker_handle.add_series(new_series) {
+                    self.set_worker_error(error);
+                }
+            }
+        }
     }
 
     fn set_worker_error(&mut self, error: WorkerHandleError) {
