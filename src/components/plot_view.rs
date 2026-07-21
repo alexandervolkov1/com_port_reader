@@ -46,8 +46,6 @@ pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore)
             _ => None,
         })
         .show(ui, |plot_ui| {
-            plot_ui.set_auto_bounds([false, true]);
-
             let response = plot_ui.response();
 
             let pointer_scrolled = response.hovered()
@@ -56,20 +54,35 @@ pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore)
                         || (input.zoom_delta() - 1.0).abs() > f32::EPSILON
                 });
 
+            let user_interacted = response.dragged() || pointer_scrolled;
+
             if response.double_clicked() {
+                // Возвращаем полностью автоматический режим.
                 plot.follow_latest = true;
                 plot.manual_x_bounds = None;
 
+                // X задаётся нашим временным окном,
+                // Y вычисляется автоматически.
+                plot_ui.set_auto_bounds([false, true]);
                 plot_ui.set_plot_bounds_x(min_x..=max_x);
-            } else if response.dragged() || pointer_scrolled {
+            } else if user_interacted {
+                // Пользователь начал ручную навигацию.
                 plot.follow_latest = false;
+
+                // Отключаем автоматические границы обеих осей.
+                plot_ui.set_auto_bounds([false, false]);
 
                 let bounds = plot_ui.plot_bounds();
 
                 plot.manual_x_bounds = Some((bounds.min()[0], bounds.max()[0]));
             } else if plot.follow_latest {
+                // Продолжаем автоматический режим.
+                plot_ui.set_auto_bounds([false, true]);
                 plot_ui.set_plot_bounds_x(min_x..=max_x);
             } else {
+                // Сохраняем ручные границы.
+                plot_ui.set_auto_bounds([false, false]);
+
                 let bounds = plot_ui.plot_bounds();
 
                 plot.manual_x_bounds = Some((bounds.min()[0], bounds.max()[0]));
