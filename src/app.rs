@@ -8,7 +8,7 @@ use crate::components::{
     plot_model::PlotModel, plot_view, series_view,
 };
 use crate::data::SeriesStore;
-use crate::worker::WorkerHandle;
+use crate::worker::{WorkerConfig, WorkerHandle};
 
 const SERIES_PANEL_WIDTH: f32 = 150.0;
 const TOGGLE_WIDTH: f32 = 22.0;
@@ -32,12 +32,15 @@ impl MyApp {
 
         let worker_handle = WorkerHandle::new(command_sender);
 
+        let worker_config = WorkerConfig::new(Duration::from_millis(1000));
+
         let controls = ControlsModel::new(
             series.clone(),
             worker_handle.clone(),
             command_receiver,
             event_sender,
             Box::new(SignalGenerator::new()),
+            worker_config,
         );
 
         let command = CommandModel::new(worker_handle.clone(), event_receiver);

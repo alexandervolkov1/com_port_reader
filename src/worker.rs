@@ -1,8 +1,10 @@
 mod command;
+mod config;
 mod event;
 mod handle;
 
 pub use command::WorkerCommand;
+pub use config::WorkerConfig;
 pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
 
@@ -14,9 +16,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-const POLL_INTERVAL: Duration = Duration::from_millis(1000);
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 enum AcquisitionState {
     Stopped,
@@ -40,9 +40,11 @@ impl Worker {
         event_sender: Sender<WorkerEvent>,
         series: SeriesStore,
         mut source: Box<dyn AcquisitionSource>,
+        config: WorkerConfig,
     ) -> Self {
         let running = Arc::new(AtomicBool::new(false));
         let thread_running = running.clone();
+        let poll_interval = config.poll_interval();
 
         let thread = thread::spawn(move || {
             let mut state = AcquisitionState::Stopped;
@@ -72,10 +74,10 @@ impl Worker {
 
                         match result {
                             Ok(()) => {
-                                *next_poll += POLL_INTERVAL;
+                                *next_poll += poll_interval;
 
-                                if Instant::now() > *next_poll + POLL_INTERVAL {
-                                    *next_poll = Instant::now() + POLL_INTERVAL;
+                                if Instant::now() > *next_poll + poll_interval {
+                                    *next_poll = Instant::now() + poll_interval;
                                 }
 
                                 poll_completed = true;
@@ -131,7 +133,7 @@ impl Worker {
 
                                     state = AcquisitionState::Running {
                                         started_at,
-                                        next_poll: started_at + POLL_INTERVAL,
+                                        next_poll: started_at + poll_interval,
                                     };
 
                                     thread_running.store(true, Ordering::Release);
