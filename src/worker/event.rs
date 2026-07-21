@@ -1,9 +1,13 @@
-use crate::data::{AddSeriesError, SeriesId};
+use crate::{
+    acquisition::AcquisitionError,
+    data::{AddSeriesError, SeriesId},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkerEvent {
     SeriesAdded(SeriesId),
     SeriesAddFailed(AddSeriesError),
+    AcquisitionFailed(AcquisitionError),
 }
 
 impl std::fmt::Display for WorkerEvent {
@@ -15,6 +19,10 @@ impl std::fmt::Display for WorkerEvent {
 
             Self::SeriesAddFailed(error) => {
                 write!(formatter, "Failed to add series: {error}")
+            }
+
+            Self::AcquisitionFailed(error) => {
+                write!(formatter, "Acquisition stopped: {error}")
             }
         }
     }

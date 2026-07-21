@@ -1,6 +1,6 @@
 use crate::data::{Sample, SignalSeries};
 
-use super::AcquisitionSource;
+use super::{AcquisitionError, AcquisitionSource};
 
 #[derive(Default)]
 pub struct SignalGenerator;
@@ -12,12 +12,19 @@ impl SignalGenerator {
 }
 
 impl AcquisitionSource for SignalGenerator {
-    fn sample(&mut self, series: &mut [SignalSeries], timestamp: f64, elapsed_seconds: f64) {
+    fn sample(
+        &mut self,
+        series: &mut [SignalSeries],
+        timestamp: f64,
+        elapsed_seconds: f64,
+    ) -> Result<(), AcquisitionError> {
         for signal_series in series {
             let value = signal_series.signal.value_at(elapsed_seconds);
 
             signal_series.samples.push(Sample::new(timestamp, value));
         }
+
+        Ok(())
     }
 }
 
@@ -44,7 +51,7 @@ mod tests {
             ),
         ];
 
-        generator.sample(&mut series, 1_000.0, 5.0);
+        generator.sample(&mut series, 1_000.0, 5.0).unwrap();
 
         assert_eq!(series[0].samples.len(), 1);
         assert_eq!(

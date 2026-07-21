@@ -50,6 +50,9 @@ impl Worker {
             loop {
                 let now = Instant::now();
 
+                let mut poll_completed = false;
+                let mut acquisition_error = None;
+
                 if let AcquisitionState::Running {
                     started_at,
                     next_poll,
@@ -63,18 +66,40 @@ impl Worker {
                             .unwrap()
                             .as_secs_f64();
 
-                        series.with_mut(|all_series| {
-                            source.sample(all_series, timestamp, elapsed_seconds);
+                        let result = series.with_mut(|all_series| {
+                            source.sample(all_series, timestamp, elapsed_seconds)
                         });
 
-                        *next_poll += POLL_INTERVAL;
+                        match result {
+                            Ok(()) => {
+                                *next_poll += POLL_INTERVAL;
 
-                        if Instant::now() > *next_poll + POLL_INTERVAL {
-                            *next_poll = Instant::now() + POLL_INTERVAL;
+                                if Instant::now() > *next_poll + POLL_INTERVAL {
+                                    *next_poll = Instant::now() + POLL_INTERVAL;
+                                }
+
+                                poll_completed = true;
+                            }
+
+                            Err(error) => {
+                                acquisition_error = Some(error);
+                            }
                         }
-
-                        continue;
                     }
+                }
+
+                if let Some(error) = acquisition_error {
+                    state = AcquisitionState::Stopped;
+
+                    thread_running.store(false, Ordering::Release);
+
+                    let _ = event_sender.send(WorkerEvent::AcquisitionFailed(error));
+
+                    continue;
+                }
+
+                if poll_completed {
+                    continue;
                 }
 
                 let command_result = match &state {
