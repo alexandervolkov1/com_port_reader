@@ -1,41 +1,18 @@
 use crate::{
-    components::plot_model::PlotModel,
-    data::{SeriesStore, SignalSeries},
+    components::plot_model::{PlotLine, PlotModel},
+    data::SeriesStore,
     utils::{current_time_f64, mark_for_timestamp},
 };
+
 use eframe::egui;
+
 use egui_plot::{HoverPosition, Line, Plot, PlotBounds, PlotPoint, PlotPoints};
 
 const WINDOW_SECONDS: f64 = 3600.0;
+const DOWNSAMPLE_BUCKETS: usize = 2000;
 
 pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore) {
-    series_store.with(|series| {
-        show_series(ui, plot, series);
-    });
-}
-
-pub fn show_series(ui: &mut egui::Ui, plot: &mut PlotModel, series: &[SignalSeries]) {
-    let latest_x = series
-        .iter()
-        .filter_map(|s| s.points.last())
-        .map(|p| p.x)
-        .fold(current_time_f64(), f64::max);
-
-    let first_x = series
-        .iter()
-        .filter_map(|s| s.points.first())
-        .map(|p| p.x)
-        .fold(latest_x, f64::min);
-
-    let (min_x, max_x) = if plot.follow_latest {
-        if latest_x - first_x < WINDOW_SECONDS {
-            (first_x, latest_x)
-        } else {
-            (latest_x - WINDOW_SECONDS, latest_x)
-        }
-    } else {
-        (plot.last_plot_x, plot.last_plot_x + WINDOW_SECONDS)
-    };
+    let (min_x, max_x) = prepare_lines(plot, series_store);
 
     Plot::new("signals")
         .height(ui.available_height())
@@ -53,7 +30,7 @@ pub fn show_series(ui: &mut egui::Ui, plot: &mut PlotModel, series: &[SignalSeri
             }
         }))
         .x_axis_formatter(|mark, _range| mark_for_timestamp(mark.value))
-        .label_formatter(|pos| match pos {
+        .label_formatter(|position| match position {
             HoverPosition::NearDataPoint {
                 plot_name,
                 position,
@@ -72,29 +49,9 @@ pub fn show_series(ui: &mut egui::Ui, plot: &mut PlotModel, series: &[SignalSeri
                 plot_ui.set_plot_bounds(PlotBounds::from_min_max([min_x, -120.0], [max_x, 120.0]));
             }
 
-            plot.plot_cache.resize(series.len(), Vec::new());
-
-            for (idx, signal_series) in series.iter().enumerate() {
-                if !signal_series.visible {
-                    continue;
-                }
-
-                let start_idx = signal_series.points.partition_point(|p| p.x < min_x);
-                let end_idx = signal_series.points.partition_point(|p| p.x <= max_x);
-
-                let visible = &signal_series.points[start_idx..end_idx];
-
-                let downsampled = &mut plot.plot_cache[idx];
-                downsampled.clear();
-
-                downsample_min_max_into(visible, 2000, downsampled);
-
+            for line in &plot.lines {
                 plot_ui.line(
-                    Line::new(
-                        signal_series.name.clone(),
-                        PlotPoints::Owned(downsampled.clone()),
-                    )
-                    .width(4.0),
+                    Line::new(line.name.clone(), PlotPoints::Owned(line.points.clone())).width(4.0),
                 );
             }
 
@@ -111,48 +68,112 @@ pub fn show_series(ui: &mut egui::Ui, plot: &mut PlotModel, series: &[SignalSeri
         });
 }
 
+fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64) {
+    series_store.with(|series| {
+        let latest_x = series
+            .iter()
+            .filter_map(|series| series.points.last())
+            .map(|point| point.x)
+            .fold(current_time_f64(), f64::max);
+
+        let first_x = series
+            .iter()
+            .filter_map(|series| series.points.first())
+            .map(|point| point.x)
+            .fold(latest_x, f64::min);
+
+        let (min_x, max_x) = if plot.follow_latest {
+            if latest_x - first_x < WINDOW_SECONDS {
+                (first_x, latest_x)
+            } else {
+                (latest_x - WINDOW_SECONDS, latest_x)
+            }
+        } else {
+            (plot.last_plot_x, plot.last_plot_x + WINDOW_SECONDS)
+        };
+
+        plot.lines.resize_with(series.len(), PlotLine::default);
+
+        let mut prepared_count = 0;
+
+        for signal_series in series {
+            if !signal_series.visible {
+                continue;
+            }
+
+            let start_idx = signal_series
+                .points
+                .partition_point(|point| point.x < min_x);
+
+            let end_idx = signal_series
+                .points
+                .partition_point(|point| point.x <= max_x);
+
+            let visible_points = &signal_series.points[start_idx..end_idx];
+
+            let line = &mut plot.lines[prepared_count];
+
+            line.name.clone_from(&signal_series.name);
+
+            line.points.clear();
+
+            downsample_min_max_into(visible_points, DOWNSAMPLE_BUCKETS, &mut line.points);
+
+            prepared_count += 1;
+        }
+
+        plot.lines.truncate(prepared_count);
+
+        (min_x, max_x)
+    })
+}
+
 fn downsample_min_max_into(
     points: &[PlotPoint],
-    target_points: usize,
+    target_buckets: usize,
     output: &mut Vec<PlotPoint>,
 ) {
-    if points.len() <= target_points || target_points < 2 {
+    if points.len() <= target_buckets || target_buckets < 2 {
         output.extend_from_slice(points);
         return;
     }
 
-    let bucket_size = points.len() as f64 / target_points as f64;
-    output.reserve((target_points * 2).min(1024));
+    let bucket_size = points.len() as f64 / target_buckets as f64;
+
+    output.reserve(target_buckets * 2);
 
     let mut bucket_start = 0.0;
 
     while (bucket_start as usize) < points.len() {
         let start = bucket_start as usize;
+
         let end = ((bucket_start + bucket_size) as usize).min(points.len());
 
         if start >= end {
             break;
         }
 
-        let slice = &points[start..end];
-        let mut min = slice[0];
-        let mut max = slice[0];
+        let bucket = &points[start..end];
 
-        for p in slice {
-            if p.y < min.y {
-                min = *p;
+        let mut minimum = bucket[0];
+        let mut maximum = bucket[0];
+
+        for point in bucket {
+            if point.y < minimum.y {
+                minimum = *point;
             }
-            if p.y > max.y {
-                max = *p;
+
+            if point.y > maximum.y {
+                maximum = *point;
             }
         }
 
-        if min.x < max.x {
-            output.push(min);
-            output.push(max);
+        if minimum.x < maximum.x {
+            output.push(minimum);
+            output.push(maximum);
         } else {
-            output.push(max);
-            output.push(min);
+            output.push(maximum);
+            output.push(minimum);
         }
 
         bucket_start += bucket_size;
