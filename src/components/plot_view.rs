@@ -6,7 +6,7 @@ use crate::{
 
 use eframe::egui;
 
-use egui_plot::{HoverPosition, Line, Plot, PlotBounds, PlotPoint, PlotPoints};
+use egui_plot::{HoverPosition, Line, Plot, PlotPoint, PlotPoints};
 
 const WINDOW_SECONDS: f64 = 3600.0;
 const DOWNSAMPLE_BUCKETS: usize = 2000;
@@ -18,6 +18,7 @@ pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore)
         .height(ui.available_height())
         .allow_drag(true)
         .allow_zoom(true)
+        .auto_bounds([false, true])
         .x_grid_spacer(egui_plot::uniform_grid_spacer(|input| {
             let span = input.bounds.1 - input.bounds.0;
 
@@ -45,25 +46,39 @@ pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore)
             _ => None,
         })
         .show(ui, |plot_ui| {
-            if plot.follow_latest {
-                plot_ui.set_plot_bounds(PlotBounds::from_min_max([min_x, -120.0], [max_x, 120.0]));
+            plot_ui.set_auto_bounds([false, true]);
+
+            let response = plot_ui.response();
+
+            let pointer_scrolled = response.hovered()
+                && plot_ui.ctx().input(|input| {
+                    input.smooth_scroll_delta != egui::Vec2::ZERO
+                        || (input.zoom_delta() - 1.0).abs() > f32::EPSILON
+                });
+
+            if response.double_clicked() {
+                plot.follow_latest = true;
+                plot.manual_x_bounds = None;
+
+                plot_ui.set_plot_bounds_x(min_x..=max_x);
+            } else if response.dragged() || pointer_scrolled {
+                plot.follow_latest = false;
+
+                let bounds = plot_ui.plot_bounds();
+
+                plot.manual_x_bounds = Some((bounds.min()[0], bounds.max()[0]));
+            } else if plot.follow_latest {
+                plot_ui.set_plot_bounds_x(min_x..=max_x);
+            } else {
+                let bounds = plot_ui.plot_bounds();
+
+                plot.manual_x_bounds = Some((bounds.min()[0], bounds.max()[0]));
             }
 
             for line in &plot.lines {
                 plot_ui.line(
                     Line::new(line.name.clone(), PlotPoints::Owned(line.points.clone())).width(4.0),
                 );
-            }
-
-            let response = plot_ui.response();
-
-            if response.dragged() {
-                plot.follow_latest = false;
-                plot.last_plot_x = plot_ui.plot_bounds().min()[0];
-            }
-
-            if response.double_clicked() {
-                plot.follow_latest = true;
             }
         });
 }
@@ -82,14 +97,16 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
             .map(|sample| sample.timestamp)
             .fold(latest_x, f64::min);
 
-        let (min_x, max_x) = if plot.follow_latest {
-            if latest_x - first_x < WINDOW_SECONDS {
-                (first_x, latest_x)
-            } else {
-                (latest_x - WINDOW_SECONDS, latest_x)
-            }
+        let live_bounds = if latest_x - first_x < WINDOW_SECONDS {
+            (first_x, latest_x)
         } else {
-            (plot.last_plot_x, plot.last_plot_x + WINDOW_SECONDS)
+            (latest_x - WINDOW_SECONDS, latest_x)
+        };
+
+        let (min_x, max_x) = if plot.follow_latest {
+            live_bounds
+        } else {
+            plot.manual_x_bounds.unwrap_or(live_bounds)
         };
 
         plot.lines.resize_with(series.len(), PlotLine::default);
