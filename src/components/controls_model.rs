@@ -1,21 +1,20 @@
 use crossbeam_channel::{Receiver, Sender};
-use std::sync::{Arc, Mutex};
 
 use crate::{
-    data::SignalSeries,
+    data::SeriesStore,
     worker::{Worker, WorkerCommand},
 };
 
 pub struct ControlsModel {
     worker: Worker,
-    series: Arc<Mutex<Vec<SignalSeries>>>,
+    series: SeriesStore,
     command_receiver: Receiver<WorkerCommand>,
     response_sender: Sender<String>,
 }
 
 impl ControlsModel {
     pub fn new(
-        series: Arc<Mutex<Vec<SignalSeries>>>,
+        series: SeriesStore,
         command_receiver: Receiver<WorkerCommand>,
         response_sender: Sender<String>,
     ) -> Self {
@@ -25,10 +24,6 @@ impl ControlsModel {
             command_receiver,
             response_sender,
         }
-    }
-
-    pub fn series(&self) -> &Arc<Mutex<Vec<SignalSeries>>> {
-        &self.series
     }
 
     pub fn start(&mut self) {
@@ -44,9 +39,7 @@ impl ControlsModel {
     }
 
     pub fn clear(&mut self) {
-        if let Ok(mut series) = self.series.lock() {
-            series.clear();
-        }
+        self.series.clear();
     }
 
     pub fn is_running(&self) -> bool {

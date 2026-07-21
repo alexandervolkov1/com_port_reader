@@ -1,30 +1,32 @@
 use eframe::egui;
 use egui_extras::{Size, StripBuilder};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::components::{
     command_model::CommandModel, command_view, controls_model::ControlsModel, controls_view,
     plot_model::PlotModel, plot_view, series_view,
 };
+use crate::data::SeriesStore;
 
 pub struct MyApp {
     controls: ControlsModel,
     plot: PlotModel,
     command: CommandModel,
+    series: SeriesStore,
 
     series_panel_open: bool,
 }
 
 impl MyApp {
     pub fn new() -> Self {
-        let series = Arc::new(Mutex::new(Vec::new()));
+        let series = SeriesStore::new();
         let (command_sender, command_receiver) = crossbeam_channel::bounded(32);
         let (response_sender, response_receiver) = crossbeam_channel::bounded(32);
         Self {
-            controls: ControlsModel::new(series, command_receiver, response_sender),
+            controls: ControlsModel::new(series.clone(), command_receiver, response_sender),
             command: CommandModel::new(command_sender, response_receiver),
             plot: PlotModel::new(),
+            series,
             series_panel_open: false,
         }
     }
@@ -53,7 +55,7 @@ impl eframe::App for MyApp {
                     .size(Size::exact(SERIES_PANEL_WIDTH))
                     .horizontal(|mut strip| {
                         strip.cell(|ui| {
-                            plot_view::show(ui, &mut self.plot, &self.controls);
+                            plot_view::show(ui, &mut self.plot, &self.series);
                         });
 
                         strip.cell(|ui| {
@@ -63,7 +65,7 @@ impl eframe::App for MyApp {
                         });
 
                         strip.cell(|ui| {
-                            series_view::show(ui, &mut self.controls);
+                            series_view::show(ui, &self.series);
                         });
                     });
             } else {
@@ -72,7 +74,7 @@ impl eframe::App for MyApp {
                     .size(Size::exact(TOGGLE_WIDTH))
                     .horizontal(|mut strip| {
                         strip.cell(|ui| {
-                            plot_view::show(ui, &mut self.plot, &self.controls);
+                            plot_view::show(ui, &mut self.plot, &self.series);
                         });
 
                         strip.cell(|ui| {

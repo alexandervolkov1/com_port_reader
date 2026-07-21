@@ -2,12 +2,12 @@ mod command;
 
 pub use command::WorkerCommand;
 
-use crate::data::SignalSeries;
+use crate::data::{SeriesStore, SignalSeries};
 use crossbeam_channel::{Receiver, Sender};
 use egui_plot::PlotPoint;
 
 use std::sync::{
-    Arc, Mutex,
+    Arc,
     atomic::{AtomicBool, Ordering},
 };
 use std::thread::{self, JoinHandle};
@@ -36,7 +36,7 @@ impl Worker {
         &mut self,
         command_receiver: Receiver<WorkerCommand>,
         response_sender: Sender<String>,
-        series: Arc<Mutex<Vec<SignalSeries>>>,
+        series: SeriesStore,
     ) {
         if self.handle.is_some() {
             return;
@@ -60,8 +60,8 @@ impl Worker {
                         .unwrap()
                         .as_secs_f64();
 
-                    if let Ok(mut all_series) = series.lock() {
-                        for signal_series in all_series.iter_mut() {
+                    series.with_mut(|all_series| {
+                        for signal_series in all_series {
                             let value = signal_series.signal.value_at(delta_t);
 
                             signal_series.points.push(PlotPoint {
@@ -69,7 +69,8 @@ impl Worker {
                                 y: value,
                             });
                         }
-                    }
+                    });
+
                     next_poll += POLL_INTERVAL;
 
                     if Instant::now() > next_poll + POLL_INTERVAL {
@@ -82,13 +83,11 @@ impl Worker {
 
                 match command_receiver.recv_timeout(timeout) {
                     Ok(WorkerCommand::AddSignal(signal)) => {
-                        if let Ok(mut all_series) = series.lock() {
-                            all_series.push(SignalSeries {
-                                signal,
-                                points: Vec::new(),
-                                visible: true,
-                            });
-                        }
+                        series.push(SignalSeries {
+                            signal,
+                            points: Vec::new(),
+                            visible: true,
+                        });
 
                         let _ = response_sender.send("New signal added.".to_owned());
                     }

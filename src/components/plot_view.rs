@@ -1,5 +1,6 @@
 use crate::{
-    components::{controls_model::ControlsModel, plot_model::PlotModel},
+    components::plot_model::PlotModel,
+    data::{SeriesStore, SignalSeries},
     utils::{current_time_f64, mark_for_timestamp},
 };
 use eframe::egui;
@@ -7,11 +8,13 @@ use egui_plot::{HoverPosition, Line, Plot, PlotBounds, PlotPoint, PlotPoints};
 
 const WINDOW_SECONDS: f64 = 3600.0;
 
-pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, controls: &ControlsModel) {
-    let Ok(series) = controls.series().lock() else {
-        return;
-    };
+pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore) {
+    series_store.with(|series| {
+        show_series(ui, plot, series);
+    });
+}
 
+pub fn show_series(ui: &mut egui::Ui, plot: &mut PlotModel, series: &[SignalSeries]) {
     let latest_x = series
         .iter()
         .filter_map(|s| s.points.last())
