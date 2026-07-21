@@ -7,7 +7,10 @@ use crate::{
 pub enum WorkerEvent {
     SeriesAdded(SeriesId),
     SeriesAddFailed(AddSeriesError),
+
+    AcquisitionStartFailed(AcquisitionError),
     AcquisitionFailed(AcquisitionError),
+    AcquisitionStopFailed(AcquisitionError),
 }
 
 impl std::fmt::Display for WorkerEvent {
@@ -21,8 +24,16 @@ impl std::fmt::Display for WorkerEvent {
                 write!(formatter, "Failed to add series: {error}")
             }
 
+            Self::AcquisitionStartFailed(error) => {
+                write!(formatter, "Failed to start acquisition: {error}")
+            }
+
             Self::AcquisitionFailed(error) => {
                 write!(formatter, "Acquisition stopped: {error}")
+            }
+
+            Self::AcquisitionStopFailed(error) => {
+                write!(formatter, "Failed to stop acquisition: {error}")
             }
         }
     }

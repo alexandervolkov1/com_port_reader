@@ -32,10 +32,18 @@ impl From<&str> for AcquisitionError {
 }
 
 pub trait AcquisitionSource: Send {
+    fn start(&mut self) -> Result<(), AcquisitionError> {
+        Ok(())
+    }
+
     fn sample(
         &mut self,
         series: &mut [SignalSeries],
         timestamp: f64,
         elapsed_seconds: f64,
     ) -> Result<(), AcquisitionError>;
+
+    fn stop(&mut self) -> Result<(), AcquisitionError> {
+        Ok(())
+    }
 }

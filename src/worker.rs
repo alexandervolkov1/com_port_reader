@@ -88,10 +88,18 @@ impl Worker {
                     }
                 }
 
-                if let Some(error) = acquisition_error {
+                if let Some(mut error) = acquisition_error {
                     state = AcquisitionState::Stopped;
 
                     thread_running.store(false, Ordering::Release);
+
+                    if let Err(stop_error) = source.stop() {
+                        error = format!(
+                            "{error}; additionally failed to stop source: \
+                             {stop_error}"
+                        )
+                        .into();
+                    }
 
                     let _ = event_sender.send(WorkerEvent::AcquisitionFailed(error));
 
@@ -117,21 +125,37 @@ impl Worker {
                 match command_result {
                     Ok(WorkerCommand::Start) => {
                         if matches!(state, AcquisitionState::Stopped) {
-                            let started_at = Instant::now();
+                            match source.start() {
+                                Ok(()) => {
+                                    let started_at = Instant::now();
 
-                            state = AcquisitionState::Running {
-                                started_at,
-                                next_poll: started_at + POLL_INTERVAL,
-                            };
+                                    state = AcquisitionState::Running {
+                                        started_at,
+                                        next_poll: started_at + POLL_INTERVAL,
+                                    };
 
-                            thread_running.store(true, Ordering::Release);
+                                    thread_running.store(true, Ordering::Release);
+                                }
+
+                                Err(error) => {
+                                    let _ = event_sender
+                                        .send(WorkerEvent::AcquisitionStartFailed(error));
+                                }
+                            }
                         }
                     }
 
                     Ok(WorkerCommand::Stop) => {
-                        state = AcquisitionState::Stopped;
+                        if matches!(state, AcquisitionState::Running { .. }) {
+                            state = AcquisitionState::Stopped;
 
-                        thread_running.store(false, Ordering::Release);
+                            thread_running.store(false, Ordering::Release);
+
+                            if let Err(error) = source.stop() {
+                                let _ =
+                                    event_sender.send(WorkerEvent::AcquisitionStopFailed(error));
+                            }
+                        }
                     }
 
                     Ok(WorkerCommand::AddSeries(new_series)) => {
@@ -157,6 +181,10 @@ impl Worker {
                     }
 
                     Ok(WorkerCommand::Shutdown) => {
+                        if matches!(state, AcquisitionState::Running { .. }) {
+                            let _ = source.stop();
+                        }
+
                         break;
                     }
 
