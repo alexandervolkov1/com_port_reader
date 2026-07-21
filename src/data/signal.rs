@@ -25,7 +25,7 @@ impl std::fmt::Display for SignalValidationError {
 
 impl std::error::Error for SignalValidationError {}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Signal {
     SineWave {
         amplitude: f64,

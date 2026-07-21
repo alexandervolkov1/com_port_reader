@@ -5,6 +5,7 @@ mod app;
 mod components;
 mod data;
 mod dsl;
+mod user_command;
 mod utils;
 mod worker;
 

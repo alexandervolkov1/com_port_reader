@@ -1,6 +1,9 @@
 use std::str::SplitWhitespace;
 
-use crate::data::{NewSeries, Signal};
+use crate::{
+    data::{NewSeries, Signal},
+    user_command::UserCommand,
+};
 
 const AMPLITUDE_OPTIONS: &[&str] = &["--amp", "--amplitude"];
 
@@ -11,6 +14,26 @@ const PHASE_OPTIONS: &[&str] = &["--phase"];
 const DUTY_CYCLE_OPTIONS: &[&str] = &["--duty", "--duty-cycle"];
 
 const VALUE_OPTIONS: &[&str] = &["--value", "--val"];
+
+pub fn parse_command(input: &str) -> Result<UserCommand, String> {
+    let input = input.trim();
+
+    let Some(first_token) = input.split_whitespace().next() else {
+        return Err("Empty input".to_owned());
+    };
+
+    if first_token.eq_ignore_ascii_case("add") {
+        let series_definition = input[first_token.len()..].trim_start();
+
+        if series_definition.is_empty() {
+            return Err("Missing series definition for command 'add'".to_owned());
+        }
+
+        return parse_series(series_definition).map(UserCommand::AddSeries);
+    }
+
+    parse_series(input).map(UserCommand::AddSeries)
+}
 
 pub fn parse_series(input: &str) -> Result<NewSeries, String> {
     let mut tokens = input.split_whitespace();
@@ -229,8 +252,9 @@ fn next_option_value<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_series;
-    use crate::data::Signal;
+    use super::{parse_command, parse_series};
+
+    use crate::{data::Signal, user_command::UserCommand};
 
     #[test]
     fn parses_positional_parameters() {
@@ -418,5 +442,39 @@ mod tests {
         let result = parse_series("square --duty 2");
 
         assert_eq!(result.unwrap_err(), "Duty cycle must be between 0 and 1");
+    }
+
+    #[test]
+    fn parses_explicit_add_command() {
+        let command = parse_command("add const --value 10 --name baseline").unwrap();
+
+        let UserCommand::AddSeries(new_series) = command;
+
+        let (signal, name) = new_series.into_parts();
+
+        assert_eq!(name.as_deref(), Some("baseline"));
+        assert_eq!(signal, Signal::Constant { value: 10.0 });
+    }
+
+    #[test]
+    fn treats_legacy_signal_syntax_as_add_command() {
+        let command = parse_command("const 10 --name baseline").unwrap();
+
+        let UserCommand::AddSeries(new_series) = command;
+
+        let (signal, name) = new_series.into_parts();
+
+        assert_eq!(name.as_deref(), Some("baseline"));
+        assert_eq!(signal, Signal::Constant { value: 10.0 });
+    }
+
+    #[test]
+    fn rejects_add_without_series_definition() {
+        let result = parse_command("add");
+
+        assert_eq!(
+            result.unwrap_err(),
+            "Missing series definition for command 'add'",
+        );
     }
 }
