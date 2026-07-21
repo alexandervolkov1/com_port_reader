@@ -2,7 +2,7 @@ use crossbeam_channel::{Receiver, Sender};
 
 use crate::{
     data::SeriesStore,
-    worker::{Worker, WorkerCommand, WorkerHandle},
+    worker::{Worker, WorkerCommand, WorkerEvent, WorkerHandle},
 };
 
 pub struct ControlsModel {
@@ -14,9 +14,9 @@ impl ControlsModel {
         series: SeriesStore,
         worker_handle: WorkerHandle,
         command_receiver: Receiver<WorkerCommand>,
-        response_sender: Sender<String>,
+        event_sender: Sender<WorkerEvent>,
     ) -> Self {
-        let worker = Worker::spawn(worker_handle, command_receiver, response_sender, series);
+        let worker = Worker::spawn(worker_handle, command_receiver, event_sender, series);
 
         Self { worker }
     }

@@ -1,7 +1,9 @@
 mod command;
+mod event;
 mod handle;
 
 pub use command::WorkerCommand;
+pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
 
 use crate::data::SeriesStore;
@@ -36,7 +38,7 @@ impl Worker {
     pub fn spawn(
         commands: WorkerHandle,
         command_receiver: Receiver<WorkerCommand>,
-        response_sender: Sender<String>,
+        event_sender: Sender<WorkerEvent>,
         series: SeriesStore,
     ) -> Self {
         let running = Arc::new(AtomicBool::new(false));
@@ -115,15 +117,13 @@ impl Worker {
                     }
 
                     Ok(WorkerCommand::AddSeries(new_series)) => {
-                        let response = match series.add_series(new_series) {
-                            Ok(_) => "New series added.".to_owned(),
+                        let event = match series.add_series(new_series) {
+                            Ok(id) => WorkerEvent::SeriesAdded(id),
 
-                            Err(error) => {
-                                format!("Failed to add series: {error}")
-                            }
+                            Err(error) => WorkerEvent::SeriesAddFailed(error),
                         };
 
-                        let _ = response_sender.send(response);
+                        let _ = event_sender.send(event);
                     }
 
                     Ok(WorkerCommand::RemoveSeries(id)) => {

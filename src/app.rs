@@ -27,7 +27,7 @@ impl MyApp {
 
         let (command_sender, command_receiver) = crossbeam_channel::bounded(32);
 
-        let (response_sender, response_receiver) = crossbeam_channel::bounded(32);
+        let (event_sender, event_receiver) = crossbeam_channel::unbounded();
 
         let worker_handle = WorkerHandle::new(command_sender);
 
@@ -35,10 +35,10 @@ impl MyApp {
             series.clone(),
             worker_handle.clone(),
             command_receiver,
-            response_sender,
+            event_sender,
         );
 
-        let command = CommandModel::new(worker_handle.clone(), response_receiver);
+        let command = CommandModel::new(worker_handle.clone(), event_receiver);
         Self {
             controls,
             plot: PlotModel::new(),
@@ -52,7 +52,7 @@ impl MyApp {
 
 impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.command.poll_response();
+        self.command.poll_events();
 
         egui::CentralPanel::default().show(ui, |ui| {
             controls_view::show(ui, &mut self.controls);

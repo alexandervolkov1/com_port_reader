@@ -1,18 +1,22 @@
-use crate::{data::NewSeries, dsl::parse_series, worker::WorkerHandle};
+use crate::{
+    data::NewSeries,
+    dsl::parse_series,
+    worker::{WorkerEvent, WorkerHandle, WorkerHandleError},
+};
 use crossbeam_channel::Receiver;
 
 pub struct CommandModel {
     worker_handle: WorkerHandle,
-    response_receiver: Receiver<String>,
+    event_receiver: Receiver<WorkerEvent>,
     command_buffer: String,
     last_response: String,
 }
 
 impl CommandModel {
-    pub fn new(worker_handle: WorkerHandle, response_receiver: Receiver<String>) -> Self {
+    pub fn new(worker_handle: WorkerHandle, event_receiver: Receiver<WorkerEvent>) -> Self {
         Self {
             worker_handle,
-            response_receiver,
+            event_receiver,
             command_buffer: String::new(),
             last_response: String::new(),
         }
@@ -26,9 +30,9 @@ impl CommandModel {
         &self.last_response
     }
 
-    pub fn poll_response(&mut self) {
-        if let Ok(response) = self.response_receiver.try_recv() {
-            self.last_response = response;
+    pub fn poll_events(&mut self) {
+        while let Ok(event) = self.event_receiver.try_recv() {
+            self.last_response = event.to_string();
         }
     }
 
@@ -36,7 +40,7 @@ impl CommandModel {
         match self.parse_command() {
             Ok(new_series) => {
                 if let Err(error) = self.worker_handle.add_series(new_series) {
-                    self.last_response = format!("Failed to send command: {error}");
+                    self.set_worker_error(error);
                 }
             }
 
@@ -46,6 +50,10 @@ impl CommandModel {
         }
 
         self.command_buffer.clear();
+    }
+
+    fn set_worker_error(&mut self, error: WorkerHandleError) {
+        self.last_response = format!("Failed to send command: {error}");
     }
 
     fn parse_command(&self) -> Result<NewSeries, String> {
