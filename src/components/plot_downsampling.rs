@@ -13,45 +13,60 @@ pub(super) fn downsample_min_max_into(
         return;
     }
 
-    let bucket_size = samples.len() as f64 / target_buckets as f64;
+    let bucket_size = samples.len().div_ceil(target_buckets);
 
-    output.reserve(target_buckets * 2);
+    output.reserve(target_buckets * 2 + 2);
 
-    let mut bucket_start = 0.0;
+    let mut last_added_index = None;
 
-    while (bucket_start as usize) < samples.len() {
-        let start = bucket_start as usize;
-        let end = ((bucket_start + bucket_size) as usize).min(samples.len());
+    push_sample(samples, 0, &mut last_added_index, output);
 
-        if start >= end {
-            break;
-        }
+    for (bucket_number, bucket) in samples.chunks(bucket_size).enumerate() {
+        let bucket_offset = bucket_number * bucket_size;
 
-        let bucket = &samples[start..end];
+        let mut minimum_index = 0;
+        let mut maximum_index = 0;
 
-        let mut minimum = bucket[0];
-        let mut maximum = bucket[0];
-
-        for sample in bucket {
-            if sample.value < minimum.value {
-                minimum = *sample;
+        for (index, sample) in bucket.iter().enumerate().skip(1) {
+            if sample.value < bucket[minimum_index].value {
+                minimum_index = index;
             }
 
-            if sample.value > maximum.value {
-                maximum = *sample;
+            if sample.value > bucket[maximum_index].value {
+                maximum_index = index;
             }
         }
 
-        if minimum.timestamp < maximum.timestamp {
-            output.push(plot_point_from_sample(minimum));
-            output.push(plot_point_from_sample(maximum));
+        let minimum_index = bucket_offset + minimum_index;
+        let maximum_index = bucket_offset + maximum_index;
+
+        let (first_index, second_index) = if minimum_index <= maximum_index {
+            (minimum_index, maximum_index)
         } else {
-            output.push(plot_point_from_sample(maximum));
-            output.push(plot_point_from_sample(minimum));
-        }
+            (maximum_index, minimum_index)
+        };
 
-        bucket_start += bucket_size;
+        push_sample(samples, first_index, &mut last_added_index, output);
+
+        push_sample(samples, second_index, &mut last_added_index, output);
     }
+
+    push_sample(samples, samples.len() - 1, &mut last_added_index, output);
+}
+
+fn push_sample(
+    samples: &[Sample],
+    index: usize,
+    last_added_index: &mut Option<usize>,
+    output: &mut Vec<PlotPoint>,
+) {
+    if *last_added_index == Some(index) {
+        return;
+    }
+
+    output.push(plot_point_from_sample(samples[index]));
+
+    *last_added_index = Some(index);
 }
 
 fn plot_point_from_sample(sample: Sample) -> PlotPoint {
@@ -86,14 +101,16 @@ mod tests {
     }
 
     #[test]
-    fn preserves_minimum_and_maximum_in_chronological_order() {
+    fn preserves_endpoints_and_bucket_extrema() {
         let samples = [
-            Sample::new(0.0, 1.0),
-            Sample::new(1.0, 5.0),
-            Sample::new(2.0, -2.0),
-            Sample::new(3.0, 7.0),
-            Sample::new(4.0, 0.0),
-            Sample::new(5.0, 3.0),
+            Sample::new(0.0, 0.0),
+            Sample::new(1.0, 10.0),
+            Sample::new(2.0, -10.0),
+            Sample::new(3.0, 1.0),
+            Sample::new(4.0, 2.0),
+            Sample::new(5.0, 9.0),
+            Sample::new(6.0, -9.0),
+            Sample::new(7.0, 3.0),
         ];
 
         let mut points = Vec::new();
@@ -102,7 +119,35 @@ mod tests {
 
         assert_eq!(
             point_pairs(&points),
-            vec![(1.0, 5.0), (2.0, -2.0), (3.0, 7.0), (4.0, 0.0)],
+            vec![
+                (0.0, 0.0),
+                (1.0, 10.0),
+                (2.0, -10.0),
+                (5.0, 9.0),
+                (6.0, -9.0),
+                (7.0, 3.0),
+            ],
+        );
+    }
+
+    #[test]
+    fn does_not_duplicate_points_for_constant_signal() {
+        let samples = [
+            Sample::new(0.0, 5.0),
+            Sample::new(1.0, 5.0),
+            Sample::new(2.0, 5.0),
+            Sample::new(3.0, 5.0),
+            Sample::new(4.0, 5.0),
+            Sample::new(5.0, 5.0),
+        ];
+
+        let mut points = Vec::new();
+
+        downsample_min_max_into(&samples, 2, &mut points);
+
+        assert_eq!(
+            point_pairs(&points),
+            vec![(0.0, 5.0), (3.0, 5.0), (5.0, 5.0)],
         );
     }
 
