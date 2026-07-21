@@ -11,18 +11,26 @@ impl SeriesId {
     }
 }
 
+impl std::fmt::Display for SeriesId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
 #[derive(Clone)]
 pub struct SignalSeries {
     pub id: SeriesId,
+    pub name: String,
     pub signal: Signal,
     pub points: Vec<PlotPoint>,
     pub visible: bool,
 }
 
 impl SignalSeries {
-    pub(crate) fn new(id: SeriesId, signal: Signal) -> Self {
+    pub(crate) fn new(id: SeriesId, name: String, signal: Signal) -> Self {
         Self {
             id,
+            name,
             signal,
             points: Vec::new(),
             visible: true,
@@ -33,6 +41,7 @@ impl SignalSeries {
 #[derive(Clone)]
 pub struct SeriesMetadata {
     pub id: SeriesId,
+    pub name: String,
     pub signal: Signal,
     pub visible: bool,
 }
@@ -41,6 +50,7 @@ impl From<&SignalSeries> for SeriesMetadata {
     fn from(series: &SignalSeries) -> Self {
         Self {
             id: series.id,
+            name: series.name.clone(),
             signal: series.signal.clone(),
             visible: series.visible,
         }

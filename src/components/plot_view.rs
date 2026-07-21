@@ -59,10 +59,12 @@ pub fn show_series(ui: &mut egui::Ui, plot: &mut PlotModel, series: &[SignalSeri
                 position,
                 ..
             } if !plot_name.is_empty() => Some(format!(
-                "{}, {:.1}",
+                "{}\n{}, {:.1}",
+                plot_name,
                 mark_for_timestamp(position.x),
-                position.y
+                position.y,
             )),
+
             _ => None,
         })
         .show(ui, |plot_ui| {
@@ -89,7 +91,7 @@ pub fn show_series(ui: &mut egui::Ui, plot: &mut PlotModel, series: &[SignalSeri
 
                 plot_ui.line(
                     Line::new(
-                        format!("signal {}", idx),
+                        signal_series.name.clone(),
                         PlotPoints::Owned(downsampled.clone()),
                     )
                     .width(4.0),

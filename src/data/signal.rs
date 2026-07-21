@@ -136,6 +136,16 @@ impl Signal {
             Signal::Constant { value } => *value,
         }
     }
+
+    pub const fn kind_name(&self) -> &'static str {
+        match self {
+            Signal::SineWave { .. } => "sine",
+            Signal::SquareWave { .. } => "square",
+            Signal::TriangleWave { .. } => "triangle",
+            Signal::SawtoothWave { .. } => "sawtooth",
+            Signal::Constant { .. } => "constant",
+        }
+    }
 }
 
 impl Display for Signal {

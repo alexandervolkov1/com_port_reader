@@ -18,7 +18,8 @@ pub fn show(ui: &mut egui::Ui, series_store: &SeriesStore, worker_handle: &Worke
                     let _ = worker_handle.set_visibility(series.id, visible);
                 }
 
-                ui.label(series.signal.to_string());
+                ui.label(&series.name)
+                    .on_hover_text(series.signal.to_string());
 
                 if ui.button("Delete").clicked() {
                     remove_id = Some(series.id);

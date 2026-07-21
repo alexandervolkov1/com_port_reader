@@ -44,8 +44,10 @@ impl SeriesStore {
 
         let id = SeriesId::new(self.inner.next_id.fetch_add(1, Ordering::Relaxed));
 
+        let name = format!("{}{}", signal.kind_name(), id);
+
         self.with_mut(|series| {
-            series.push(SignalSeries::new(id, signal));
+            series.push(SignalSeries::new(id, name, signal));
         });
 
         Ok(id)
@@ -171,5 +173,55 @@ mod tests {
         assert!(store.remove_series(id));
         assert!(!store.remove_series(id));
         assert!(!store.set_visibility(id, false));
+    }
+
+    #[test]
+    fn generates_unique_default_names() {
+        let store = SeriesStore::new();
+
+        store
+            .add_signal(Signal::SineWave {
+                amplitude: 1.0,
+                period: 10.0,
+                phase: 0.0,
+            })
+            .unwrap();
+
+        store
+            .add_signal(Signal::SquareWave {
+                amplitude: 1.0,
+                period: 10.0,
+                duty_cycle: 0.5,
+            })
+            .unwrap();
+
+        let names = store.with(|series| {
+            series
+                .iter()
+                .map(|series| series.name.clone())
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(names, vec!["sine1", "square2"]);
+    }
+
+    #[test]
+    fn does_not_reuse_default_names_after_clear() {
+        let store = SeriesStore::new();
+
+        store.add_signal(Signal::Constant { value: 1.0 }).unwrap();
+
+        store.clear();
+
+        store.add_signal(Signal::Constant { value: 2.0 }).unwrap();
+
+        let names = store.with(|series| {
+            series
+                .iter()
+                .map(|series| series.name.clone())
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(names, vec!["constant2"]);
     }
 }
