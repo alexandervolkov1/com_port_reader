@@ -8,37 +8,34 @@ use crate::{
 pub struct ControlsModel {
     worker: Worker,
     series: SeriesStore,
-    command_receiver: Receiver<WorkerCommand>,
-    response_sender: Sender<String>,
 }
 
 impl ControlsModel {
     pub fn new(
         series: SeriesStore,
+        command_sender: Sender<WorkerCommand>,
         command_receiver: Receiver<WorkerCommand>,
         response_sender: Sender<String>,
     ) -> Self {
-        Self {
-            worker: Worker::new(),
-            series,
+        let worker = Worker::spawn(
+            command_sender,
             command_receiver,
             response_sender,
-        }
-    }
-
-    pub fn start(&mut self) {
-        self.worker.start(
-            self.command_receiver.clone(),
-            self.response_sender.clone(),
-            self.series.clone(),
+            series.clone(),
         );
+
+        Self { worker, series }
     }
 
-    pub fn stop(&mut self) {
+    pub fn start(&self) {
+        self.worker.start();
+    }
+
+    pub fn stop(&self) {
         self.worker.stop();
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         self.series.clear();
     }
 

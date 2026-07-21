@@ -20,12 +20,24 @@ pub struct MyApp {
 impl MyApp {
     pub fn new() -> Self {
         let series = SeriesStore::new();
+
         let (command_sender, command_receiver) = crossbeam_channel::bounded(32);
+
         let (response_sender, response_receiver) = crossbeam_channel::bounded(32);
+
+        let controls = ControlsModel::new(
+            series.clone(),
+            command_sender.clone(),
+            command_receiver,
+            response_sender,
+        );
+
+        let command = CommandModel::new(command_sender, response_receiver);
+
         Self {
-            controls: ControlsModel::new(series.clone(), command_receiver, response_sender),
-            command: CommandModel::new(command_sender, response_receiver),
+            controls,
             plot: PlotModel::new(),
+            command,
             series,
             series_panel_open: false,
         }

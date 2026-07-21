@@ -3,7 +3,7 @@ mod command;
 pub use command::WorkerCommand;
 
 use crate::data::SeriesStore;
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use egui_plot::PlotPoint;
 
 use std::sync::{
@@ -15,96 +15,152 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(1000);
 
+enum AcquisitionState {
+    Stopped,
+
+    Running {
+        started_at: Instant,
+        next_poll: Instant,
+    },
+}
+
 pub struct Worker {
     handle: Option<JoinHandle<()>>,
+    command_sender: Sender<WorkerCommand>,
     running: Arc<AtomicBool>,
 }
 
 impl Worker {
-    pub fn new() -> Self {
-        Self {
-            handle: None,
-            running: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::Acquire)
-    }
-
-    pub fn start(
-        &mut self,
+    pub fn spawn(
+        command_sender: Sender<WorkerCommand>,
         command_receiver: Receiver<WorkerCommand>,
         response_sender: Sender<String>,
         series: SeriesStore,
-    ) {
-        if self.handle.is_some() {
-            return;
-        }
+    ) -> Self {
+        let running = Arc::new(AtomicBool::new(false));
+        let thread_running = running.clone();
 
-        self.running.store(true, Ordering::Release);
-        let running = self.running.clone();
+        let handle = thread::spawn(move || {
+            let mut state = AcquisitionState::Stopped;
 
-        self.handle = Some(thread::spawn(move || {
-            let start_time = Instant::now();
-            let mut next_poll = start_time + POLL_INTERVAL;
-
-            while running.load(Ordering::Acquire) {
+            loop {
                 let now = Instant::now();
 
-                if now >= next_poll {
-                    let delta_t = start_time.elapsed().as_secs_f64();
+                if let AcquisitionState::Running {
+                    started_at,
+                    next_poll,
+                } = &mut state
+                {
+                    if now >= *next_poll {
+                        let elapsed_seconds = started_at.elapsed().as_secs_f64();
 
-                    let timestamp = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs_f64();
+                        let timestamp = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs_f64();
 
-                    series.with_mut(|all_series| {
-                        for signal_series in all_series {
-                            let value = signal_series.signal.value_at(delta_t);
+                        series.with_mut(|all_series| {
+                            for signal_series in all_series {
+                                let value = signal_series.signal.value_at(elapsed_seconds);
 
-                            signal_series.points.push(PlotPoint {
-                                x: timestamp,
-                                y: value,
-                            });
+                                signal_series.points.push(PlotPoint {
+                                    x: timestamp,
+                                    y: value,
+                                });
+                            }
+                        });
+
+                        *next_poll += POLL_INTERVAL;
+
+                        if Instant::now() > *next_poll + POLL_INTERVAL {
+                            *next_poll = Instant::now() + POLL_INTERVAL;
                         }
-                    });
 
-                    next_poll += POLL_INTERVAL;
-
-                    if Instant::now() > next_poll + POLL_INTERVAL {
-                        next_poll = Instant::now() + POLL_INTERVAL;
+                        continue;
                     }
-                    continue;
                 }
 
-                let timeout = next_poll.saturating_duration_since(now);
+                let command_result = match &state {
+                    AcquisitionState::Stopped => command_receiver
+                        .recv()
+                        .map_err(|_| RecvTimeoutError::Disconnected),
 
-                match command_receiver.recv_timeout(timeout) {
+                    AcquisitionState::Running { next_poll, .. } => {
+                        let timeout = next_poll.saturating_duration_since(now);
+
+                        command_receiver.recv_timeout(timeout)
+                    }
+                };
+
+                match command_result {
+                    Ok(WorkerCommand::Start) => {
+                        if matches!(state, AcquisitionState::Stopped) {
+                            let started_at = Instant::now();
+
+                            state = AcquisitionState::Running {
+                                started_at,
+                                next_poll: started_at + POLL_INTERVAL,
+                            };
+
+                            thread_running.store(true, Ordering::Release);
+                        }
+                    }
+
+                    Ok(WorkerCommand::Stop) => {
+                        state = AcquisitionState::Stopped;
+
+                        thread_running.store(false, Ordering::Release);
+                    }
+
                     Ok(WorkerCommand::AddSignal(signal)) => {
                         series.add_signal(signal);
 
                         let _ = response_sender.send("New signal added.".to_owned());
                     }
 
-                    Err(_) => {}
+                    Ok(WorkerCommand::Shutdown) => {
+                        break;
+                    }
+
+                    Err(RecvTimeoutError::Timeout) => {
+                        // Наступил срок очередного опроса.
+                    }
+
+                    Err(RecvTimeoutError::Disconnected) => {
+                        break;
+                    }
                 }
             }
-        }));
+
+            thread_running.store(false, Ordering::Release);
+        });
+
+        Self {
+            handle: Some(handle),
+            command_sender,
+            running,
+        }
     }
 
-    pub fn stop(&mut self) {
-        self.running.store(false, Ordering::Release);
+    pub fn start(&self) {
+        let _ = self.command_sender.send(WorkerCommand::Start);
+    }
 
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
+    pub fn stop(&self) {
+        let _ = self.command_sender.send(WorkerCommand::Stop);
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::Acquire)
     }
 }
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        self.stop();
+        let _ = self.command_sender.send(WorkerCommand::Shutdown);
+
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
     }
 }
