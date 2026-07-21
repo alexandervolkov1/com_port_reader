@@ -1,11 +1,23 @@
 use eframe::egui::{self, ScrollArea};
 
 use crate::{
+    components::series_editor_model::SeriesEditorModel,
     data::{SeriesId, SeriesStore},
     worker::WorkerHandle,
 };
 
-pub fn show(ui: &mut egui::Ui, series_store: &SeriesStore, worker_handle: &WorkerHandle) {
+pub fn show(
+    ui: &mut egui::Ui,
+    series_store: &SeriesStore,
+    worker_handle: &WorkerHandle,
+    editor: &mut SeriesEditorModel,
+) {
+    if ui.button("Add new").clicked() {
+        editor.open();
+    }
+
+    ui.separator();
+
     ScrollArea::vertical().show(ui, |ui| {
         let series = series_store.metadata();
         let mut remove_id: Option<SeriesId> = None;

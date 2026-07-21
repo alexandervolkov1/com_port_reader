@@ -5,4 +5,6 @@ pub mod controls_view;
 mod plot_downsampling;
 pub mod plot_model;
 pub mod plot_view;
+pub mod series_editor_model;
+pub mod series_editor_view;
 pub mod series_view;

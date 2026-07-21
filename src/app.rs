@@ -5,7 +5,8 @@ use std::time::Duration;
 use crate::acquisition::SignalGenerator;
 use crate::components::{
     command_model::CommandModel, command_view, controls_model::ControlsModel, controls_view,
-    plot_model::PlotModel, plot_view, series_view,
+    plot_model::PlotModel, plot_view, series_editor_model::SeriesEditorModel, series_editor_view,
+    series_view,
 };
 use crate::data::SeriesStore;
 use crate::worker::{WorkerConfig, WorkerHandle};
@@ -20,6 +21,7 @@ pub struct MyApp {
     series: SeriesStore,
     worker_handle: WorkerHandle,
     series_panel_open: bool,
+    series_editor: SeriesEditorModel,
 }
 
 impl MyApp {
@@ -51,6 +53,7 @@ impl MyApp {
             series,
             worker_handle,
             series_panel_open: false,
+            series_editor: SeriesEditorModel::default(),
         }
     }
 }
@@ -85,7 +88,12 @@ impl eframe::App for MyApp {
                         });
 
                         strip.cell(|ui| {
-                            series_view::show(ui, &self.series, &self.worker_handle);
+                            series_view::show(
+                                ui,
+                                &self.series,
+                                &self.worker_handle,
+                                &mut self.series_editor,
+                            );
                         });
                     });
             } else {
@@ -104,6 +112,7 @@ impl eframe::App for MyApp {
                         });
                     });
             }
+            series_editor_view::show(ui.ctx(), &mut self.series_editor, &mut self.command);
         });
 
         ui.ctx().request_repaint_after(Duration::from_millis(33));

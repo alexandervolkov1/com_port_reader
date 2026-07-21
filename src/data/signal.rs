@@ -35,6 +35,14 @@ pub enum SignalKind {
 }
 
 impl SignalKind {
+    pub const ALL: [Self; 5] = [
+        Self::Sine,
+        Self::Square,
+        Self::Triangle,
+        Self::Sawtooth,
+        Self::Constant,
+    ];
+
     pub const fn name(self) -> &'static str {
         match self {
             Self::Sine => "sine",
