@@ -15,7 +15,6 @@ pub struct MyApp {
     command: CommandModel,
     series: SeriesStore,
     worker_handle: WorkerHandle,
-
     series_panel_open: bool,
 }
 

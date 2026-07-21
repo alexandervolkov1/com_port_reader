@@ -5,17 +5,17 @@ pub fn parse_signal(input: &str) -> Result<Signal, String> {
 
     let kind = tokens.next().ok_or_else(|| "Empty input".to_owned())?;
 
-    match kind.to_lowercase().as_str() {
+    let signal = match kind.to_lowercase().as_str() {
         "sin" | "sine" => {
             let amplitude = parse_parameter(tokens.next(), 100.0)?;
             let period = parse_parameter(tokens.next(), 100.0)?;
             let phase = parse_parameter(tokens.next(), 0.0)?;
 
-            Ok(Signal::SineWave {
+            Signal::SineWave {
                 amplitude,
                 period,
                 phase,
-            })
+            }
         }
 
         "square" | "sq" => {
@@ -23,39 +23,41 @@ pub fn parse_signal(input: &str) -> Result<Signal, String> {
             let period = parse_parameter(tokens.next(), 100.0)?;
             let duty_cycle = parse_parameter(tokens.next(), 0.5)?;
 
-            if !(0.0..=1.0).contains(&duty_cycle) {
-                return Err("Duty cycle must be between 0 and 1".to_owned());
-            }
-
-            Ok(Signal::SquareWave {
+            Signal::SquareWave {
                 amplitude,
                 period,
                 duty_cycle,
-            })
+            }
         }
 
         "triangle" | "tri" => {
             let amplitude = parse_parameter(tokens.next(), 100.0)?;
             let period = parse_parameter(tokens.next(), 100.0)?;
 
-            Ok(Signal::TriangleWave { amplitude, period })
+            Signal::TriangleWave { amplitude, period }
         }
 
         "saw" | "sawtooth" => {
             let amplitude = parse_parameter(tokens.next(), 100.0)?;
             let period = parse_parameter(tokens.next(), 100.0)?;
 
-            Ok(Signal::SawtoothWave { amplitude, period })
+            Signal::SawtoothWave { amplitude, period }
         }
 
         "const" | "constant" => {
             let value = parse_parameter(tokens.next(), 50.0)?;
 
-            Ok(Signal::Constant { value })
+            Signal::Constant { value }
         }
 
-        _ => Err(format!("Unknown signal type: {kind}")),
-    }
+        _ => {
+            return Err(format!("Unknown signal type: {kind}"));
+        }
+    };
+
+    signal.validate().map_err(|error| error.to_string())?;
+
+    Ok(signal)
 }
 
 fn parse_parameter(parameter: Option<&str>, default: f64) -> Result<f64, String> {

@@ -115,9 +115,15 @@ impl Worker {
                     }
 
                     Ok(WorkerCommand::AddSignal(signal)) => {
-                        series.add_signal(signal);
+                        let response = match series.add_signal(signal) {
+                            Ok(_) => "New signal added.".to_owned(),
 
-                        let _ = response_sender.send("New signal added.".to_owned());
+                            Err(error) => {
+                                format!("Failed to add signal: {error}")
+                            }
+                        };
+
+                        let _ = response_sender.send(response);
                     }
 
                     Ok(WorkerCommand::RemoveSeries(id)) => {

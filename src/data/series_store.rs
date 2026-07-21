@@ -3,8 +3,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use super::{SeriesId, SeriesMetadata, Signal, SignalSeries};
-
+use super::{SeriesId, SeriesMetadata, Signal, SignalSeries, SignalValidationError};
 struct SeriesStoreInner {
     series: Mutex<Vec<SignalSeries>>,
     next_id: AtomicU64,
@@ -40,14 +39,16 @@ impl SeriesStore {
         operation(&mut series)
     }
 
-    pub fn add_signal(&self, signal: Signal) -> SeriesId {
+    pub fn add_signal(&self, signal: Signal) -> Result<SeriesId, SignalValidationError> {
+        signal.validate()?;
+
         let id = SeriesId::new(self.inner.next_id.fetch_add(1, Ordering::Relaxed));
 
         self.with_mut(|series| {
             series.push(SignalSeries::new(id, signal));
         });
 
-        id
+        Ok(id)
     }
 
     pub fn clear(&self) {
@@ -101,9 +102,9 @@ mod tests {
     fn assigns_unique_ids() {
         let store = SeriesStore::new();
 
-        let first_id = store.add_signal(Signal::Constant { value: 1.0 });
+        let first_id = store.add_signal(Signal::Constant { value: 1.0 }).unwrap();
 
-        let second_id = store.add_signal(Signal::Constant { value: 2.0 });
+        let second_id = store.add_signal(Signal::Constant { value: 2.0 }).unwrap();
 
         assert_ne!(first_id, second_id);
 
@@ -121,11 +122,11 @@ mod tests {
     fn does_not_reuse_ids_after_clear() {
         let store = SeriesStore::new();
 
-        let first_id = store.add_signal(Signal::Constant { value: 1.0 });
+        let first_id = store.add_signal(Signal::Constant { value: 1.0 }).unwrap();
 
         store.clear();
 
-        let second_id = store.add_signal(Signal::Constant { value: 2.0 });
+        let second_id = store.add_signal(Signal::Constant { value: 2.0 }).unwrap();
 
         assert_ne!(first_id, second_id);
     }
@@ -134,7 +135,7 @@ mod tests {
     fn changes_visibility_by_id() {
         let store = SeriesStore::new();
 
-        let id = store.add_signal(Signal::Constant { value: 1.0 });
+        let id = store.add_signal(Signal::Constant { value: 1.0 }).unwrap();
 
         assert!(store.set_visibility(id, false));
 
@@ -149,9 +150,9 @@ mod tests {
     fn removes_series_by_id() {
         let store = SeriesStore::new();
 
-        let first_id = store.add_signal(Signal::Constant { value: 1.0 });
+        let first_id = store.add_signal(Signal::Constant { value: 1.0 }).unwrap();
 
-        let second_id = store.add_signal(Signal::Constant { value: 2.0 });
+        let second_id = store.add_signal(Signal::Constant { value: 2.0 }).unwrap();
 
         assert!(store.remove_series(first_id));
 
@@ -165,7 +166,7 @@ mod tests {
     fn reports_missing_series() {
         let store = SeriesStore::new();
 
-        let id = store.add_signal(Signal::Constant { value: 1.0 });
+        let id = store.add_signal(Signal::Constant { value: 1.0 }).unwrap();
 
         assert!(store.remove_series(id));
         assert!(!store.remove_series(id));
