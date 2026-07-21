@@ -6,7 +6,7 @@ pub use command::WorkerCommand;
 pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
 
-use crate::{acquisition::SignalGenerator, data::SeriesStore};
+use crate::{acquisition::AcquisitionSource, data::SeriesStore};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 
 use std::sync::{
@@ -39,14 +39,13 @@ impl Worker {
         command_receiver: Receiver<WorkerCommand>,
         event_sender: Sender<WorkerEvent>,
         series: SeriesStore,
+        mut source: Box<dyn AcquisitionSource>,
     ) -> Self {
         let running = Arc::new(AtomicBool::new(false));
         let thread_running = running.clone();
 
         let thread = thread::spawn(move || {
             let mut state = AcquisitionState::Stopped;
-
-            let generator = SignalGenerator::new();
 
             loop {
                 let now = Instant::now();
@@ -65,7 +64,7 @@ impl Worker {
                             .as_secs_f64();
 
                         series.with_mut(|all_series| {
-                            generator.sample(all_series, timestamp, elapsed_seconds);
+                            source.sample(all_series, timestamp, elapsed_seconds);
                         });
 
                         *next_poll += POLL_INTERVAL;

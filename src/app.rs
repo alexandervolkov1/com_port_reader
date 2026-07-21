@@ -2,6 +2,7 @@ use eframe::egui;
 use egui_extras::{Size, StripBuilder};
 use std::time::Duration;
 
+use crate::acquisition::SignalGenerator;
 use crate::components::{
     command_model::CommandModel, command_view, controls_model::ControlsModel, controls_view,
     plot_model::PlotModel, plot_view, series_view,
@@ -36,6 +37,7 @@ impl MyApp {
             worker_handle.clone(),
             command_receiver,
             event_sender,
+            Box::new(SignalGenerator::new()),
         );
 
         let command = CommandModel::new(worker_handle.clone(), event_receiver);
