@@ -1,12 +1,14 @@
 use crate::{
-    components::plot_model::{PlotLine, PlotModel},
-    data::{Sample, SeriesStore},
+    components::{
+        plot_downsampling::downsample_min_max_into,
+        plot_model::{PlotLine, PlotModel},
+    },
+    data::SeriesStore,
     utils::{current_time_f64, mark_for_timestamp},
 };
 
 use eframe::egui;
-
-use egui_plot::{HoverPosition, Line, Plot, PlotPoint, PlotPoints};
+use egui_plot::{HoverPosition, Line, Plot, PlotPoints};
 
 const WINDOW_SECONDS: f64 = 3600.0;
 const DOWNSAMPLE_BUCKETS: usize = 2000;
@@ -149,62 +151,4 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
 
         (min_x, max_x)
     })
-}
-
-fn downsample_min_max_into(samples: &[Sample], target_buckets: usize, output: &mut Vec<PlotPoint>) {
-    if samples.len() <= target_buckets || target_buckets < 2 {
-        output.extend(samples.iter().copied().map(plot_point_from_sample));
-
-        return;
-    }
-
-    let bucket_size = samples.len() as f64 / target_buckets as f64;
-
-    output.reserve(target_buckets * 2);
-
-    let mut bucket_start = 0.0;
-
-    while (bucket_start as usize) < samples.len() {
-        let start = bucket_start as usize;
-
-        let end = ((bucket_start + bucket_size) as usize).min(samples.len());
-
-        if start >= end {
-            break;
-        }
-
-        let bucket = &samples[start..end];
-
-        let mut minimum = bucket[0];
-        let mut maximum = bucket[0];
-
-        for sample in bucket {
-            if sample.value < minimum.value {
-                minimum = *sample;
-            }
-
-            if sample.value > maximum.value {
-                maximum = *sample;
-            }
-        }
-
-        if minimum.timestamp < maximum.timestamp {
-            output.push(plot_point_from_sample(minimum));
-
-            output.push(plot_point_from_sample(maximum));
-        } else {
-            output.push(plot_point_from_sample(maximum));
-
-            output.push(plot_point_from_sample(minimum));
-        }
-
-        bucket_start += bucket_size;
-    }
-}
-
-fn plot_point_from_sample(sample: Sample) -> PlotPoint {
-    PlotPoint {
-        x: sample.timestamp,
-        y: sample.value,
-    }
 }
