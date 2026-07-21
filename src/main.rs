@@ -1,5 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod acquisition;
 mod app;
 mod components;
 mod data;

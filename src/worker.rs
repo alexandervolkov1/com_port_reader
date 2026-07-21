@@ -6,7 +6,7 @@ pub use command::WorkerCommand;
 pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
 
-use crate::data::{Sample, SeriesStore};
+use crate::{acquisition::SignalGenerator, data::SeriesStore};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 
 use std::sync::{
@@ -46,6 +46,8 @@ impl Worker {
         let thread = thread::spawn(move || {
             let mut state = AcquisitionState::Stopped;
 
+            let generator = SignalGenerator::new();
+
             loop {
                 let now = Instant::now();
 
@@ -63,11 +65,7 @@ impl Worker {
                             .as_secs_f64();
 
                         series.with_mut(|all_series| {
-                            for signal_series in all_series {
-                                let value = signal_series.signal.value_at(elapsed_seconds);
-
-                                signal_series.samples.push(Sample::new(timestamp, value));
-                            }
+                            generator.sample(all_series, timestamp, elapsed_seconds);
                         });
 
                         *next_poll += POLL_INTERVAL;
