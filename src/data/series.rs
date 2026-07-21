@@ -1,6 +1,4 @@
-use egui_plot::PlotPoint;
-
-use super::Signal;
+use super::{Sample, Signal};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SeriesId(u64);
@@ -45,7 +43,7 @@ pub struct SignalSeries {
     pub id: SeriesId,
     pub name: String,
     pub signal: Signal,
-    pub points: Vec<PlotPoint>,
+    pub samples: Vec<Sample>,
     pub visible: bool,
 }
 
@@ -55,7 +53,7 @@ impl SignalSeries {
             id,
             name,
             signal,
-            points: Vec::new(),
+            samples: Vec::new(),
             visible: true,
         }
     }

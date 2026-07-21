@@ -1,6 +1,6 @@
 use crate::{
     components::plot_model::{PlotLine, PlotModel},
-    data::SeriesStore,
+    data::{Sample, SeriesStore},
     utils::{current_time_f64, mark_for_timestamp},
 };
 
@@ -72,14 +72,14 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
     series_store.with(|series| {
         let latest_x = series
             .iter()
-            .filter_map(|series| series.points.last())
-            .map(|point| point.x)
+            .filter_map(|series| series.samples.last())
+            .map(|sample| sample.timestamp)
             .fold(current_time_f64(), f64::max);
 
         let first_x = series
             .iter()
-            .filter_map(|series| series.points.first())
-            .map(|point| point.x)
+            .filter_map(|series| series.samples.first())
+            .map(|sample| sample.timestamp)
             .fold(latest_x, f64::min);
 
         let (min_x, max_x) = if plot.follow_latest {
@@ -102,14 +102,14 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
             }
 
             let start_idx = signal_series
-                .points
-                .partition_point(|point| point.x < min_x);
+                .samples
+                .partition_point(|sample| sample.timestamp < min_x);
 
             let end_idx = signal_series
-                .points
-                .partition_point(|point| point.x <= max_x);
+                .samples
+                .partition_point(|sample| sample.timestamp <= max_x);
 
-            let visible_points = &signal_series.points[start_idx..end_idx];
+            let visible_samples = &signal_series.samples[start_idx..end_idx];
 
             let line = &mut plot.lines[prepared_count];
 
@@ -117,7 +117,7 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
 
             line.points.clear();
 
-            downsample_min_max_into(visible_points, DOWNSAMPLE_BUCKETS, &mut line.points);
+            downsample_min_max_into(visible_samples, DOWNSAMPLE_BUCKETS, &mut line.points);
 
             prepared_count += 1;
         }
@@ -128,54 +128,60 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
     })
 }
 
-fn downsample_min_max_into(
-    points: &[PlotPoint],
-    target_buckets: usize,
-    output: &mut Vec<PlotPoint>,
-) {
-    if points.len() <= target_buckets || target_buckets < 2 {
-        output.extend_from_slice(points);
+fn downsample_min_max_into(samples: &[Sample], target_buckets: usize, output: &mut Vec<PlotPoint>) {
+    if samples.len() <= target_buckets || target_buckets < 2 {
+        output.extend(samples.iter().copied().map(plot_point_from_sample));
+
         return;
     }
 
-    let bucket_size = points.len() as f64 / target_buckets as f64;
+    let bucket_size = samples.len() as f64 / target_buckets as f64;
 
     output.reserve(target_buckets * 2);
 
     let mut bucket_start = 0.0;
 
-    while (bucket_start as usize) < points.len() {
+    while (bucket_start as usize) < samples.len() {
         let start = bucket_start as usize;
 
-        let end = ((bucket_start + bucket_size) as usize).min(points.len());
+        let end = ((bucket_start + bucket_size) as usize).min(samples.len());
 
         if start >= end {
             break;
         }
 
-        let bucket = &points[start..end];
+        let bucket = &samples[start..end];
 
         let mut minimum = bucket[0];
         let mut maximum = bucket[0];
 
-        for point in bucket {
-            if point.y < minimum.y {
-                minimum = *point;
+        for sample in bucket {
+            if sample.value < minimum.value {
+                minimum = *sample;
             }
 
-            if point.y > maximum.y {
-                maximum = *point;
+            if sample.value > maximum.value {
+                maximum = *sample;
             }
         }
 
-        if minimum.x < maximum.x {
-            output.push(minimum);
-            output.push(maximum);
+        if minimum.timestamp < maximum.timestamp {
+            output.push(plot_point_from_sample(minimum));
+
+            output.push(plot_point_from_sample(maximum));
         } else {
-            output.push(maximum);
-            output.push(minimum);
+            output.push(plot_point_from_sample(maximum));
+
+            output.push(plot_point_from_sample(minimum));
         }
 
         bucket_start += bucket_size;
+    }
+}
+
+fn plot_point_from_sample(sample: Sample) -> PlotPoint {
+    PlotPoint {
+        x: sample.timestamp,
+        y: sample.value,
     }
 }

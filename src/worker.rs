@@ -6,9 +6,8 @@ pub use command::WorkerCommand;
 pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
 
-use crate::data::SeriesStore;
+use crate::data::{Sample, SeriesStore};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
-use egui_plot::PlotPoint;
 
 use std::sync::{
     Arc,
@@ -67,10 +66,7 @@ impl Worker {
                             for signal_series in all_series {
                                 let value = signal_series.signal.value_at(elapsed_seconds);
 
-                                signal_series.points.push(PlotPoint {
-                                    x: timestamp,
-                                    y: value,
-                                });
+                                signal_series.samples.push(Sample::new(timestamp, value));
                             }
                         });
 
