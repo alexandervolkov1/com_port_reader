@@ -9,9 +9,14 @@ mod utils;
 mod worker;
 
 fn main() -> eframe::Result<()> {
+    let options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Glow,
+        ..Default::default()
+    };
+
     eframe::run_native(
         "COM Port Reader",
-        eframe::NativeOptions::default(),
+        options,
         Box::new(|_cc| Ok(Box::new(app::MyApp::new()))),
     )
 }
