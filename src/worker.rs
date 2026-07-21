@@ -2,7 +2,7 @@ mod command;
 
 pub use command::WorkerCommand;
 
-use crate::data::{SeriesStore, SignalSeries};
+use crate::data::SeriesStore;
 use crossbeam_channel::{Receiver, Sender};
 use egui_plot::PlotPoint;
 
@@ -83,11 +83,7 @@ impl Worker {
 
                 match command_receiver.recv_timeout(timeout) {
                     Ok(WorkerCommand::AddSignal(signal)) => {
-                        series.push(SignalSeries {
-                            signal,
-                            points: Vec::new(),
-                            visible: true,
-                        });
+                        series.add_signal(signal);
 
                         let _ = response_sender.send("New signal added.".to_owned());
                     }
