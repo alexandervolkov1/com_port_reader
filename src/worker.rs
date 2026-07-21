@@ -1,6 +1,8 @@
 mod command;
+mod handle;
 
 pub use command::WorkerCommand;
+pub use handle::{WorkerHandle, WorkerHandleError};
 
 use crate::data::SeriesStore;
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
@@ -25,14 +27,14 @@ enum AcquisitionState {
 }
 
 pub struct Worker {
-    handle: Option<JoinHandle<()>>,
-    command_sender: Sender<WorkerCommand>,
+    thread: Option<JoinHandle<()>>,
+    commands: WorkerHandle,
     running: Arc<AtomicBool>,
 }
 
 impl Worker {
     pub fn spawn(
-        command_sender: Sender<WorkerCommand>,
+        commands: WorkerHandle,
         command_receiver: Receiver<WorkerCommand>,
         response_sender: Sender<String>,
         series: SeriesStore,
@@ -40,7 +42,7 @@ impl Worker {
         let running = Arc::new(AtomicBool::new(false));
         let thread_running = running.clone();
 
-        let handle = thread::spawn(move || {
+        let thread = thread::spawn(move || {
             let mut state = AcquisitionState::Stopped;
 
             loop {
@@ -136,18 +138,18 @@ impl Worker {
         });
 
         Self {
-            handle: Some(handle),
-            command_sender,
+            thread: Some(thread),
+            commands,
             running,
         }
     }
 
     pub fn start(&self) {
-        let _ = self.command_sender.send(WorkerCommand::Start);
+        let _ = self.commands.start();
     }
 
     pub fn stop(&self) {
-        let _ = self.command_sender.send(WorkerCommand::Stop);
+        let _ = self.commands.stop();
     }
 
     pub fn is_running(&self) -> bool {
@@ -157,10 +159,10 @@ impl Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        let _ = self.command_sender.send(WorkerCommand::Shutdown);
+        let _ = self.commands.shutdown();
 
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
         }
     }
 }

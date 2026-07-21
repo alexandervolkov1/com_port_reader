@@ -7,6 +7,7 @@ use crate::components::{
     plot_model::PlotModel, plot_view, series_view,
 };
 use crate::data::SeriesStore;
+use crate::worker::WorkerHandle;
 
 pub struct MyApp {
     controls: ControlsModel,
@@ -25,14 +26,16 @@ impl MyApp {
 
         let (response_sender, response_receiver) = crossbeam_channel::bounded(32);
 
+        let worker_handle = WorkerHandle::new(command_sender);
+
         let controls = ControlsModel::new(
             series.clone(),
-            command_sender.clone(),
+            worker_handle.clone(),
             command_receiver,
             response_sender,
         );
 
-        let command = CommandModel::new(command_sender, response_receiver);
+        let command = CommandModel::new(worker_handle, response_receiver);
 
         Self {
             controls,

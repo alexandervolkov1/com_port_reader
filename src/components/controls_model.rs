@@ -2,7 +2,7 @@ use crossbeam_channel::{Receiver, Sender};
 
 use crate::{
     data::SeriesStore,
-    worker::{Worker, WorkerCommand},
+    worker::{Worker, WorkerCommand, WorkerHandle},
 };
 
 pub struct ControlsModel {
@@ -13,12 +13,12 @@ pub struct ControlsModel {
 impl ControlsModel {
     pub fn new(
         series: SeriesStore,
-        command_sender: Sender<WorkerCommand>,
+        worker_handle: WorkerHandle,
         command_receiver: Receiver<WorkerCommand>,
         response_sender: Sender<String>,
     ) -> Self {
         let worker = Worker::spawn(
-            command_sender,
+            worker_handle,
             command_receiver,
             response_sender,
             series.clone(),

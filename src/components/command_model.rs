@@ -1,17 +1,17 @@
-use crate::{data::Signal, dsl::parse_signal, worker::WorkerCommand};
-use crossbeam_channel::{Receiver, Sender};
+use crate::{data::Signal, dsl::parse_signal, worker::WorkerHandle};
+use crossbeam_channel::Receiver;
 
 pub struct CommandModel {
-    command_sender: Sender<WorkerCommand>,
+    worker_handle: WorkerHandle,
     response_receiver: Receiver<String>,
     command_buffer: String,
     last_response: String,
 }
 
 impl CommandModel {
-    pub fn new(command_sender: Sender<WorkerCommand>, response_receiver: Receiver<String>) -> Self {
+    pub fn new(worker_handle: WorkerHandle, response_receiver: Receiver<String>) -> Self {
         Self {
-            command_sender,
+            worker_handle,
             response_receiver,
             command_buffer: String::new(),
             last_response: String::new(),
@@ -35,8 +35,8 @@ impl CommandModel {
     pub fn submit(&mut self) {
         match self.parse_command() {
             Ok(signal) => {
-                if let Err(e) = self.command_sender.send(WorkerCommand::AddSignal(signal)) {
-                    self.last_response = format!("Failed to send command: {}", e);
+                if let Err(error) = self.worker_handle.add_signal(signal) {
+                    self.last_response = format!("Failed to send command: {error}");
                 }
             }
 
