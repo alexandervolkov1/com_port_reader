@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use super::{SeriesId, Signal, SignalSeries};
+use super::{SeriesId, SeriesMetadata, Signal, SignalSeries};
 
 struct SeriesStoreInner {
     series: Mutex<Vec<SignalSeries>>,
@@ -52,6 +52,32 @@ impl SeriesStore {
 
     pub fn clear(&self) {
         self.with_mut(Vec::clear);
+    }
+
+    pub fn metadata(&self) -> Vec<SeriesMetadata> {
+        self.with(|series| series.iter().map(SeriesMetadata::from).collect())
+    }
+
+    pub fn set_visibility(&self, id: SeriesId, visible: bool) -> bool {
+        self.with_mut(|series| {
+            let Some(series) = series.iter_mut().find(|series| series.id == id) else {
+                return false;
+            };
+
+            series.visible = visible;
+            true
+        })
+    }
+
+    pub fn remove_series(&self, id: SeriesId) -> bool {
+        self.with_mut(|series| {
+            let Some(index) = series.iter().position(|series| series.id == id) else {
+                return false;
+            };
+
+            series.remove(index);
+            true
+        })
     }
 }
 
@@ -102,5 +128,47 @@ mod tests {
         let second_id = store.add_signal(Signal::Constant { value: 2.0 });
 
         assert_ne!(first_id, second_id);
+    }
+
+    #[test]
+    fn changes_visibility_by_id() {
+        let store = SeriesStore::new();
+
+        let id = store.add_signal(Signal::Constant { value: 1.0 });
+
+        assert!(store.set_visibility(id, false));
+
+        let metadata = store.metadata();
+
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0].id, id);
+        assert!(!metadata[0].visible);
+    }
+
+    #[test]
+    fn removes_series_by_id() {
+        let store = SeriesStore::new();
+
+        let first_id = store.add_signal(Signal::Constant { value: 1.0 });
+
+        let second_id = store.add_signal(Signal::Constant { value: 2.0 });
+
+        assert!(store.remove_series(first_id));
+
+        let metadata = store.metadata();
+
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0].id, second_id);
+    }
+
+    #[test]
+    fn reports_missing_series() {
+        let store = SeriesStore::new();
+
+        let id = store.add_signal(Signal::Constant { value: 1.0 });
+
+        assert!(store.remove_series(id));
+        assert!(!store.remove_series(id));
+        assert!(!store.set_visibility(id, false));
     }
 }

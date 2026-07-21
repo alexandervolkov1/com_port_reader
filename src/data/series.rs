@@ -29,3 +29,20 @@ impl SignalSeries {
         }
     }
 }
+
+#[derive(Clone)]
+pub struct SeriesMetadata {
+    pub id: SeriesId,
+    pub signal: Signal,
+    pub visible: bool,
+}
+
+impl From<&SignalSeries> for SeriesMetadata {
+    fn from(series: &SignalSeries) -> Self {
+        Self {
+            id: series.id,
+            signal: series.signal.clone(),
+            visible: series.visible,
+        }
+    }
+}
