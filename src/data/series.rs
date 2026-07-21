@@ -18,6 +18,29 @@ impl std::fmt::Display for SeriesId {
 }
 
 #[derive(Clone)]
+pub struct NewSeries {
+    signal: Signal,
+    name: Option<String>,
+}
+
+impl NewSeries {
+    pub fn unnamed(signal: Signal) -> Self {
+        Self { signal, name: None }
+    }
+
+    pub fn named(signal: Signal, name: impl Into<String>) -> Self {
+        Self {
+            signal,
+            name: Some(name.into()),
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> (Signal, Option<String>) {
+        (self.signal, self.name)
+    }
+}
+
+#[derive(Clone)]
 pub struct SignalSeries {
     pub id: SeriesId,
     pub name: String,

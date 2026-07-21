@@ -114,12 +114,12 @@ impl Worker {
                         thread_running.store(false, Ordering::Release);
                     }
 
-                    Ok(WorkerCommand::AddSignal(signal)) => {
-                        let response = match series.add_signal(signal) {
-                            Ok(_) => "New signal added.".to_owned(),
+                    Ok(WorkerCommand::AddSeries(new_series)) => {
+                        let response = match series.add_series(new_series) {
+                            Ok(_) => "New series added.".to_owned(),
 
                             Err(error) => {
-                                format!("Failed to add signal: {error}")
+                                format!("Failed to add series: {error}")
                             }
                         };
 

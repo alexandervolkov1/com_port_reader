@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use crossbeam_channel::Sender;
 
-use crate::data::{SeriesId, Signal};
+use crate::data::{NewSeries, SeriesId};
 
 use super::command::WorkerCommand;
 
@@ -24,8 +24,8 @@ impl WorkerHandle {
         self.send(WorkerCommand::Stop)
     }
 
-    pub fn add_signal(&self, signal: Signal) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::AddSignal(signal))
+    pub fn add_series(&self, new_series: NewSeries) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::AddSeries(new_series))
     }
 
     pub(super) fn shutdown(&self) -> Result<(), WorkerHandleError> {

@@ -3,10 +3,48 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use super::{SeriesId, SeriesMetadata, Signal, SignalSeries, SignalValidationError};
+use super::{NewSeries, SeriesId, SeriesMetadata, SignalSeries, SignalValidationError};
+
 struct SeriesStoreInner {
     series: Mutex<Vec<SignalSeries>>,
     next_id: AtomicU64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AddSeriesError {
+    InvalidSignal(SignalValidationError),
+    EmptyName,
+    DuplicateName(String),
+}
+
+impl std::fmt::Display for AddSeriesError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidSignal(error) => error.fmt(formatter),
+
+            Self::EmptyName => formatter.write_str("Series name cannot be empty"),
+
+            Self::DuplicateName(name) => {
+                write!(formatter, "Series name '{name}' already exists")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AddSeriesError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InvalidSignal(error) => Some(error),
+
+            Self::EmptyName | Self::DuplicateName(_) => None,
+        }
+    }
+}
+
+impl From<SignalValidationError> for AddSeriesError {
+    fn from(error: SignalValidationError) -> Self {
+        Self::InvalidSignal(error)
+    }
 }
 
 #[derive(Clone)]
@@ -39,18 +77,39 @@ impl SeriesStore {
         operation(&mut series)
     }
 
-    pub fn add_signal(&self, signal: Signal) -> Result<SeriesId, SignalValidationError> {
+    pub fn add_series(&self, new_series: NewSeries) -> Result<SeriesId, AddSeriesError> {
+        let (signal, requested_name) = new_series.into_parts();
+
         signal.validate()?;
 
-        let id = SeriesId::new(self.inner.next_id.fetch_add(1, Ordering::Relaxed));
-
-        let name = format!("{}{}", signal.kind_name(), id);
-
         self.with_mut(|series| {
-            series.push(SignalSeries::new(id, name, signal));
-        });
+            let custom_name = match requested_name {
+                Some(name) => {
+                    let name = name.trim();
 
-        Ok(id)
+                    if name.is_empty() {
+                        return Err(AddSeriesError::EmptyName);
+                    }
+
+                    if contains_name(series, name) {
+                        return Err(AddSeriesError::DuplicateName(name.to_owned()));
+                    }
+
+                    Some(name.to_owned())
+                }
+
+                None => None,
+            };
+
+            let id = SeriesId::new(self.inner.next_id.fetch_add(1, Ordering::Relaxed));
+
+            let name = custom_name
+                .unwrap_or_else(|| generate_default_name(series, signal.kind_name(), id));
+
+            series.push(SignalSeries::new(id, name, signal));
+
+            Ok(id)
+        })
     }
 
     pub fn clear(&self) {
@@ -95,27 +154,52 @@ impl Default for SeriesStore {
     }
 }
 
+fn contains_name(series: &[SignalSeries], name: &str) -> bool {
+    series.iter().any(|series| series.name == name)
+}
+
+fn generate_default_name(series: &[SignalSeries], prefix: &str, id: SeriesId) -> String {
+    let base_name = format!("{prefix}{id}");
+
+    if !contains_name(series, &base_name) {
+        return base_name;
+    }
+
+    let mut suffix = 2_u64;
+
+    loop {
+        let candidate = format!("{base_name}_{suffix}");
+
+        if !contains_name(series, &candidate) {
+            return candidate;
+        }
+
+        suffix += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::SeriesStore;
-    use crate::data::Signal;
+
+    use crate::data::{AddSeriesError, NewSeries, SeriesId, Signal};
+
+    fn add_unnamed(store: &SeriesStore, signal: Signal) -> SeriesId {
+        store.add_series(NewSeries::unnamed(signal)).unwrap()
+    }
 
     #[test]
     fn assigns_unique_ids() {
         let store = SeriesStore::new();
 
-        let first_id = store.add_signal(Signal::Constant { value: 1.0 }).unwrap();
+        let first_id = add_unnamed(&store, Signal::Constant { value: 1.0 });
 
-        let second_id = store.add_signal(Signal::Constant { value: 2.0 }).unwrap();
+        let second_id = add_unnamed(&store, Signal::Constant { value: 2.0 });
 
         assert_ne!(first_id, second_id);
 
-        let stored_ids = store.with(|series| {
-            series
-                .iter()
-                .map(|signal_series| signal_series.id)
-                .collect::<Vec<_>>()
-        });
+        let stored_ids =
+            store.with(|series| series.iter().map(|series| series.id).collect::<Vec<_>>());
 
         assert_eq!(stored_ids, vec![first_id, second_id]);
     }
@@ -124,11 +208,11 @@ mod tests {
     fn does_not_reuse_ids_after_clear() {
         let store = SeriesStore::new();
 
-        let first_id = store.add_signal(Signal::Constant { value: 1.0 }).unwrap();
+        let first_id = add_unnamed(&store, Signal::Constant { value: 1.0 });
 
         store.clear();
 
-        let second_id = store.add_signal(Signal::Constant { value: 2.0 }).unwrap();
+        let second_id = add_unnamed(&store, Signal::Constant { value: 2.0 });
 
         assert_ne!(first_id, second_id);
     }
@@ -137,7 +221,7 @@ mod tests {
     fn changes_visibility_by_id() {
         let store = SeriesStore::new();
 
-        let id = store.add_signal(Signal::Constant { value: 1.0 }).unwrap();
+        let id = add_unnamed(&store, Signal::Constant { value: 1.0 });
 
         assert!(store.set_visibility(id, false));
 
@@ -152,9 +236,9 @@ mod tests {
     fn removes_series_by_id() {
         let store = SeriesStore::new();
 
-        let first_id = store.add_signal(Signal::Constant { value: 1.0 }).unwrap();
+        let first_id = add_unnamed(&store, Signal::Constant { value: 1.0 });
 
-        let second_id = store.add_signal(Signal::Constant { value: 2.0 }).unwrap();
+        let second_id = add_unnamed(&store, Signal::Constant { value: 2.0 });
 
         assert!(store.remove_series(first_id));
 
@@ -168,7 +252,7 @@ mod tests {
     fn reports_missing_series() {
         let store = SeriesStore::new();
 
-        let id = store.add_signal(Signal::Constant { value: 1.0 }).unwrap();
+        let id = add_unnamed(&store, Signal::Constant { value: 1.0 });
 
         assert!(store.remove_series(id));
         assert!(!store.remove_series(id));
@@ -179,21 +263,23 @@ mod tests {
     fn generates_unique_default_names() {
         let store = SeriesStore::new();
 
-        store
-            .add_signal(Signal::SineWave {
+        add_unnamed(
+            &store,
+            Signal::SineWave {
                 amplitude: 1.0,
                 period: 10.0,
                 phase: 0.0,
-            })
-            .unwrap();
+            },
+        );
 
-        store
-            .add_signal(Signal::SquareWave {
+        add_unnamed(
+            &store,
+            Signal::SquareWave {
                 amplitude: 1.0,
                 period: 10.0,
                 duty_cycle: 0.5,
-            })
-            .unwrap();
+            },
+        );
 
         let names = store.with(|series| {
             series
@@ -209,11 +295,11 @@ mod tests {
     fn does_not_reuse_default_names_after_clear() {
         let store = SeriesStore::new();
 
-        store.add_signal(Signal::Constant { value: 1.0 }).unwrap();
+        add_unnamed(&store, Signal::Constant { value: 1.0 });
 
         store.clear();
 
-        store.add_signal(Signal::Constant { value: 2.0 }).unwrap();
+        add_unnamed(&store, Signal::Constant { value: 2.0 });
 
         let names = store.with(|series| {
             series
@@ -223,5 +309,68 @@ mod tests {
         });
 
         assert_eq!(names, vec!["constant2"]);
+    }
+
+    #[test]
+    fn accepts_custom_name() {
+        let store = SeriesStore::new();
+
+        store
+            .add_series(NewSeries::named(
+                Signal::Constant { value: 1.0 },
+                "temperature",
+            ))
+            .unwrap();
+
+        let metadata = store.metadata();
+
+        assert_eq!(metadata[0].name, "temperature");
+    }
+
+    #[test]
+    fn trims_custom_name() {
+        let store = SeriesStore::new();
+
+        store
+            .add_series(NewSeries::named(
+                Signal::Constant { value: 1.0 },
+                "  temperature  ",
+            ))
+            .unwrap();
+
+        let metadata = store.metadata();
+
+        assert_eq!(metadata[0].name, "temperature");
+    }
+
+    #[test]
+    fn rejects_duplicate_name() {
+        let store = SeriesStore::new();
+
+        store
+            .add_series(NewSeries::named(
+                Signal::Constant { value: 1.0 },
+                "temperature",
+            ))
+            .unwrap();
+
+        let result = store.add_series(NewSeries::named(
+            Signal::Constant { value: 2.0 },
+            "temperature",
+        ));
+
+        assert_eq!(
+            result,
+            Err(AddSeriesError::DuplicateName("temperature".to_owned(),))
+        );
+    }
+
+    #[test]
+    fn rejects_empty_name() {
+        let store = SeriesStore::new();
+
+        let result = store.add_series(NewSeries::named(Signal::Constant { value: 1.0 }, "   "));
+
+        assert_eq!(result, Err(AddSeriesError::EmptyName));
     }
 }
