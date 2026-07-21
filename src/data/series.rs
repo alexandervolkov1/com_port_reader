@@ -17,7 +17,7 @@ impl std::fmt::Display for SeriesId {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NewSeries {
     signal: Signal,
     name: Option<String>,

@@ -1,15 +1,21 @@
-use crate::data::Signal;
+use std::str::SplitWhitespace;
 
-pub fn parse_signal(input: &str) -> Result<Signal, String> {
+use crate::data::{NewSeries, Signal};
+
+pub fn parse_series(input: &str) -> Result<NewSeries, String> {
     let mut tokens = input.split_whitespace();
 
     let kind = tokens.next().ok_or_else(|| "Empty input".to_owned())?;
 
-    let signal = match kind.to_lowercase().as_str() {
+    let mut name = None;
+
+    let signal = match kind.to_ascii_lowercase().as_str() {
         "sin" | "sine" => {
-            let amplitude = parse_parameter(tokens.next(), 100.0)?;
-            let period = parse_parameter(tokens.next(), 100.0)?;
-            let phase = parse_parameter(tokens.next(), 0.0)?;
+            let amplitude = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
+
+            let period = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
+
+            let phase = parse_parameter(next_argument(&mut tokens, &mut name)?, 0.0)?;
 
             Signal::SineWave {
                 amplitude,
@@ -19,9 +25,11 @@ pub fn parse_signal(input: &str) -> Result<Signal, String> {
         }
 
         "square" | "sq" => {
-            let amplitude = parse_parameter(tokens.next(), 100.0)?;
-            let period = parse_parameter(tokens.next(), 100.0)?;
-            let duty_cycle = parse_parameter(tokens.next(), 0.5)?;
+            let amplitude = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
+
+            let period = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
+
+            let duty_cycle = parse_parameter(next_argument(&mut tokens, &mut name)?, 0.5)?;
 
             Signal::SquareWave {
                 amplitude,
@@ -31,21 +39,23 @@ pub fn parse_signal(input: &str) -> Result<Signal, String> {
         }
 
         "triangle" | "tri" => {
-            let amplitude = parse_parameter(tokens.next(), 100.0)?;
-            let period = parse_parameter(tokens.next(), 100.0)?;
+            let amplitude = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
+
+            let period = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
 
             Signal::TriangleWave { amplitude, period }
         }
 
         "saw" | "sawtooth" => {
-            let amplitude = parse_parameter(tokens.next(), 100.0)?;
-            let period = parse_parameter(tokens.next(), 100.0)?;
+            let amplitude = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
+
+            let period = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
 
             Signal::SawtoothWave { amplitude, period }
         }
 
         "const" | "constant" => {
-            let value = parse_parameter(tokens.next(), 50.0)?;
+            let value = parse_parameter(next_argument(&mut tokens, &mut name)?, 50.0)?;
 
             Signal::Constant { value }
         }
@@ -55,9 +65,53 @@ pub fn parse_signal(input: &str) -> Result<Signal, String> {
         }
     };
 
+    if let Some(argument) = next_argument(&mut tokens, &mut name)? {
+        return Err(format!("Unexpected argument: {argument}"));
+    }
+
     signal.validate().map_err(|error| error.to_string())?;
 
-    Ok(signal)
+    Ok(match name {
+        Some(name) => NewSeries::named(signal, name),
+        None => NewSeries::unnamed(signal),
+    })
+}
+
+fn next_argument<'a>(
+    tokens: &mut SplitWhitespace<'a>,
+    name: &mut Option<String>,
+) -> Result<Option<&'a str>, String> {
+    loop {
+        match tokens.next() {
+            Some("--name") => {
+                if name.is_some() {
+                    return Err("Option '--name' specified more than once".to_owned());
+                }
+
+                let Some(value) = tokens.next() else {
+                    return Err("Missing value for option '--name'".to_owned());
+                };
+
+                if value.starts_with("--") {
+                    return Err("Missing value for option '--name'".to_owned());
+                }
+
+                *name = Some(value.to_owned());
+            }
+
+            Some(option) if option.starts_with("--") => {
+                return Err(format!("Unknown option: {option}"));
+            }
+
+            Some(value) => {
+                return Ok(Some(value));
+            }
+
+            None => {
+                return Ok(None);
+            }
+        }
+    }
 }
 
 fn parse_parameter(parameter: Option<&str>, default: f64) -> Result<f64, String> {
@@ -72,12 +126,16 @@ fn parse_parameter(parameter: Option<&str>, default: f64) -> Result<f64, String>
 
 #[cfg(test)]
 mod tests {
-    use super::parse_signal;
+    use super::parse_series;
     use crate::data::Signal;
 
     #[test]
-    fn parses_sine_wave_with_parameters() {
-        let signal = parse_signal("sin 10 20 0.5").unwrap();
+    fn parses_positional_parameters() {
+        let new_series = parse_series("sin 10 20 0.5").unwrap();
+
+        let (signal, name) = new_series.into_parts();
+
+        assert_eq!(name, None);
 
         match signal {
             Signal::SineWave {
@@ -95,8 +153,21 @@ mod tests {
     }
 
     #[test]
-    fn uses_default_parameters() {
-        let signal = parse_signal("square").unwrap();
+    fn parses_custom_name() {
+        let new_series = parse_series("sin 10 20 0.5 --name sinus1").unwrap();
+
+        let (_, name) = new_series.into_parts();
+
+        assert_eq!(name.as_deref(), Some("sinus1"));
+    }
+
+    #[test]
+    fn parses_name_before_parameters() {
+        let new_series = parse_series("square --name pulse 10 20 0.25").unwrap();
+
+        let (signal, name) = new_series.into_parts();
+
+        assert_eq!(name.as_deref(), Some("pulse"));
 
         match signal {
             Signal::SquareWave {
@@ -104,9 +175,9 @@ mod tests {
                 period,
                 duty_cycle,
             } => {
-                assert_eq!(amplitude, 100.0);
-                assert_eq!(period, 100.0);
-                assert_eq!(duty_cycle, 0.5);
+                assert_eq!(amplitude, 10.0);
+                assert_eq!(period, 20.0);
+                assert_eq!(duty_cycle, 0.25);
             }
 
             _ => panic!("expected square wave"),
@@ -114,23 +185,57 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_number() {
-        let result = parse_signal("sin invalid");
+    fn uses_defaults_with_custom_name() {
+        let new_series = parse_series("const --name baseline").unwrap();
 
-        assert!(result.is_err());
+        let (signal, name) = new_series.into_parts();
+
+        assert_eq!(name.as_deref(), Some("baseline"));
+
+        match signal {
+            Signal::Constant { value } => {
+                assert_eq!(value, 50.0);
+            }
+
+            _ => panic!("expected constant"),
+        }
     }
 
     #[test]
-    fn rejects_invalid_duty_cycle() {
-        let result = parse_signal("square 10 20 1.5");
+    fn rejects_duplicate_name_option() {
+        let result = parse_series("const --name first --name second");
 
-        assert_eq!(result.unwrap_err(), "Duty cycle must be between 0 and 1");
+        assert_eq!(
+            result.unwrap_err(),
+            "Option '--name' specified more than once"
+        );
     }
 
     #[test]
-    fn rejects_unknown_signal_type() {
-        let result = parse_signal("unknown");
+    fn rejects_missing_name() {
+        let result = parse_series("const --name");
 
-        assert_eq!(result.unwrap_err(), "Unknown signal type: unknown");
+        assert_eq!(result.unwrap_err(), "Missing value for option '--name'");
+    }
+
+    #[test]
+    fn rejects_unknown_option() {
+        let result = parse_series("sin --unknown 10");
+
+        assert_eq!(result.unwrap_err(), "Unknown option: --unknown");
+    }
+
+    #[test]
+    fn rejects_extra_positional_argument() {
+        let result = parse_series("const 10 20");
+
+        assert_eq!(result.unwrap_err(), "Unexpected argument: 20");
+    }
+
+    #[test]
+    fn rejects_invalid_period() {
+        let result = parse_series("triangle 10 0");
+
+        assert_eq!(result.unwrap_err(), "Period must be greater than 0");
     }
 }

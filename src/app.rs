@@ -9,6 +9,9 @@ use crate::components::{
 use crate::data::SeriesStore;
 use crate::worker::WorkerHandle;
 
+const SERIES_PANEL_WIDTH: f32 = 150.0;
+const TOGGLE_WIDTH: f32 = 22.0;
+
 pub struct MyApp {
     controls: ControlsModel,
     plot: PlotModel,
@@ -59,9 +62,6 @@ impl eframe::App for MyApp {
             command_view::show(ui, &mut self.command);
 
             ui.separator();
-
-            const SERIES_PANEL_WIDTH: f32 = 300.0;
-            const TOGGLE_WIDTH: f32 = 22.0;
 
             if self.series_panel_open {
                 StripBuilder::new(ui)

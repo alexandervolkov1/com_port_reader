@@ -1,4 +1,4 @@
-use crate::{data::NewSeries, dsl::parse_signal, worker::WorkerHandle};
+use crate::{data::NewSeries, dsl::parse_series, worker::WorkerHandle};
 use crossbeam_channel::Receiver;
 
 pub struct CommandModel {
@@ -49,6 +49,6 @@ impl CommandModel {
     }
 
     fn parse_command(&self) -> Result<NewSeries, String> {
-        parse_signal(&self.command_buffer).map(NewSeries::unnamed)
+        parse_series(&self.command_buffer)
     }
 }
