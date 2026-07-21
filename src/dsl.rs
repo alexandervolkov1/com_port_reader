@@ -2,73 +2,118 @@ use std::str::SplitWhitespace;
 
 use crate::data::{NewSeries, Signal};
 
+const AMPLITUDE_OPTIONS: &[&str] = &["--amp", "--amplitude"];
+
+const PERIOD_OPTIONS: &[&str] = &["--per", "--period"];
+
+const PHASE_OPTIONS: &[&str] = &["--phase"];
+
+const DUTY_CYCLE_OPTIONS: &[&str] = &["--duty", "--duty-cycle"];
+
+const VALUE_OPTIONS: &[&str] = &["--value", "--val"];
+
 pub fn parse_series(input: &str) -> Result<NewSeries, String> {
     let mut tokens = input.split_whitespace();
 
     let kind = tokens.next().ok_or_else(|| "Empty input".to_owned())?;
 
-    let mut name = None;
+    match kind.to_ascii_lowercase().as_str() {
+        "sin" | "sine" => parse_sine(&mut tokens),
+        "square" | "sq" => parse_square(&mut tokens),
+        "triangle" | "tri" => parse_triangle(&mut tokens),
+        "saw" | "sawtooth" => parse_sawtooth(&mut tokens),
+        "const" | "constant" => parse_constant(&mut tokens),
 
-    let signal = match kind.to_ascii_lowercase().as_str() {
-        "sin" | "sine" => {
-            let amplitude = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
-
-            let period = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
-
-            let phase = parse_parameter(next_argument(&mut tokens, &mut name)?, 0.0)?;
-
-            Signal::SineWave {
-                amplitude,
-                period,
-                phase,
-            }
-        }
-
-        "square" | "sq" => {
-            let amplitude = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
-
-            let period = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
-
-            let duty_cycle = parse_parameter(next_argument(&mut tokens, &mut name)?, 0.5)?;
-
-            Signal::SquareWave {
-                amplitude,
-                period,
-                duty_cycle,
-            }
-        }
-
-        "triangle" | "tri" => {
-            let amplitude = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
-
-            let period = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
-
-            Signal::TriangleWave { amplitude, period }
-        }
-
-        "saw" | "sawtooth" => {
-            let amplitude = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
-
-            let period = parse_parameter(next_argument(&mut tokens, &mut name)?, 100.0)?;
-
-            Signal::SawtoothWave { amplitude, period }
-        }
-
-        "const" | "constant" => {
-            let value = parse_parameter(next_argument(&mut tokens, &mut name)?, 50.0)?;
-
-            Signal::Constant { value }
-        }
-
-        _ => {
-            return Err(format!("Unknown signal type: {kind}"));
-        }
-    };
-
-    if let Some(argument) = next_argument(&mut tokens, &mut name)? {
-        return Err(format!("Unexpected argument: {argument}"));
+        _ => Err(format!("Unknown signal type: {kind}")),
     }
+}
 
+fn parse_sine(tokens: &mut SplitWhitespace<'_>) -> Result<NewSeries, String> {
+    let mut parameters = [
+        NumericParameter::new("amplitude", AMPLITUDE_OPTIONS, 100.0),
+        NumericParameter::new("period", PERIOD_OPTIONS, 100.0),
+        NumericParameter::new("phase", PHASE_OPTIONS, 0.0),
+    ];
+
+    let name = parse_arguments(tokens, &mut parameters)?;
+
+    finish(
+        Signal::SineWave {
+            amplitude: parameters[0].value(),
+            period: parameters[1].value(),
+            phase: parameters[2].value(),
+        },
+        name,
+    )
+}
+
+fn parse_square(tokens: &mut SplitWhitespace<'_>) -> Result<NewSeries, String> {
+    let mut parameters = [
+        NumericParameter::new("amplitude", AMPLITUDE_OPTIONS, 100.0),
+        NumericParameter::new("period", PERIOD_OPTIONS, 100.0),
+        NumericParameter::new("duty cycle", DUTY_CYCLE_OPTIONS, 0.5),
+    ];
+
+    let name = parse_arguments(tokens, &mut parameters)?;
+
+    finish(
+        Signal::SquareWave {
+            amplitude: parameters[0].value(),
+            period: parameters[1].value(),
+            duty_cycle: parameters[2].value(),
+        },
+        name,
+    )
+}
+
+fn parse_triangle(tokens: &mut SplitWhitespace<'_>) -> Result<NewSeries, String> {
+    let mut parameters = [
+        NumericParameter::new("amplitude", AMPLITUDE_OPTIONS, 100.0),
+        NumericParameter::new("period", PERIOD_OPTIONS, 100.0),
+    ];
+
+    let name = parse_arguments(tokens, &mut parameters)?;
+
+    finish(
+        Signal::TriangleWave {
+            amplitude: parameters[0].value(),
+            period: parameters[1].value(),
+        },
+        name,
+    )
+}
+
+fn parse_sawtooth(tokens: &mut SplitWhitespace<'_>) -> Result<NewSeries, String> {
+    let mut parameters = [
+        NumericParameter::new("amplitude", AMPLITUDE_OPTIONS, 100.0),
+        NumericParameter::new("period", PERIOD_OPTIONS, 100.0),
+    ];
+
+    let name = parse_arguments(tokens, &mut parameters)?;
+
+    finish(
+        Signal::SawtoothWave {
+            amplitude: parameters[0].value(),
+            period: parameters[1].value(),
+        },
+        name,
+    )
+}
+
+fn parse_constant(tokens: &mut SplitWhitespace<'_>) -> Result<NewSeries, String> {
+    let mut parameters = [NumericParameter::new("value", VALUE_OPTIONS, 50.0)];
+
+    let name = parse_arguments(tokens, &mut parameters)?;
+
+    finish(
+        Signal::Constant {
+            value: parameters[0].value(),
+        },
+        name,
+    )
+}
+
+fn finish(signal: Signal, name: Option<String>) -> Result<NewSeries, String> {
     signal.validate().map_err(|error| error.to_string())?;
 
     Ok(match name {
@@ -77,51 +122,109 @@ pub fn parse_series(input: &str) -> Result<NewSeries, String> {
     })
 }
 
-fn next_argument<'a>(
-    tokens: &mut SplitWhitespace<'a>,
-    name: &mut Option<String>,
-) -> Result<Option<&'a str>, String> {
-    loop {
-        match tokens.next() {
-            Some("--name") => {
-                if name.is_some() {
-                    return Err("Option '--name' specified more than once".to_owned());
-                }
+struct NumericParameter {
+    name: &'static str,
+    options: &'static [&'static str],
+    value: Option<f64>,
+    default: f64,
+}
 
-                let Some(value) = tokens.next() else {
-                    return Err("Missing value for option '--name'".to_owned());
-                };
-
-                if value.starts_with("--") {
-                    return Err("Missing value for option '--name'".to_owned());
-                }
-
-                *name = Some(value.to_owned());
-            }
-
-            Some(option) if option.starts_with("--") => {
-                return Err(format!("Unknown option: {option}"));
-            }
-
-            Some(value) => {
-                return Ok(Some(value));
-            }
-
-            None => {
-                return Ok(None);
-            }
+impl NumericParameter {
+    const fn new(name: &'static str, options: &'static [&'static str], default: f64) -> Self {
+        Self {
+            name,
+            options,
+            value: None,
+            default,
         }
+    }
+
+    fn value(&self) -> f64 {
+        self.value.unwrap_or(self.default)
+    }
+
+    fn set(&mut self, value: &str) -> Result<(), String> {
+        if self.value.is_some() {
+            return Err(format!(
+                "Parameter '{}' specified more than once",
+                self.name,
+            ));
+        }
+
+        self.value = Some(value.parse::<f64>().map_err(|error| {
+            format!("Failed to parse '{}' as {}: {}", value, self.name, error,)
+        })?);
+
+        Ok(())
     }
 }
 
-fn parse_parameter(parameter: Option<&str>, default: f64) -> Result<f64, String> {
-    match parameter {
-        Some(value) => value
-            .parse::<f64>()
-            .map_err(|error| format!("Failed to parse number '{value}': {error}")),
+fn parse_arguments(
+    tokens: &mut SplitWhitespace<'_>,
+    parameters: &mut [NumericParameter],
+) -> Result<Option<String>, String> {
+    let mut name = None;
 
-        None => Ok(default),
+    while let Some(argument) = tokens.next() {
+        match argument {
+            "--name" => {
+                parse_name(tokens, &mut name)?;
+            }
+
+            option if option.starts_with("--") => {
+                let Some(parameter) = parameters
+                    .iter_mut()
+                    .find(|parameter| parameter.options.contains(&option))
+                else {
+                    return Err(format!("Unknown option: {option}"));
+                };
+
+                let value = next_option_value(tokens, option)?;
+
+                parameter.set(value)?;
+            }
+
+            value => {
+                let Some(parameter) = parameters
+                    .iter_mut()
+                    .find(|parameter| parameter.value.is_none())
+                else {
+                    return Err(format!("Unexpected argument: {value}"));
+                };
+
+                parameter.set(value)?;
+            }
+        }
     }
+
+    Ok(name)
+}
+
+fn parse_name(tokens: &mut SplitWhitespace<'_>, name: &mut Option<String>) -> Result<(), String> {
+    if name.is_some() {
+        return Err("Option '--name' specified more than once".to_owned());
+    }
+
+    let value = next_option_value(tokens, "--name")?;
+
+    *name = Some(value.to_owned());
+
+    Ok(())
+}
+
+fn next_option_value<'a>(
+    tokens: &mut SplitWhitespace<'a>,
+    option: &str,
+) -> Result<&'a str, String> {
+    let Some(value) = tokens.next() else {
+        return Err(format!("Missing value for option '{option}'"));
+    };
+
+    if value.starts_with("--") {
+        return Err(format!("Missing value for option '{option}'"));
+    }
+
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -153,17 +256,39 @@ mod tests {
     }
 
     #[test]
-    fn parses_custom_name() {
-        let new_series = parse_series("sin 10 20 0.5 --name sinus1").unwrap();
+    fn parses_named_parameters() {
+        let new_series = parse_series(
+            "sin --amp 10 --per 20 \
+             --phase 0.5 --name sinus1",
+        )
+        .unwrap();
 
-        let (_, name) = new_series.into_parts();
+        let (signal, name) = new_series.into_parts();
 
         assert_eq!(name.as_deref(), Some("sinus1"));
+
+        match signal {
+            Signal::SineWave {
+                amplitude,
+                period,
+                phase,
+            } => {
+                assert_eq!(amplitude, 10.0);
+                assert_eq!(period, 20.0);
+                assert_eq!(phase, 0.5);
+            }
+
+            _ => panic!("expected sine wave"),
+        }
     }
 
     #[test]
-    fn parses_name_before_parameters() {
-        let new_series = parse_series("square --name pulse 10 20 0.25").unwrap();
+    fn accepts_options_in_any_order() {
+        let new_series = parse_series(
+            "square --duty 0.25 --name pulse \
+             --per 20 --amp 10",
+        )
+        .unwrap();
 
         let (signal, name) = new_series.into_parts();
 
@@ -185,8 +310,47 @@ mod tests {
     }
 
     #[test]
-    fn uses_defaults_with_custom_name() {
-        let new_series = parse_series("const --name baseline").unwrap();
+    fn mixes_named_and_positional_parameters() {
+        let new_series = parse_series("triangle --per 20 10").unwrap();
+
+        let (signal, _) = new_series.into_parts();
+
+        match signal {
+            Signal::TriangleWave { amplitude, period } => {
+                assert_eq!(amplitude, 10.0);
+                assert_eq!(period, 20.0);
+            }
+
+            _ => panic!("expected triangle wave"),
+        }
+    }
+
+    #[test]
+    fn uses_default_parameters() {
+        let new_series = parse_series("square --name pulse").unwrap();
+
+        let (signal, name) = new_series.into_parts();
+
+        assert_eq!(name.as_deref(), Some("pulse"));
+
+        match signal {
+            Signal::SquareWave {
+                amplitude,
+                period,
+                duty_cycle,
+            } => {
+                assert_eq!(amplitude, 100.0);
+                assert_eq!(period, 100.0);
+                assert_eq!(duty_cycle, 0.5);
+            }
+
+            _ => panic!("expected square wave"),
+        }
+    }
+
+    #[test]
+    fn parses_option_aliases() {
+        let new_series = parse_series("constant --val 25 --name baseline").unwrap();
 
         let (signal, name) = new_series.into_parts();
 
@@ -194,7 +358,7 @@ mod tests {
 
         match signal {
             Signal::Constant { value } => {
-                assert_eq!(value, 50.0);
+                assert_eq!(value, 25.0);
             }
 
             _ => panic!("expected constant"),
@@ -202,7 +366,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_name_option() {
+    fn rejects_duplicate_parameter() {
+        let result = parse_series("sin 10 --amp 20");
+
+        assert_eq!(
+            result.unwrap_err(),
+            "Parameter 'amplitude' specified more than once"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_name() {
         let result = parse_series("const --name first --name second");
 
         assert_eq!(
@@ -212,17 +386,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_missing_name() {
-        let result = parse_series("const --name");
+    fn rejects_missing_option_value() {
+        let result = parse_series("sin --amp");
 
-        assert_eq!(result.unwrap_err(), "Missing value for option '--name'");
+        assert_eq!(result.unwrap_err(), "Missing value for option '--amp'");
     }
 
     #[test]
     fn rejects_unknown_option() {
-        let result = parse_series("sin --unknown 10");
+        let result = parse_series("sin --frequency 10");
 
-        assert_eq!(result.unwrap_err(), "Unknown option: --unknown");
+        assert_eq!(result.unwrap_err(), "Unknown option: --frequency");
     }
 
     #[test]
@@ -234,8 +408,15 @@ mod tests {
 
     #[test]
     fn rejects_invalid_period() {
-        let result = parse_series("triangle 10 0");
+        let result = parse_series("triangle --per 0");
 
         assert_eq!(result.unwrap_err(), "Period must be greater than 0");
+    }
+
+    #[test]
+    fn rejects_invalid_duty_cycle() {
+        let result = parse_series("square --duty 2");
+
+        assert_eq!(result.unwrap_err(), "Duty cycle must be between 0 and 1");
     }
 }
