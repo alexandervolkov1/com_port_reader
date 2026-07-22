@@ -5,8 +5,8 @@ use std::time::Duration;
 use crate::acquisition::SignalGenerator;
 use crate::components::{
     command_model::CommandModel, command_view, controls_model::ControlsModel, controls_view,
-    plot_model::PlotModel, plot_view, series_editor_model::SeriesEditorModel, series_editor_view,
-    series_view,
+    plot_model::PlotModel, plot_view, serial_settings_model::SerialSettingsModel,
+    serial_settings_view, series_editor_model::SeriesEditorModel, series_editor_view, series_view,
 };
 use crate::data::SeriesStore;
 use crate::sample_sink::NullSampleSink;
@@ -23,6 +23,7 @@ pub struct MyApp {
     worker_handle: WorkerHandle,
     series_panel_open: bool,
     series_editor: SeriesEditorModel,
+    serial_settings: SerialSettingsModel,
 }
 
 impl MyApp {
@@ -48,6 +49,8 @@ impl MyApp {
         );
 
         let command = CommandModel::new(worker_handle.clone(), event_receiver);
+        let serial_settings = SerialSettingsModel::new();
+
         Self {
             controls,
             plot: PlotModel::new(),
@@ -56,6 +59,7 @@ impl MyApp {
             worker_handle,
             series_panel_open: false,
             series_editor: SeriesEditorModel::default(),
+            serial_settings,
         }
     }
 }
@@ -70,6 +74,10 @@ impl eframe::App for MyApp {
             ui.separator();
 
             command_view::show(ui, &mut self.command);
+
+            ui.separator();
+
+            serial_settings_view::show(ui, &mut self.serial_settings);
 
             ui.separator();
 

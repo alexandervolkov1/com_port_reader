@@ -8,6 +8,7 @@ egui_plot = "0.36.0"
 egui_extras = "0.35.0"
 chrono = "0.4.44"
 crossbeam-channel = "0.5.15"
+serialport = "4.9.0"
 
 [dependencies.eframe]
 version = "0.35.0"
