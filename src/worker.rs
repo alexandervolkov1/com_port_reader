@@ -8,6 +8,7 @@ pub use config::WorkerConfig;
 pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
 
+use crate::sample_sink::{SampleSink, SampleSinkError};
 use crate::{
     acquisition::{AcquisitionError, AcquisitionSource},
     data::{SeriesSample, SeriesStore, SignalSeries},
@@ -43,6 +44,7 @@ impl Worker {
         event_sender: Sender<WorkerEvent>,
         series: SeriesStore,
         mut source: Box<dyn AcquisitionSource>,
+        mut sink: Box<dyn SampleSink>,
         config: WorkerConfig,
     ) -> Self {
         let running = Arc::new(AtomicBool::new(false));
@@ -56,35 +58,33 @@ impl Worker {
                 let now = Instant::now();
 
                 let mut poll_completed = false;
-                let mut acquisition_error = None;
+
+                let mut acquisition_error: Option<AcquisitionError> = None;
+                let mut sink_error: Option<SampleSinkError> = None;
 
                 if let AcquisitionState::Running {
                     started_at,
                     next_poll,
                 } = &mut state
+                    && now >= *next_poll
                 {
-                    if now >= *next_poll {
-                        let elapsed_seconds = started_at.elapsed().as_secs_f64();
+                    let elapsed_seconds = started_at.elapsed().as_secs_f64();
 
-                        let timestamp = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs_f64();
+                    let timestamp = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs_f64();
 
-                        sample_batch.clear();
+                    sample_batch.clear();
 
-                        let result = series.with_mut(|all_series| {
-                            source.sample(
-                                all_series,
-                                timestamp,
-                                elapsed_seconds,
-                                &mut sample_batch,
-                            )?;
+                    let result = series.with_mut(|all_series| {
+                        source.sample(all_series, timestamp, elapsed_seconds, &mut sample_batch)?;
 
-                            append_series_samples(all_series, &sample_batch)
-                        });
+                        append_series_samples(all_series, &sample_batch)
+                    });
 
-                        match result {
+                    match result {
+                        Ok(()) => match sink.write_batch(&sample_batch) {
                             Ok(()) => {
                                 *next_poll += poll_interval;
 
@@ -96,8 +96,12 @@ impl Worker {
                             }
 
                             Err(error) => {
-                                acquisition_error = Some(error);
+                                sink_error = Some(error);
                             }
+                        },
+
+                        Err(error) => {
+                            acquisition_error = Some(error);
                         }
                     }
                 }
@@ -110,12 +114,46 @@ impl Worker {
                     if let Err(stop_error) = source.stop() {
                         error = format!(
                             "{error}; additionally failed to stop source: \
-                             {stop_error}"
+                             {stop_error}",
+                        )
+                        .into();
+                    }
+
+                    if let Err(flush_error) = sink.flush() {
+                        error = format!(
+                            "{error}; additionally failed to flush sink: \
+                             {flush_error}",
                         )
                         .into();
                     }
 
                     let _ = event_sender.send(WorkerEvent::AcquisitionFailed(error));
+
+                    continue;
+                }
+
+                if let Some(mut error) = sink_error {
+                    state = AcquisitionState::Stopped;
+
+                    thread_running.store(false, Ordering::Release);
+
+                    if let Err(stop_error) = source.stop() {
+                        error = format!(
+                            "{error}; additionally failed to stop source: \
+                             {stop_error}",
+                        )
+                        .into();
+                    }
+
+                    if let Err(flush_error) = sink.flush() {
+                        error = format!(
+                            "{error}; additionally failed to flush sink: \
+                             {flush_error}",
+                        )
+                        .into();
+                    }
+
+                    let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
 
                     continue;
                 }
@@ -169,6 +207,10 @@ impl Worker {
                                 let _ =
                                     event_sender.send(WorkerEvent::AcquisitionStopFailed(error));
                             }
+
+                            if let Err(error) = sink.flush() {
+                                let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
+                            }
                         }
                     }
 
@@ -198,6 +240,8 @@ impl Worker {
                         if matches!(state, AcquisitionState::Running { .. }) {
                             let _ = source.stop();
                         }
+
+                        let _ = sink.flush();
 
                         break;
                     }

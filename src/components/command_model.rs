@@ -52,19 +52,19 @@ impl CommandModel {
 
     pub fn execute(&mut self, command: UserCommand) {
         match command {
-            UserCommand::AddSeries(new_series) => {
+            UserCommand::Add(new_series) => {
                 if let Err(error) = self.worker_handle.add_series(new_series) {
                     self.set_worker_error(error);
                 }
             }
 
-            UserCommand::DeleteSeries { name } => {
+            UserCommand::Delete { name } => {
                 if let Err(error) = self.worker_handle.remove_series_by_name(name) {
                     self.set_worker_error(error);
                 }
             }
 
-            UserCommand::RenameSeries {
+            UserCommand::Rename {
                 current_name,
                 new_name,
             } => {

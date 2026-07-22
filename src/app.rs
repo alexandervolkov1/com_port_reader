@@ -9,6 +9,7 @@ use crate::components::{
     series_view,
 };
 use crate::data::SeriesStore;
+use crate::sample_sink::NullSampleSink;
 use crate::worker::{WorkerConfig, WorkerHandle};
 
 const SERIES_PANEL_WIDTH: f32 = 150.0;
@@ -42,6 +43,7 @@ impl MyApp {
             command_receiver,
             event_sender,
             Box::new(SignalGenerator::new()),
+            Box::new(NullSampleSink::new()),
             worker_config,
         );
 

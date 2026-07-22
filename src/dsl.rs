@@ -29,7 +29,7 @@ pub fn parse_command(input: &str) -> Result<UserCommand, String> {
             return Err("Missing series definition for command 'add'".to_owned());
         }
 
-        return parse_series(arguments).map(UserCommand::AddSeries);
+        return parse_series(arguments).map(UserCommand::Add);
     }
 
     if first_token.eq_ignore_ascii_case("delete") {
@@ -39,7 +39,7 @@ pub fn parse_command(input: &str) -> Result<UserCommand, String> {
     if first_token.eq_ignore_ascii_case("rename") {
         return parse_rename(arguments);
     }
-    parse_series(input).map(UserCommand::AddSeries)
+    parse_series(input).map(UserCommand::Add)
 }
 
 fn parse_delete(arguments: &str) -> Result<UserCommand, String> {
@@ -53,7 +53,7 @@ fn parse_delete(arguments: &str) -> Result<UserCommand, String> {
         return Err(format!("Unexpected argument: {argument}"));
     }
 
-    Ok(UserCommand::DeleteSeries {
+    Ok(UserCommand::Delete {
         name: name.to_owned(),
     })
 }
@@ -73,7 +73,7 @@ fn parse_rename(arguments: &str) -> Result<UserCommand, String> {
         return Err(format!("Unexpected argument: {argument}"));
     }
 
-    Ok(UserCommand::RenameSeries {
+    Ok(UserCommand::Rename {
         current_name: current_name.to_owned(),
         new_name: new_name.to_owned(),
     })
@@ -492,7 +492,7 @@ mod tests {
     fn parses_explicit_add_command() {
         let command = parse_command("add const --value 10 --name baseline").unwrap();
 
-        let UserCommand::AddSeries(new_series) = command else {
+        let UserCommand::Add(new_series) = command else {
             panic!("expected add-series command");
         };
 
@@ -506,7 +506,7 @@ mod tests {
     fn treats_legacy_signal_syntax_as_add_command() {
         let command = parse_command("const 10 --name baseline").unwrap();
 
-        let UserCommand::AddSeries(new_series) = command else {
+        let UserCommand::Add(new_series) = command else {
             panic!("expected add-series command");
         };
 
@@ -530,7 +530,7 @@ mod tests {
     fn parses_delete_command() {
         let command = parse_command("delete phase_A").unwrap();
 
-        let UserCommand::DeleteSeries { name } = command else {
+        let UserCommand::Delete { name } = command else {
             panic!("expected delete-series command");
         };
 
@@ -558,7 +558,7 @@ mod tests {
     fn parses_rename_command() {
         let command = parse_command("rename temperature room_temperature").unwrap();
 
-        let UserCommand::RenameSeries {
+        let UserCommand::Rename {
             current_name,
             new_name,
         } = command

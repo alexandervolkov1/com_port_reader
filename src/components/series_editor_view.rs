@@ -50,7 +50,7 @@ pub fn show(context: &egui::Context, editor: &mut SeriesEditorModel, commands: &
     if add_requested {
         match editor.build() {
             Ok(new_series) => {
-                commands.execute(UserCommand::AddSeries(new_series));
+                commands.execute(UserCommand::Add(new_series));
                 editor.close();
             }
 

@@ -3,6 +3,7 @@ use crossbeam_channel::{Receiver, Sender};
 use crate::{
     acquisition::AcquisitionSource,
     data::SeriesStore,
+    sample_sink::SampleSink,
     worker::{Worker, WorkerCommand, WorkerConfig, WorkerEvent, WorkerHandle},
 };
 
@@ -17,6 +18,7 @@ impl ControlsModel {
         command_receiver: Receiver<WorkerCommand>,
         event_sender: Sender<WorkerEvent>,
         source: Box<dyn AcquisitionSource>,
+        sink: Box<dyn SampleSink>,
         config: WorkerConfig,
     ) -> Self {
         let worker = Worker::spawn(
@@ -25,6 +27,7 @@ impl ControlsModel {
             event_sender,
             series,
             source,
+            sink,
             config,
         );
 

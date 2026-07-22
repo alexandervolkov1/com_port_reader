@@ -1,6 +1,7 @@
 use crate::{
     acquisition::AcquisitionError,
     data::{AddSeriesError, RenameSeriesError, SeriesId},
+    sample_sink::SampleSinkError,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -15,6 +16,7 @@ pub enum WorkerEvent {
     SeriesNotFound(String),
     SeriesRenamed { id: SeriesId, name: String },
     SeriesRenameFailed(RenameSeriesError),
+    SampleSinkFailed(SampleSinkError),
 }
 
 impl std::fmt::Display for WorkerEvent {
@@ -54,6 +56,10 @@ impl std::fmt::Display for WorkerEvent {
 
             Self::SeriesRenameFailed(error) => {
                 write!(formatter, "Failed to rename series: {error}")
+            }
+
+            Self::SampleSinkFailed(error) => {
+                write!(formatter, "Sample output failed: {error}")
             }
         }
     }

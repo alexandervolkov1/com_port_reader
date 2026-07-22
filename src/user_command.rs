@@ -2,11 +2,13 @@ use crate::data::NewSeries;
 
 #[derive(Debug)]
 pub enum UserCommand {
-    AddSeries(NewSeries),
-    DeleteSeries {
+    Add(NewSeries),
+
+    Delete {
         name: String,
     },
-    RenameSeries {
+
+    Rename {
         current_name: String,
         new_name: String,
     },
