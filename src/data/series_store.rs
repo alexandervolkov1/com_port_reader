@@ -49,6 +49,39 @@ impl From<SeriesNameError> for AddSeriesError {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RenameSeriesError {
+    NotFound(String),
+    InvalidName(SeriesNameError),
+}
+
+impl std::fmt::Display for RenameSeriesError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(name) => {
+                write!(formatter, "Series '{name}' not found")
+            }
+
+            Self::InvalidName(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for RenameSeriesError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::NotFound(_) => None,
+            Self::InvalidName(error) => Some(error),
+        }
+    }
+}
+
+impl From<SeriesNameError> for RenameSeriesError {
+    fn from(error: SeriesNameError) -> Self {
+        Self::InvalidName(error)
+    }
+}
+
 #[derive(Clone)]
 pub struct SeriesStore {
     inner: Arc<SeriesStoreInner>,
@@ -115,6 +148,35 @@ impl SeriesStore {
             let index = series.iter().position(|series| series.name == name)?;
 
             Some(series.remove(index).id)
+        })
+    }
+
+    pub fn rename_series(
+        &self,
+        current_name: &str,
+        new_name: &str,
+    ) -> Result<SeriesId, RenameSeriesError> {
+        self.with_mut(|series| {
+            let Some(index) = series.iter().position(|series| series.name == current_name) else {
+                return Err(RenameSeriesError::NotFound(current_name.to_owned()));
+            };
+
+            let new_name = normalize_series_name(new_name)?;
+
+            let id = series[index].id;
+
+            if series[index].name == new_name {
+                return Ok(id);
+            }
+
+            if contains_name(series, new_name) {
+                return Err(SeriesNameError::Duplicate(new_name.to_owned()).into());
+            }
+
+            series[index].name.clear();
+            series[index].name.push_str(new_name);
+
+            Ok(id)
         })
     }
 
@@ -188,6 +250,7 @@ fn generate_default_name(series: &[SignalSeries], prefix: &str, id: SeriesId) ->
 mod tests {
     use super::SeriesStore;
 
+    use crate::data::series_store::RenameSeriesError;
     use crate::data::{AddSeriesError, NewSeries, SeriesId, SeriesNameError, Signal};
 
     fn add_unnamed(store: &SeriesStore, signal: Signal) -> SeriesId {
@@ -417,5 +480,62 @@ mod tests {
 
         assert!(store.metadata().is_empty());
         assert_eq!(store.remove_series_by_name("temperature"), None,);
+    }
+
+    #[test]
+    fn renames_series_without_changing_id() {
+        let store = SeriesStore::new();
+
+        let id = store
+            .add_series(NewSeries::named(
+                Signal::Constant { value: 1.0 },
+                "temperature",
+            ))
+            .unwrap();
+
+        assert_eq!(
+            store.rename_series("temperature", "room_temperature",),
+            Ok(id),
+        );
+
+        let metadata = store.metadata();
+
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0].id, id);
+        assert_eq!(metadata[0].name, "room_temperature");
+    }
+
+    #[test]
+    fn rejects_duplicate_name_during_rename() {
+        let store = SeriesStore::new();
+
+        store
+            .add_series(NewSeries::named(Signal::Constant { value: 1.0 }, "first"))
+            .unwrap();
+
+        store
+            .add_series(NewSeries::named(Signal::Constant { value: 2.0 }, "second"))
+            .unwrap();
+
+        let result = store.rename_series("first", "second");
+
+        assert_eq!(
+            result,
+            Err(RenameSeriesError::InvalidName(SeriesNameError::Duplicate(
+                "second".to_owned()
+            ),)),
+        );
+    }
+
+    #[test]
+    fn reports_missing_series_during_rename() {
+        let store = SeriesStore::new();
+
+        let result = store.rename_series("missing", "new_name");
+
+        assert_eq!(
+            result,
+            Err(RenameSeriesError::NotFound("missing".to_owned(),)),
+        );
     }
 }

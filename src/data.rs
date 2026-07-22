@@ -8,7 +8,7 @@ pub use sample::Sample;
 
 pub use series::{NewSeries, SeriesId, SeriesMetadata, SignalSeries};
 
-pub use series_store::{AddSeriesError, SeriesStore};
+pub use series_store::{AddSeriesError, RenameSeriesError, SeriesStore};
 
 pub use signal::{Signal, SignalKind, SignalValidationError};
 

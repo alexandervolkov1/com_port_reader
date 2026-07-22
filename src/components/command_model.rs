@@ -63,6 +63,15 @@ impl CommandModel {
                     self.set_worker_error(error);
                 }
             }
+
+            UserCommand::RenameSeries {
+                current_name,
+                new_name,
+            } => {
+                if let Err(error) = self.worker_handle.rename_series(current_name, new_name) {
+                    self.set_worker_error(error);
+                }
+            }
         }
     }
 

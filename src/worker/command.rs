@@ -6,8 +6,15 @@ pub enum WorkerCommand {
 
     AddSeries(NewSeries),
     RemoveSeries(SeriesId),
-    SetVisibility { id: SeriesId, visible: bool },
+    SetVisibility {
+        id: SeriesId,
+        visible: bool,
+    },
     ClearSeries,
     Shutdown,
     RemoveSeriesByName(String),
+    RenameSeries {
+        current_name: String,
+        new_name: String,
+    },
 }

@@ -36,6 +36,9 @@ pub fn parse_command(input: &str) -> Result<UserCommand, String> {
         return parse_delete(arguments);
     }
 
+    if first_token.eq_ignore_ascii_case("rename") {
+        return parse_rename(arguments);
+    }
     parse_series(input).map(UserCommand::AddSeries)
 }
 
@@ -52,6 +55,27 @@ fn parse_delete(arguments: &str) -> Result<UserCommand, String> {
 
     Ok(UserCommand::DeleteSeries {
         name: name.to_owned(),
+    })
+}
+
+fn parse_rename(arguments: &str) -> Result<UserCommand, String> {
+    let mut tokens = arguments.split_whitespace();
+
+    let Some(current_name) = tokens.next() else {
+        return Err("Missing series name for command 'rename'".to_owned());
+    };
+
+    let Some(new_name) = tokens.next() else {
+        return Err("Missing new series name for command 'rename'".to_owned());
+    };
+
+    if let Some(argument) = tokens.next() {
+        return Err(format!("Unexpected argument: {argument}"));
+    }
+
+    Ok(UserCommand::RenameSeries {
+        current_name: current_name.to_owned(),
+        new_name: new_name.to_owned(),
     })
 }
 
@@ -528,5 +552,48 @@ mod tests {
         let result = parse_command("delete phase A");
 
         assert_eq!(result.unwrap_err(), "Unexpected argument: A",);
+    }
+
+    #[test]
+    fn parses_rename_command() {
+        let command = parse_command("rename temperature room_temperature").unwrap();
+
+        let UserCommand::RenameSeries {
+            current_name,
+            new_name,
+        } = command
+        else {
+            panic!("expected rename-series command");
+        };
+
+        assert_eq!(current_name, "temperature");
+        assert_eq!(new_name, "room_temperature");
+    }
+
+    #[test]
+    fn rejects_rename_without_current_name() {
+        let result = parse_command("rename");
+
+        assert_eq!(
+            result.unwrap_err(),
+            "Missing series name for command 'rename'",
+        );
+    }
+
+    #[test]
+    fn rejects_rename_without_new_name() {
+        let result = parse_command("rename temperature");
+
+        assert_eq!(
+            result.unwrap_err(),
+            "Missing new series name for command 'rename'",
+        );
+    }
+
+    #[test]
+    fn rejects_rename_with_extra_argument() {
+        let result = parse_command("rename temperature room extra");
+
+        assert_eq!(result.unwrap_err(), "Unexpected argument: extra",);
     }
 }

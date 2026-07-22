@@ -40,6 +40,17 @@ impl WorkerHandle {
         self.send(WorkerCommand::RemoveSeries(id))
     }
 
+    pub fn rename_series(
+        &self,
+        current_name: String,
+        new_name: String,
+    ) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::RenameSeries {
+            current_name,
+            new_name,
+        })
+    }
+
     pub fn set_visibility(&self, id: SeriesId, visible: bool) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::SetVisibility { id, visible })
     }

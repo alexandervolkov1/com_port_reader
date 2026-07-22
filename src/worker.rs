@@ -199,6 +199,19 @@ impl Worker {
                         let _ = event_sender.send(event);
                     }
 
+                    Ok(WorkerCommand::RenameSeries {
+                        current_name,
+                        new_name,
+                    }) => {
+                        let event = match series.rename_series(&current_name, &new_name) {
+                            Ok(id) => WorkerEvent::SeriesRenamed { id, name: new_name },
+
+                            Err(error) => WorkerEvent::SeriesRenameFailed(error),
+                        };
+
+                        let _ = event_sender.send(event);
+                    }
+
                     Err(RecvTimeoutError::Timeout) => {
                         // Наступил срок очередного опроса.
                     }

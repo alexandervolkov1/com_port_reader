@@ -1,6 +1,6 @@
 use crate::{
     acquisition::AcquisitionError,
-    data::{AddSeriesError, SeriesId},
+    data::{AddSeriesError, RenameSeriesError, SeriesId},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -13,6 +13,8 @@ pub enum WorkerEvent {
     AcquisitionStopFailed(AcquisitionError),
     SeriesRemoved(SeriesId),
     SeriesNotFound(String),
+    SeriesRenamed { id: SeriesId, name: String },
+    SeriesRenameFailed(RenameSeriesError),
 }
 
 impl std::fmt::Display for WorkerEvent {
@@ -44,6 +46,14 @@ impl std::fmt::Display for WorkerEvent {
 
             Self::SeriesNotFound(name) => {
                 write!(formatter, "Series '{name}' not found.")
+            }
+
+            Self::SeriesRenamed { id, name } => {
+                write!(formatter, "Series {id} renamed to '{name}'.")
+            }
+
+            Self::SeriesRenameFailed(error) => {
+                write!(formatter, "Failed to rename series: {error}")
             }
         }
     }
