@@ -8,7 +8,10 @@ pub use config::WorkerConfig;
 pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
 
-use crate::{acquisition::AcquisitionSource, data::SeriesStore};
+use crate::{
+    acquisition::{AcquisitionError, AcquisitionSource},
+    data::{SeriesSample, SeriesStore, SignalSeries},
+};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 
 use std::sync::{
@@ -48,7 +51,7 @@ impl Worker {
 
         let thread = thread::spawn(move || {
             let mut state = AcquisitionState::Stopped;
-
+            let mut sample_batch: Vec<SeriesSample> = Vec::new();
             loop {
                 let now = Instant::now();
 
@@ -68,8 +71,17 @@ impl Worker {
                             .unwrap()
                             .as_secs_f64();
 
+                        sample_batch.clear();
+
                         let result = series.with_mut(|all_series| {
-                            source.sample(all_series, timestamp, elapsed_seconds)
+                            source.sample(
+                                all_series,
+                                timestamp,
+                                elapsed_seconds,
+                                &mut sample_batch,
+                            )?;
+
+                            append_series_samples(all_series, &sample_batch)
                         });
 
                         match result {
@@ -257,4 +269,34 @@ impl Drop for Worker {
             let _ = thread.join();
         }
     }
+}
+
+fn append_series_samples(
+    series: &mut [SignalSeries],
+    samples: &[SeriesSample],
+) -> Result<(), AcquisitionError> {
+    for series_sample in samples {
+        if !series
+            .iter()
+            .any(|series| series.id == series_sample.series_id)
+        {
+            return Err(format!(
+                "Acquisition source returned a sample for \
+                 unknown series {}",
+                series_sample.series_id,
+            )
+            .into());
+        }
+    }
+
+    for series_sample in samples {
+        let target = series
+            .iter_mut()
+            .find(|series| series.id == series_sample.series_id)
+            .expect("series IDs were validated above");
+
+        target.samples.push(series_sample.sample);
+    }
+
+    Ok(())
 }

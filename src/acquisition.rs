@@ -1,6 +1,6 @@
 mod signal_generator;
 
-use crate::data::SignalSeries;
+use crate::data::{SeriesSample, SignalSeries};
 
 pub use signal_generator::SignalGenerator;
 
@@ -38,9 +38,10 @@ pub trait AcquisitionSource: Send {
 
     fn sample(
         &mut self,
-        series: &mut [SignalSeries],
+        series: &[SignalSeries],
         timestamp: f64,
         elapsed_seconds: f64,
+        output: &mut Vec<SeriesSample>,
     ) -> Result<(), AcquisitionError>;
 
     fn stop(&mut self) -> Result<(), AcquisitionError> {
