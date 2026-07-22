@@ -1,4 +1,7 @@
+mod csv;
+
 use crate::data::SeriesSample;
+pub use csv::CsvSampleSink;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SampleSinkError {
@@ -47,5 +50,11 @@ impl NullSampleSink {
 impl SampleSink for NullSampleSink {
     fn write_batch(&mut self, _samples: &[SeriesSample]) -> Result<(), SampleSinkError> {
         Ok(())
+    }
+}
+
+impl From<std::io::Error> for SampleSinkError {
+    fn from(error: std::io::Error) -> Self {
+        Self::from(error.to_string())
     }
 }
