@@ -8,6 +8,6 @@ pub enum WorkerCommand {
     RemoveSeries(SeriesId),
     SetVisibility { id: SeriesId, visible: bool },
     ClearSeries,
-
     Shutdown,
+    RemoveSeriesByName(String),
 }

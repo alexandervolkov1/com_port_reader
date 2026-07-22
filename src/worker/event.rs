@@ -11,6 +11,8 @@ pub enum WorkerEvent {
     AcquisitionStartFailed(AcquisitionError),
     AcquisitionFailed(AcquisitionError),
     AcquisitionStopFailed(AcquisitionError),
+    SeriesRemoved(SeriesId),
+    SeriesNotFound(String),
 }
 
 impl std::fmt::Display for WorkerEvent {
@@ -34,6 +36,14 @@ impl std::fmt::Display for WorkerEvent {
 
             Self::AcquisitionStopFailed(error) => {
                 write!(formatter, "Failed to stop acquisition: {error}")
+            }
+
+            Self::SeriesRemoved(id) => {
+                write!(formatter, "Series {id} removed.")
+            }
+
+            Self::SeriesNotFound(name) => {
+                write!(formatter, "Series '{name}' not found.")
             }
         }
     }

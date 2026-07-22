@@ -14,6 +14,7 @@ struct SeriesStoreInner {
 pub enum AddSeriesError {
     InvalidSignal(SignalValidationError),
     EmptyName,
+    NameContainsWhitespace,
     DuplicateName(String),
 }
 
@@ -27,6 +28,10 @@ impl std::fmt::Display for AddSeriesError {
             Self::DuplicateName(name) => {
                 write!(formatter, "Series name '{name}' already exists")
             }
+
+            Self::NameContainsWhitespace => {
+                formatter.write_str("Series name cannot contain whitespace")
+            }
         }
     }
 }
@@ -36,7 +41,7 @@ impl std::error::Error for AddSeriesError {
         match self {
             Self::InvalidSignal(error) => Some(error),
 
-            Self::EmptyName | Self::DuplicateName(_) => None,
+            Self::EmptyName | Self::NameContainsWhitespace | Self::DuplicateName(_) => None,
         }
     }
 }
@@ -85,11 +90,7 @@ impl SeriesStore {
         self.with_mut(|series| {
             let custom_name = match requested_name {
                 Some(name) => {
-                    let name = name.trim();
-
-                    if name.is_empty() {
-                        return Err(AddSeriesError::EmptyName);
-                    }
+                    let name = validate_name(&name)?;
 
                     if contains_name(series, name) {
                         return Err(AddSeriesError::DuplicateName(name.to_owned()));
@@ -109,6 +110,14 @@ impl SeriesStore {
             series.push(SignalSeries::new(id, name, signal));
 
             Ok(id)
+        })
+    }
+
+    pub fn remove_series_by_name(&self, name: &str) -> Option<SeriesId> {
+        self.with_mut(|series| {
+            let index = series.iter().position(|series| series.name == name)?;
+
+            Some(series.remove(index).id)
         })
     }
 
@@ -152,6 +161,20 @@ impl Default for SeriesStore {
             }),
         }
     }
+}
+
+fn validate_name(name: &str) -> Result<&str, AddSeriesError> {
+    let name = name.trim();
+
+    if name.is_empty() {
+        return Err(AddSeriesError::EmptyName);
+    }
+
+    if name.chars().any(char::is_whitespace) {
+        return Err(AddSeriesError::NameContainsWhitespace);
+    }
+
+    Ok(name)
 }
 
 fn contains_name(series: &[SignalSeries], name: &str) -> bool {
@@ -372,5 +395,34 @@ mod tests {
         let result = store.add_series(NewSeries::named(Signal::Constant { value: 1.0 }, "   "));
 
         assert_eq!(result, Err(AddSeriesError::EmptyName));
+    }
+
+    #[test]
+    fn rejects_name_with_whitespace() {
+        let store = SeriesStore::new();
+
+        let result = store.add_series(NewSeries::named(
+            Signal::Constant { value: 1.0 },
+            "room temperature",
+        ));
+
+        assert_eq!(result, Err(AddSeriesError::NameContainsWhitespace),);
+    }
+
+    #[test]
+    fn removes_series_by_name() {
+        let store = SeriesStore::new();
+
+        let id = store
+            .add_series(NewSeries::named(
+                Signal::Constant { value: 1.0 },
+                "temperature",
+            ))
+            .unwrap();
+
+        assert_eq!(store.remove_series_by_name("temperature"), Some(id),);
+
+        assert!(store.metadata().is_empty());
+        assert_eq!(store.remove_series_by_name("temperature"), None,);
     }
 }

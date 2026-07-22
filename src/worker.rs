@@ -190,6 +190,15 @@ impl Worker {
                         break;
                     }
 
+                    Ok(WorkerCommand::RemoveSeriesByName(name)) => {
+                        let event = match series.remove_series_by_name(&name) {
+                            Some(id) => WorkerEvent::SeriesRemoved(id),
+                            None => WorkerEvent::SeriesNotFound(name),
+                        };
+
+                        let _ = event_sender.send(event);
+                    }
+
                     Err(RecvTimeoutError::Timeout) => {
                         // Наступил срок очередного опроса.
                     }

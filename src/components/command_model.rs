@@ -57,6 +57,12 @@ impl CommandModel {
                     self.set_worker_error(error);
                 }
             }
+
+            UserCommand::DeleteSeries { name } => {
+                if let Err(error) = self.worker_handle.remove_series_by_name(name) {
+                    self.set_worker_error(error);
+                }
+            }
         }
     }
 

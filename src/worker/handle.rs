@@ -47,6 +47,10 @@ impl WorkerHandle {
     pub fn clear_series(&self) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::ClearSeries)
     }
+
+    pub fn remove_series_by_name(&self, name: String) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::RemoveSeriesByName(name))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

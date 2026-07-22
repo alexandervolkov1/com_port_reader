@@ -22,17 +22,37 @@ pub fn parse_command(input: &str) -> Result<UserCommand, String> {
         return Err("Empty input".to_owned());
     };
 
-    if first_token.eq_ignore_ascii_case("add") {
-        let series_definition = input[first_token.len()..].trim_start();
+    let arguments = input[first_token.len()..].trim();
 
-        if series_definition.is_empty() {
+    if first_token.eq_ignore_ascii_case("add") {
+        if arguments.is_empty() {
             return Err("Missing series definition for command 'add'".to_owned());
         }
 
-        return parse_series(series_definition).map(UserCommand::AddSeries);
+        return parse_series(arguments).map(UserCommand::AddSeries);
+    }
+
+    if first_token.eq_ignore_ascii_case("delete") {
+        return parse_delete(arguments);
     }
 
     parse_series(input).map(UserCommand::AddSeries)
+}
+
+fn parse_delete(arguments: &str) -> Result<UserCommand, String> {
+    let mut tokens = arguments.split_whitespace();
+
+    let Some(name) = tokens.next() else {
+        return Err("Missing series name for command 'delete'".to_owned());
+    };
+
+    if let Some(argument) = tokens.next() {
+        return Err(format!("Unexpected argument: {argument}"));
+    }
+
+    Ok(UserCommand::DeleteSeries {
+        name: name.to_owned(),
+    })
 }
 
 pub fn parse_series(input: &str) -> Result<NewSeries, String> {
@@ -448,7 +468,9 @@ mod tests {
     fn parses_explicit_add_command() {
         let command = parse_command("add const --value 10 --name baseline").unwrap();
 
-        let UserCommand::AddSeries(new_series) = command;
+        let UserCommand::AddSeries(new_series) = command else {
+            panic!("expected add-series command");
+        };
 
         let (signal, name) = new_series.into_parts();
 
@@ -460,7 +482,9 @@ mod tests {
     fn treats_legacy_signal_syntax_as_add_command() {
         let command = parse_command("const 10 --name baseline").unwrap();
 
-        let UserCommand::AddSeries(new_series) = command;
+        let UserCommand::AddSeries(new_series) = command else {
+            panic!("expected add-series command");
+        };
 
         let (signal, name) = new_series.into_parts();
 
@@ -476,5 +500,33 @@ mod tests {
             result.unwrap_err(),
             "Missing series definition for command 'add'",
         );
+    }
+
+    #[test]
+    fn parses_delete_command() {
+        let command = parse_command("delete phase_A").unwrap();
+
+        let UserCommand::DeleteSeries { name } = command else {
+            panic!("expected delete-series command");
+        };
+
+        assert_eq!(name, "phase_A");
+    }
+
+    #[test]
+    fn rejects_delete_without_name() {
+        let result = parse_command("delete");
+
+        assert_eq!(
+            result.unwrap_err(),
+            "Missing series name for command 'delete'",
+        );
+    }
+
+    #[test]
+    fn rejects_delete_with_extra_argument() {
+        let result = parse_command("delete phase A");
+
+        assert_eq!(result.unwrap_err(), "Unexpected argument: A",);
     }
 }
