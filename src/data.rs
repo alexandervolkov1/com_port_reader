@@ -1,5 +1,6 @@
 pub mod sample;
 pub mod series;
+pub mod series_name;
 pub mod series_store;
 pub mod signal;
 
@@ -10,3 +11,5 @@ pub use series::{NewSeries, SeriesId, SeriesMetadata, SignalSeries};
 pub use series_store::{AddSeriesError, SeriesStore};
 
 pub use signal::{Signal, SignalKind, SignalValidationError};
+
+pub use series_name::SeriesNameError;

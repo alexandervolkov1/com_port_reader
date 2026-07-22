@@ -3,7 +3,10 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use super::{NewSeries, SeriesId, SeriesMetadata, SignalSeries, SignalValidationError};
+use super::{
+    NewSeries, SeriesId, SeriesMetadata, SeriesNameError, SignalSeries, SignalValidationError,
+    series_name::normalize_series_name,
+};
 
 struct SeriesStoreInner {
     series: Mutex<Vec<SignalSeries>>,
@@ -13,25 +16,14 @@ struct SeriesStoreInner {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AddSeriesError {
     InvalidSignal(SignalValidationError),
-    EmptyName,
-    NameContainsWhitespace,
-    DuplicateName(String),
+    InvalidName(SeriesNameError),
 }
 
 impl std::fmt::Display for AddSeriesError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidSignal(error) => error.fmt(formatter),
-
-            Self::EmptyName => formatter.write_str("Series name cannot be empty"),
-
-            Self::DuplicateName(name) => {
-                write!(formatter, "Series name '{name}' already exists")
-            }
-
-            Self::NameContainsWhitespace => {
-                formatter.write_str("Series name cannot contain whitespace")
-            }
+            Self::InvalidName(error) => error.fmt(formatter),
         }
     }
 }
@@ -40,8 +32,7 @@ impl std::error::Error for AddSeriesError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::InvalidSignal(error) => Some(error),
-
-            Self::EmptyName | Self::NameContainsWhitespace | Self::DuplicateName(_) => None,
+            Self::InvalidName(error) => Some(error),
         }
     }
 }
@@ -49,6 +40,12 @@ impl std::error::Error for AddSeriesError {
 impl From<SignalValidationError> for AddSeriesError {
     fn from(error: SignalValidationError) -> Self {
         Self::InvalidSignal(error)
+    }
+}
+
+impl From<SeriesNameError> for AddSeriesError {
+    fn from(error: SeriesNameError) -> Self {
+        Self::InvalidName(error)
     }
 }
 
@@ -90,10 +87,10 @@ impl SeriesStore {
         self.with_mut(|series| {
             let custom_name = match requested_name {
                 Some(name) => {
-                    let name = validate_name(&name)?;
+                    let name = normalize_series_name(&name)?;
 
                     if contains_name(series, name) {
-                        return Err(AddSeriesError::DuplicateName(name.to_owned()));
+                        return Err(SeriesNameError::Duplicate(name.to_owned()).into());
                     }
 
                     Some(name.to_owned())
@@ -163,20 +160,6 @@ impl Default for SeriesStore {
     }
 }
 
-fn validate_name(name: &str) -> Result<&str, AddSeriesError> {
-    let name = name.trim();
-
-    if name.is_empty() {
-        return Err(AddSeriesError::EmptyName);
-    }
-
-    if name.chars().any(char::is_whitespace) {
-        return Err(AddSeriesError::NameContainsWhitespace);
-    }
-
-    Ok(name)
-}
-
 fn contains_name(series: &[SignalSeries], name: &str) -> bool {
     series.iter().any(|series| series.name == name)
 }
@@ -205,7 +188,7 @@ fn generate_default_name(series: &[SignalSeries], prefix: &str, id: SeriesId) ->
 mod tests {
     use super::SeriesStore;
 
-    use crate::data::{AddSeriesError, NewSeries, SeriesId, Signal};
+    use crate::data::{AddSeriesError, NewSeries, SeriesId, SeriesNameError, Signal};
 
     fn add_unnamed(store: &SeriesStore, signal: Signal) -> SeriesId {
         store.add_series(NewSeries::unnamed(signal)).unwrap()
@@ -384,7 +367,9 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(AddSeriesError::DuplicateName("temperature".to_owned(),))
+            Err(AddSeriesError::InvalidName(SeriesNameError::Duplicate(
+                "temperature".to_owned()
+            ),)),
         );
     }
 
@@ -394,7 +379,10 @@ mod tests {
 
         let result = store.add_series(NewSeries::named(Signal::Constant { value: 1.0 }, "   "));
 
-        assert_eq!(result, Err(AddSeriesError::EmptyName));
+        assert_eq!(
+            result,
+            Err(AddSeriesError::InvalidName(SeriesNameError::Empty,)),
+        );
     }
 
     #[test]
@@ -406,7 +394,12 @@ mod tests {
             "room temperature",
         ));
 
-        assert_eq!(result, Err(AddSeriesError::NameContainsWhitespace),);
+        assert_eq!(
+            result,
+            Err(AddSeriesError::InvalidName(
+                SeriesNameError::ContainsWhitespace,
+            )),
+        );
     }
 
     #[test]
