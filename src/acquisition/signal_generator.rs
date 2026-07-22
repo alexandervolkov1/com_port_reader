@@ -1,4 +1,4 @@
-use crate::data::{Sample, SeriesSample, SignalSeries};
+use crate::data::{Sample, SeriesMetadata, SeriesSample};
 
 use super::{AcquisitionError, AcquisitionSource};
 
@@ -14,7 +14,7 @@ impl SignalGenerator {
 impl AcquisitionSource for SignalGenerator {
     fn sample(
         &mut self,
-        series: &[SignalSeries],
+        series: &[SeriesMetadata],
         timestamp: f64,
         elapsed_seconds: f64,
         output: &mut Vec<SeriesSample>,
@@ -38,23 +38,25 @@ impl AcquisitionSource for SignalGenerator {
 mod tests {
     use super::{AcquisitionSource, SignalGenerator};
 
-    use crate::data::{Sample, SeriesId, SeriesSample, Signal, SignalSeries};
+    use crate::data::{Sample, SeriesId, SeriesMetadata, SeriesSample, Signal};
 
     #[test]
     fn generates_sample_for_each_series() {
         let mut generator = SignalGenerator::new();
 
         let series = vec![
-            SignalSeries::new(
-                SeriesId::new(1),
-                "first".to_owned(),
-                Signal::Constant { value: 10.0 },
-            ),
-            SignalSeries::new(
-                SeriesId::new(2),
-                "second".to_owned(),
-                Signal::Constant { value: 20.0 },
-            ),
+            SeriesMetadata {
+                id: SeriesId::new(1),
+                name: "first".to_owned(),
+                signal: Signal::Constant { value: 10.0 },
+                visible: true,
+            },
+            SeriesMetadata {
+                id: SeriesId::new(2),
+                name: "second".to_owned(),
+                signal: Signal::Constant { value: 20.0 },
+                visible: true,
+            },
         ];
 
         let mut output = Vec::new();
@@ -70,8 +72,5 @@ mod tests {
                 SeriesSample::new(SeriesId::new(2), Sample::new(1_000.0, 20.0),),
             ],
         );
-
-        assert!(series[0].samples.is_empty());
-        assert!(series[1].samples.is_empty());
     }
 }

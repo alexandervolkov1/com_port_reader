@@ -80,11 +80,22 @@ impl Worker {
 
                     sample_batch.clear();
 
-                    let result = series.with_mut(|all_series| {
-                        source.sample(all_series, timestamp, elapsed_seconds, &mut sample_batch)?;
+                    let series_metadata = series.metadata();
 
-                        append_series_samples(all_series, &sample_batch)
-                    });
+                    let result = source.sample(
+                        &series_metadata,
+                        timestamp,
+                        elapsed_seconds,
+                        &mut sample_batch,
+                    );
+
+                    let result = match result {
+                        Ok(()) => series.with_mut(|all_series| {
+                            append_series_samples(all_series, &sample_batch)
+                        }),
+
+                        Err(error) => Err(error),
+                    };
 
                     match result {
                         Ok(()) => match sink.write_batch(&sample_batch) {

@@ -1,6 +1,6 @@
 mod signal_generator;
 
-use crate::data::{SeriesSample, SignalSeries};
+use crate::data::{SeriesMetadata, SeriesSample};
 
 pub use signal_generator::SignalGenerator;
 
@@ -38,7 +38,7 @@ pub trait AcquisitionSource: Send {
 
     fn sample(
         &mut self,
-        series: &[SignalSeries],
+        series: &[SeriesMetadata],
         timestamp: f64,
         elapsed_seconds: f64,
         output: &mut Vec<SeriesSample>,
