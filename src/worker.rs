@@ -8,7 +8,7 @@ pub use config::WorkerConfig;
 pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
 
-use crate::sample_sink::{SampleSink, SampleSinkError};
+use crate::sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError};
 use crate::{
     acquisition::{AcquisitionError, AcquisitionSource},
     data::{SeriesSample, SeriesStore, SignalSeries},
@@ -35,6 +35,7 @@ pub struct Worker {
     thread: Option<JoinHandle<()>>,
     commands: WorkerHandle,
     running: Arc<AtomicBool>,
+    sample_sink_active: Arc<AtomicBool>,
 }
 
 impl Worker {
@@ -48,6 +49,8 @@ impl Worker {
         config: WorkerConfig,
     ) -> Self {
         let running = Arc::new(AtomicBool::new(false));
+        let sample_sink_active = Arc::new(AtomicBool::new(false));
+        let thread_sample_sink_active = sample_sink_active.clone();
         let thread_running = running.clone();
         let poll_interval = config.poll_interval();
 
@@ -154,6 +157,9 @@ impl Worker {
                     }
 
                     let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
+                    sink = Box::new(NullSampleSink::new());
+
+                    thread_sample_sink_active.store(false, Ordering::Release);
 
                     continue;
                 }
@@ -210,6 +216,10 @@ impl Worker {
 
                             if let Err(error) = sink.flush() {
                                 let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
+
+                                sink = Box::new(NullSampleSink::new());
+
+                                thread_sample_sink_active.store(false, Ordering::Release);
                             }
                         }
                     }
@@ -234,6 +244,38 @@ impl Worker {
 
                     Ok(WorkerCommand::ClearSeries) => {
                         series.clear();
+                    }
+
+                    Ok(WorkerCommand::StartCsvRecording(path)) => {
+                        if let Err(error) = sink.flush() {
+                            let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
+                        }
+
+                        sink = Box::new(NullSampleSink::new());
+
+                        thread_sample_sink_active.store(false, Ordering::Release);
+
+                        match CsvSampleSink::create(path) {
+                            Ok(csv_sink) => {
+                                sink = Box::new(csv_sink);
+
+                                thread_sample_sink_active.store(true, Ordering::Release);
+                            }
+
+                            Err(error) => {
+                                let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
+                            }
+                        }
+                    }
+
+                    Ok(WorkerCommand::StopRecording) => {
+                        if let Err(error) = sink.flush() {
+                            let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
+                        }
+
+                        sink = Box::new(NullSampleSink::new());
+
+                        thread_sample_sink_active.store(false, Ordering::Release);
                     }
 
                     Ok(WorkerCommand::Shutdown) => {
@@ -268,9 +310,7 @@ impl Worker {
                         let _ = event_sender.send(event);
                     }
 
-                    Err(RecvTimeoutError::Timeout) => {
-                        // Наступил срок очередного опроса.
-                    }
+                    Err(RecvTimeoutError::Timeout) => {}
 
                     Err(RecvTimeoutError::Disconnected) => {
                         break;
@@ -279,12 +319,14 @@ impl Worker {
             }
 
             thread_running.store(false, Ordering::Release);
+            thread_sample_sink_active.store(false, Ordering::Release);
         });
 
         Self {
             thread: Some(thread),
             commands,
             running,
+            sample_sink_active,
         }
     }
 
@@ -302,6 +344,18 @@ impl Worker {
 
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Acquire)
+    }
+
+    pub fn start_csv_recording(&self, path: std::path::PathBuf) -> Result<(), WorkerHandleError> {
+        self.commands.start_csv_recording(path)
+    }
+
+    pub fn stop_recording(&self) -> Result<(), WorkerHandleError> {
+        self.commands.stop_recording()
+    }
+
+    pub fn is_recording(&self) -> bool {
+        self.sample_sink_active.load(Ordering::Acquire)
     }
 }
 

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::data::{NewSeries, SeriesId};
 
 pub enum WorkerCommand {
@@ -17,4 +19,6 @@ pub enum WorkerCommand {
         current_name: String,
         new_name: String,
     },
+    StartCsvRecording(PathBuf),
+    StopRecording,
 }

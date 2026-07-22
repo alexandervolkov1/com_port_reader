@@ -1,4 +1,8 @@
-use std::io::Write;
+use std::{
+    fs::{self, File},
+    io::{BufWriter, Write},
+    path::Path,
+};
 
 use crate::data::SeriesSample;
 
@@ -8,6 +12,23 @@ pub struct CsvSampleSink<W> {
     writer: W,
 }
 
+impl CsvSampleSink<BufWriter<File>> {
+    pub fn create(path: impl AsRef<Path>) -> Result<Self, SampleSinkError> {
+        let path = path.as_ref();
+
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            fs::create_dir_all(parent)?;
+        }
+
+        let file = File::create(path)?;
+
+        Self::new(BufWriter::new(file))
+    }
+}
+
 impl<W: Write> CsvSampleSink<W> {
     pub fn new(mut writer: W) -> Result<Self, SampleSinkError> {
         writeln!(writer, "timestamp,series_id,value")?;
@@ -15,6 +36,7 @@ impl<W: Write> CsvSampleSink<W> {
         Ok(Self { writer })
     }
 
+    #[cfg(test)]
     pub fn into_inner(self) -> W {
         self.writer
     }
