@@ -336,6 +336,30 @@ impl Worker {
                         let _ = event_sender.send(event);
                     }
 
+                    Ok(WorkerCommand::TestSerialCommand { config, command }) => {
+                        let port_name = config.port_name().to_owned();
+
+                        let result = config
+                            .open()
+                            .and_then(|mut connection| connection.request_f64(&command));
+
+                        let event = match result {
+                            Ok(value) => WorkerEvent::SerialCommandSucceeded {
+                                port_name,
+                                command,
+                                value,
+                            },
+
+                            Err(error) => WorkerEvent::SerialCommandFailed {
+                                port_name,
+                                command,
+                                error,
+                            },
+                        };
+
+                        let _ = event_sender.send(event);
+                    }
+
                     Err(RecvTimeoutError::Timeout) => {}
 
                     Err(RecvTimeoutError::Disconnected) => {

@@ -2,6 +2,7 @@
 name = "com_port_reader"
 version = "0.1.0"
 edition = "2024"
+default-run = "com_port_reader"
 
 [dependencies]
 egui_plot = "0.36.0"

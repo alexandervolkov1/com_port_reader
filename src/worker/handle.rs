@@ -74,6 +74,14 @@ impl WorkerHandle {
     pub fn test_serial_port(&self, config: SerialPortConfig) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::TestSerialPort(config))
     }
+
+    pub fn test_serial_command(
+        &self,
+        config: SerialPortConfig,
+        command: String,
+    ) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::TestSerialCommand { config, command })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

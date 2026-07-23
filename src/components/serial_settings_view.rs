@@ -60,10 +60,14 @@ pub fn show(ui: &mut egui::Ui, model: &mut SerialSettingsModel, worker_handle: &
         ui.colored_label(egui::Color32::RED, error);
     }
 
-    show_settings_window(ui.ctx(), model);
+    show_settings_window(ui.ctx(), model, worker_handle);
 }
 
-fn show_settings_window(context: &egui::Context, model: &mut SerialSettingsModel) {
+fn show_settings_window(
+    context: &egui::Context,
+    model: &mut SerialSettingsModel,
+    worker_handle: &WorkerHandle,
+) {
     let mut open = model.settings_open();
 
     if !open {
@@ -173,6 +177,25 @@ fn show_settings_window(context: &egui::Context, model: &mut SerialSettingsModel
 
                     ui.end_row();
                 });
+
+            ui.separator();
+
+            ui.horizontal(|ui| {
+                ui.label("Test command:");
+
+                if ui.button("sin").clicked() {
+                    model.test_command(worker_handle, "sin");
+                }
+
+                if ui.button("noise").clicked() {
+                    model.test_command(worker_handle, "noise");
+                }
+            });
+
+            ui.small(
+                "Each test opens the port, sends one command, \
+                                    reads one f64 response and closes the port.",
+            );
 
             ui.separator();
 

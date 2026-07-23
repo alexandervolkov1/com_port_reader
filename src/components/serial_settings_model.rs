@@ -109,14 +109,27 @@ impl SerialSettingsModel {
     }
 
     pub fn test_connection(&mut self, worker_handle: &WorkerHandle) {
-        let Some(port_name) = self.selected_port.clone() else {
+        let Some(config) = self.serial_config() else {
             self.error = Some("Select a COM port first.".to_owned());
             return;
         };
 
+        match worker_handle.test_serial_port(config) {
+            Ok(()) => {
+                self.error = None;
+            }
+
+            Err(error) => {
+                self.error = Some(error.to_string());
+            }
+        }
+    }
+
+    fn serial_config(&self) -> Option<SerialPortConfig> {
+        let port_name = self.selected_port.clone()?;
         let settings = self.settings;
 
-        let config = SerialPortConfig::new(
+        Some(SerialPortConfig::new(
             port_name,
             settings.baud_rate,
             settings.data_bits,
@@ -124,9 +137,16 @@ impl SerialSettingsModel {
             settings.stop_bits,
             settings.flow_control,
             settings.timeout_ms,
-        );
+        ))
+    }
 
-        match worker_handle.test_serial_port(config) {
+    pub fn test_command(&mut self, worker_handle: &WorkerHandle, command: &str) {
+        let Some(config) = self.serial_config() else {
+            self.error = Some("Select a COM port first.".to_owned());
+            return;
+        };
+
+        match worker_handle.test_serial_command(config, command.to_owned()) {
             Ok(()) => {
                 self.error = None;
             }
