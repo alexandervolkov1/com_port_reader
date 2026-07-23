@@ -15,8 +15,9 @@ const DOWNSAMPLE_BUCKETS: usize = 2000;
 
 pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore) {
     let (min_x, max_x) = prepare_lines(plot, series_store);
+    let pane_id = plot.panes[0].id;
 
-    Plot::new("signals")
+    Plot::new(("signals", pane_id))
         .height(ui.available_height())
         .allow_drag(true)
         .allow_zoom(true)
@@ -83,7 +84,7 @@ pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore)
                 plot.manual_x_bounds = Some((bounds.min()[0], bounds.max()[0]));
             }
 
-            for line in &plot.lines {
+            for line in &plot.panes[0].lines {
                 plot_ui.line(
                     Line::new(line.name.clone(), PlotPoints::Borrowed(&line.points)).width(4.0),
                 );
@@ -117,7 +118,9 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
             plot.manual_x_bounds.unwrap_or(live_bounds)
         };
 
-        plot.lines.resize_with(series.len(), PlotLine::default);
+        let lines = &mut plot.panes[0].lines;
+
+        lines.resize_with(series.len(), PlotLine::default);
 
         let mut prepared_count = 0;
 
@@ -136,7 +139,7 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
 
             let visible_samples = &signal_series.samples[start_idx..end_idx];
 
-            let line = &mut plot.lines[prepared_count];
+            let line = &mut lines[prepared_count];
 
             line.name.clone_from(&signal_series.name);
 
@@ -147,7 +150,7 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
             prepared_count += 1;
         }
 
-        plot.lines.truncate(prepared_count);
+        lines.truncate(prepared_count);
 
         (min_x, max_x)
     })
