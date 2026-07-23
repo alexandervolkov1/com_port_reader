@@ -31,7 +31,7 @@ pub fn show(
                 }
 
                 ui.label(&series.name)
-                    .on_hover_text(series.signal.to_string());
+                    .on_hover_text(series.source.to_string());
 
                 if ui.button("Delete").clicked() {
                     remove_id = Some(series.id);

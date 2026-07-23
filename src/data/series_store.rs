@@ -4,8 +4,8 @@ use std::sync::{
 };
 
 use super::{
-    NewSeries, SeriesId, SeriesMetadata, SeriesNameError, SignalSeries, SignalValidationError,
-    series_name::normalize_series_name,
+    NewSeries, SeriesId, SeriesMetadata, SeriesNameError, SeriesSource, SignalSeries,
+    SignalValidationError, series_name::normalize_series_name,
 };
 
 struct SeriesStoreInner {
@@ -137,7 +137,7 @@ impl SeriesStore {
             let name = custom_name
                 .unwrap_or_else(|| generate_default_name(series, signal.kind_name(), id));
 
-            series.push(SignalSeries::new(id, name, signal));
+            series.push(SignalSeries::new(id, name, SeriesSource::Generated(signal)));
 
             Ok(id)
         })

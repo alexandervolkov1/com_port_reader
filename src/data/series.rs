@@ -16,6 +16,19 @@ impl std::fmt::Display for SeriesId {
 }
 
 #[derive(Clone, Debug)]
+pub enum SeriesSource {
+    Generated(Signal),
+}
+
+impl std::fmt::Display for SeriesSource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Generated(signal) => signal.fmt(formatter),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct NewSeries {
     signal: Signal,
     name: Option<String>,
@@ -42,17 +55,17 @@ impl NewSeries {
 pub struct SignalSeries {
     pub id: SeriesId,
     pub name: String,
-    pub signal: Signal,
+    pub source: SeriesSource,
     pub samples: Vec<Sample>,
     pub visible: bool,
 }
 
 impl SignalSeries {
-    pub(crate) fn new(id: SeriesId, name: String, signal: Signal) -> Self {
+    pub(crate) fn new(id: SeriesId, name: String, source: SeriesSource) -> Self {
         Self {
             id,
             name,
-            signal,
+            source,
             samples: Vec::new(),
             visible: true,
         }
@@ -63,7 +76,7 @@ impl SignalSeries {
 pub struct SeriesMetadata {
     pub id: SeriesId,
     pub name: String,
-    pub signal: Signal,
+    pub source: SeriesSource,
     pub visible: bool,
 }
 
@@ -72,7 +85,7 @@ impl From<&SignalSeries> for SeriesMetadata {
         Self {
             id: series.id,
             name: series.name.clone(),
-            signal: series.signal.clone(),
+            source: series.source.clone(),
             visible: series.visible,
         }
     }

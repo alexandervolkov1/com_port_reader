@@ -1,4 +1,4 @@
-use crate::data::{Sample, SeriesMetadata, SeriesSample};
+use crate::data::{Sample, SeriesMetadata, SeriesSample, SeriesSource};
 
 use super::{AcquisitionError, AcquisitionSource};
 
@@ -22,7 +22,9 @@ impl AcquisitionSource for SignalGenerator {
         output.reserve(series.len());
 
         for signal_series in series {
-            let value = signal_series.signal.value_at(elapsed_seconds);
+            let value = match &signal_series.source {
+                SeriesSource::Generated(signal) => signal.value_at(elapsed_seconds),
+            };
 
             output.push(SeriesSample::new(
                 signal_series.id,
@@ -38,7 +40,7 @@ impl AcquisitionSource for SignalGenerator {
 mod tests {
     use super::{AcquisitionSource, SignalGenerator};
 
-    use crate::data::{Sample, SeriesId, SeriesMetadata, SeriesSample, Signal};
+    use crate::data::{Sample, SeriesId, SeriesMetadata, SeriesSample, SeriesSource, Signal};
 
     #[test]
     fn generates_sample_for_each_series() {
@@ -48,13 +50,13 @@ mod tests {
             SeriesMetadata {
                 id: SeriesId::new(1),
                 name: "first".to_owned(),
-                signal: Signal::Constant { value: 10.0 },
+                source: SeriesSource::Generated(Signal::Constant { value: 10.0 }),
                 visible: true,
             },
             SeriesMetadata {
                 id: SeriesId::new(2),
                 name: "second".to_owned(),
-                signal: Signal::Constant { value: 20.0 },
+                source: SeriesSource::Generated(Signal::Constant { value: 20.0 }),
                 visible: true,
             },
         ];
