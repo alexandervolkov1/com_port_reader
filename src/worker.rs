@@ -320,6 +320,21 @@ impl Worker {
 
                         let _ = event_sender.send(event);
                     }
+                    Ok(WorkerCommand::TestSerialPort(config)) => {
+                        let port_name = config.port_name().to_owned();
+
+                        let event = match config.open() {
+                            Ok(port) => {
+                                drop(port);
+
+                                WorkerEvent::SerialPortTestSucceeded(port_name)
+                            }
+
+                            Err(error) => WorkerEvent::SerialPortTestFailed { port_name, error },
+                        };
+
+                        let _ = event_sender.send(event);
+                    }
 
                     Err(RecvTimeoutError::Timeout) => {}
 

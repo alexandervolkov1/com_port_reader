@@ -1,8 +1,8 @@
+use crossbeam_channel::Sender;
 use std::{error::Error, fmt, path::PathBuf};
 
-use crossbeam_channel::Sender;
-
 use crate::data::{NewSeries, SeriesId};
+use crate::serial_connection::SerialPortConfig;
 
 use super::command::WorkerCommand;
 
@@ -69,6 +69,10 @@ impl WorkerHandle {
 
     pub fn stop_recording(&self) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::StopRecording)
+    }
+
+    pub fn test_serial_port(&self, config: SerialPortConfig) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::TestSerialPort(config))
     }
 }
 

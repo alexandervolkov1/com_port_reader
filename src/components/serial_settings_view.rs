@@ -2,6 +2,7 @@ use eframe::egui;
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 use super::serial_settings_model::SerialSettingsModel;
+use crate::worker::WorkerHandle;
 
 const BAUD_RATES: &[u32] = &[1_200, 2_400, 4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
 
@@ -22,7 +23,7 @@ const FLOW_CONTROLS: &[FlowControl] = &[
     FlowControl::Hardware,
 ];
 
-pub fn show(ui: &mut egui::Ui, model: &mut SerialSettingsModel) {
+pub fn show(ui: &mut egui::Ui, model: &mut SerialSettingsModel, worker_handle: &WorkerHandle) {
     ui.horizontal(|ui| {
         ui.label("COM port:");
 
@@ -48,6 +49,10 @@ pub fn show(ui: &mut egui::Ui, model: &mut SerialSettingsModel) {
 
         if ui.button("COM settings").clicked() {
             model.open_settings();
+        }
+
+        if ui.button("Test connection").clicked() {
+            model.test_connection(worker_handle);
         }
     });
 

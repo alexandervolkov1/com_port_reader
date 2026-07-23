@@ -1,3 +1,4 @@
+use crate::serial_connection::SerialConnectionError;
 use crate::{
     acquisition::AcquisitionError,
     data::{AddSeriesError, RenameSeriesError, SeriesId},
@@ -8,15 +9,22 @@ use crate::{
 pub enum WorkerEvent {
     SeriesAdded(SeriesId),
     SeriesAddFailed(AddSeriesError),
-
     AcquisitionStartFailed(AcquisitionError),
     AcquisitionFailed(AcquisitionError),
     AcquisitionStopFailed(AcquisitionError),
     SeriesRemoved(SeriesId),
     SeriesNotFound(String),
-    SeriesRenamed { id: SeriesId, name: String },
+    SeriesRenamed {
+        id: SeriesId,
+        name: String,
+    },
     SeriesRenameFailed(RenameSeriesError),
     SampleSinkFailed(SampleSinkError),
+    SerialPortTestSucceeded(String),
+    SerialPortTestFailed {
+        port_name: String,
+        error: SerialConnectionError,
+    },
 }
 
 impl std::fmt::Display for WorkerEvent {
@@ -60,6 +68,18 @@ impl std::fmt::Display for WorkerEvent {
 
             Self::SampleSinkFailed(error) => {
                 write!(formatter, "Sample output failed: {error}")
+            }
+
+            Self::SerialPortTestSucceeded(port_name) => {
+                write!(formatter, "COM port '{port_name}' opened successfully.",)
+            }
+
+            Self::SerialPortTestFailed { port_name, error } => {
+                write!(
+                    formatter,
+                    "Failed to open COM port '{port_name}': \
+                     {error}",
+                )
             }
         }
     }

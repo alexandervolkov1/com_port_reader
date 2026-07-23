@@ -77,8 +77,7 @@ impl eframe::App for MyApp {
 
             ui.separator();
 
-            serial_settings_view::show(ui, &mut self.serial_settings);
-
+            serial_settings_view::show(ui, &mut self.serial_settings, &self.worker_handle);
             ui.separator();
 
             if self.series_panel_open {

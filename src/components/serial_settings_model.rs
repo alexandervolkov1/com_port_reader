@@ -1,5 +1,7 @@
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 
+use crate::{serial_connection::SerialPortConfig, worker::WorkerHandle};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SerialSettings {
     pub baud_rate: u32,
@@ -104,6 +106,35 @@ impl SerialSettingsModel {
 
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
+    }
+
+    pub fn test_connection(&mut self, worker_handle: &WorkerHandle) {
+        let Some(port_name) = self.selected_port.clone() else {
+            self.error = Some("Select a COM port first.".to_owned());
+            return;
+        };
+
+        let settings = self.settings;
+
+        let config = SerialPortConfig::new(
+            port_name,
+            settings.baud_rate,
+            settings.data_bits,
+            settings.parity,
+            settings.stop_bits,
+            settings.flow_control,
+            settings.timeout_ms,
+        );
+
+        match worker_handle.test_serial_port(config) {
+            Ok(()) => {
+                self.error = None;
+            }
+
+            Err(error) => {
+                self.error = Some(error.to_string());
+            }
+        }
     }
 }
 

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::data::{NewSeries, SeriesId};
+use crate::serial_connection::SerialPortConfig;
 
 pub enum WorkerCommand {
     Start,
@@ -21,4 +22,5 @@ pub enum WorkerCommand {
     },
     StartCsvRecording(PathBuf),
     StopRecording,
+    TestSerialPort(SerialPortConfig),
 }

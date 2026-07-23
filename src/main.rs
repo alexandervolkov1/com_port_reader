@@ -6,6 +6,7 @@ mod components;
 mod data;
 mod dsl;
 mod sample_sink;
+mod serial_connection;
 mod user_command;
 mod utils;
 mod worker;
