@@ -217,11 +217,11 @@ fn parse_serial(tokens: &mut SplitWhitespace<'_>) -> Result<NewSeries, String> {
         }
     }
 
-    let Some(name) = name else {
-        return Err("Serial series requires option '--name'".to_owned());
-    };
+    Ok(match name {
+        Some(name) => NewSeries::named_serial_command(command, name),
 
-    Ok(NewSeries::serial_command(command, name))
+        None => NewSeries::unnamed_serial_command(command),
+    })
 }
 
 struct NumericParameter {
@@ -636,8 +636,8 @@ mod tests {
     }
 
     #[test]
-    fn parses_serial_series() {
-        let command = parse_command("add serial get --name random_walk").unwrap();
+    fn parses_named_serial_series_without_add() {
+        let command = parse_command("serial get --name random_walk").unwrap();
 
         let UserCommand::Add(new_series) = command else {
             panic!("expected add command");
@@ -646,6 +646,26 @@ mod tests {
         let (source, name) = new_series.into_source_parts();
 
         assert_eq!(name.as_deref(), Some("random_walk"),);
+
+        assert_eq!(
+            source,
+            SeriesSource::SerialCommand {
+                command: "get".to_owned(),
+            },
+        );
+    }
+
+    #[test]
+    fn parses_unnamed_serial_series_with_add() {
+        let command = parse_command("add serial get").unwrap();
+
+        let UserCommand::Add(new_series) = command else {
+            panic!("expected add command");
+        };
+
+        let (source, name) = new_series.into_source_parts();
+
+        assert_eq!(name, None);
 
         assert_eq!(
             source,

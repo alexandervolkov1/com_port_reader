@@ -71,7 +71,16 @@ impl NewSeries {
         }
     }
 
-    pub fn serial_command(command: impl Into<String>, name: impl Into<String>) -> Self {
+    pub fn unnamed_serial_command(command: impl Into<String>) -> Self {
+        Self {
+            source: SeriesSource::SerialCommand {
+                command: command.into(),
+            },
+            name: None,
+        }
+    }
+
+    pub fn named_serial_command(command: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
             source: SeriesSource::SerialCommand {
                 command: command.into(),
@@ -84,8 +93,6 @@ impl NewSeries {
         (self.source, self.name)
     }
 
-    // Сохраняет совместимость существующих тестов
-    // генератора и DSL.
     #[cfg(test)]
     pub(crate) fn into_parts(self) -> (Signal, Option<String>) {
         let (source, name) = self.into_source_parts();

@@ -42,7 +42,6 @@ impl std::error::Error for AddSeriesError {
         match self {
             Self::InvalidSignal(error) => Some(error),
             Self::InvalidName(error) => Some(error),
-
             Self::EmptySerialCommand | Self::SerialCommandContainsLineBreak => None,
         }
     }
@@ -598,7 +597,7 @@ mod tests {
         let store = SeriesStore::new();
 
         store
-            .add_series(NewSeries::serial_command("  get  ", "random_walk"))
+            .add_series(NewSeries::named_serial_command("  get  ", "random_walk"))
             .unwrap();
 
         let metadata = store.metadata();
@@ -619,7 +618,7 @@ mod tests {
     fn rejects_empty_serial_command() {
         let store = SeriesStore::new();
 
-        let result = store.add_series(NewSeries::serial_command("   ", "random_walk"));
+        let result = store.add_series(NewSeries::named_serial_command("   ", "random_walk"));
 
         assert_eq!(result, Err(AddSeriesError::EmptySerialCommand),);
     }
@@ -628,8 +627,29 @@ mod tests {
     fn rejects_serial_command_with_line_break() {
         let store = SeriesStore::new();
 
-        let result = store.add_series(NewSeries::serial_command("get\nnext", "random_walk"));
+        let result = store.add_series(NewSeries::named_serial_command("get\nnext", "random_walk"));
 
         assert_eq!(result, Err(AddSeriesError::SerialCommandContainsLineBreak,),);
+    }
+
+    #[test]
+    fn generates_name_for_serial_command() {
+        let store = SeriesStore::new();
+
+        store
+            .add_series(NewSeries::unnamed_serial_command("get"))
+            .unwrap();
+
+        let metadata = store.metadata();
+
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0].name, "serial1");
+
+        assert_eq!(
+            metadata[0].source,
+            SeriesSource::SerialCommand {
+                command: "get".to_owned(),
+            },
+        );
     }
 }
