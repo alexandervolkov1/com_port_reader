@@ -1,6 +1,9 @@
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 
-use crate::{serial_connection::SerialPortConfig, worker::WorkerHandle};
+use crate::{
+    serial_connection::{SerialConfigStore, SerialPortConfig},
+    worker::WorkerHandle,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SerialSettings {
@@ -31,16 +34,18 @@ pub struct SerialSettingsModel {
     settings: SerialSettings,
     settings_open: bool,
     error: Option<String>,
+    config_store: SerialConfigStore,
 }
 
 impl SerialSettingsModel {
-    pub fn new() -> Self {
+    pub fn new(config_store: SerialConfigStore) -> Self {
         let mut model = Self {
             ports: Vec::new(),
             selected_port: None,
             settings: SerialSettings::default(),
             settings_open: false,
             error: None,
+            config_store,
         };
 
         model.refresh_ports();
@@ -74,6 +79,8 @@ impl SerialSettingsModel {
                 self.error = Some(format!("Failed to enumerate COM ports: {error}",));
             }
         }
+
+        self.publish_config();
     }
 
     pub fn ports(&self) -> &[String] {
@@ -86,6 +93,7 @@ impl SerialSettingsModel {
 
     pub fn set_selected_port(&mut self, selected_port: Option<String>) {
         self.selected_port = selected_port;
+        self.publish_config();
     }
 
     pub fn settings_mut(&mut self) -> &mut SerialSettings {
@@ -125,6 +133,10 @@ impl SerialSettingsModel {
         }
     }
 
+    pub fn publish_config(&self) {
+        self.config_store.set(self.serial_config());
+    }
+
     fn serial_config(&self) -> Option<SerialPortConfig> {
         let port_name = self.selected_port.clone()?;
         let settings = self.settings;
@@ -160,6 +172,6 @@ impl SerialSettingsModel {
 
 impl Default for SerialSettingsModel {
     fn default() -> Self {
-        Self::new()
+        Self::new(SerialConfigStore::new())
     }
 }

@@ -1,5 +1,6 @@
 use std::{
     io::{Read, Write},
+    sync::{Arc, RwLock},
     time::Duration,
 };
 
@@ -54,6 +55,33 @@ impl SerialPortConfig {
             .open()?;
 
         Ok(SerialConnection { port })
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct SerialConfigStore {
+    inner: Arc<RwLock<Option<SerialPortConfig>>>,
+}
+
+impl SerialConfigStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set(&self, config: Option<SerialPortConfig>) {
+        let mut stored_config = self
+            .inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        *stored_config = config;
+    }
+
+    pub fn snapshot(&self) -> Option<SerialPortConfig> {
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 }
 

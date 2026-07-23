@@ -185,6 +185,7 @@ fn show_settings_window(
             }
         });
 
+    model.publish_config();
     model.set_settings_open(open);
 }
 

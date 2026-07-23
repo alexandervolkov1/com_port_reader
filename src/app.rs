@@ -2,7 +2,7 @@ use eframe::egui;
 use egui_extras::{Size, StripBuilder};
 use std::time::Duration;
 
-use crate::acquisition::{CombinedSource, SignalGenerator};
+use crate::acquisition::{CombinedSource, SerialCommandSource, SignalGenerator};
 use crate::components::{
     command_model::CommandModel, command_view, controls_model::ControlsModel, controls_view,
     plot_model::PlotModel, plot_view, serial_settings_model::SerialSettingsModel,
@@ -10,6 +10,7 @@ use crate::components::{
 };
 use crate::data::SeriesStore;
 use crate::sample_sink::NullSampleSink;
+use crate::serial_connection::SerialConfigStore;
 use crate::worker::{WorkerConfig, WorkerHandle};
 
 const SERIES_PANEL_WIDTH: f32 = 150.0;
@@ -32,8 +33,13 @@ impl MyApp {
         let (command_sender, command_receiver) = crossbeam_channel::bounded(32);
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
         let worker_handle = WorkerHandle::new(command_sender);
+        let serial_config_store = SerialConfigStore::new();
+        let serial_settings = SerialSettingsModel::new(serial_config_store.clone());
         let worker_config = WorkerConfig::new(Duration::from_millis(1000));
-        let source = CombinedSource::new(vec![Box::new(SignalGenerator::new())]);
+        let source = CombinedSource::new(vec![
+            Box::new(SignalGenerator::new()),
+            Box::new(SerialCommandSource::new(serial_config_store)),
+        ]);
 
         let controls = ControlsModel::new(
             series.clone(),
@@ -46,7 +52,6 @@ impl MyApp {
         );
 
         let command = CommandModel::new(worker_handle.clone(), event_receiver);
-        let serial_settings = SerialSettingsModel::new();
 
         Self {
             controls,

@@ -1,9 +1,11 @@
 mod combined_source;
+mod serial_command_source;
 mod signal_generator;
 
 use crate::data::{SeriesMetadata, SeriesSample};
 
 pub use combined_source::CombinedSource;
+pub use serial_command_source::SerialCommandSource;
 pub use signal_generator::SignalGenerator;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
