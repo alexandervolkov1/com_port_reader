@@ -12,13 +12,54 @@ use egui_plot::{HoverPosition, Line, Plot, PlotPoints};
 
 const WINDOW_SECONDS: f64 = 3600.0;
 const DOWNSAMPLE_BUCKETS: usize = 2000;
+const MIN_PANE_HEIGHT: f32 = 80.0;
 
 pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore) {
     let (min_x, max_x) = prepare_lines(plot, series_store);
-    let pane_id = plot.panes[0].id;
+
+    let pane_count = plot.panes.len();
+
+    let spacing = ui.spacing().item_spacing.y;
+
+    let controls_height = ui.spacing().interact_size.y;
+
+    let reserved_height = controls_height + spacing * pane_count as f32;
+
+    let pane_height =
+        ((ui.available_height() - reserved_height) / pane_count as f32).max(MIN_PANE_HEIGHT);
+
+    for pane_index in 0..pane_count {
+        show_pane(ui, plot, pane_index, min_x, max_x, pane_height);
+    }
+
+    ui.horizontal(|ui| {
+        if ui.button("Add plot").clicked() {
+            plot.add_pane();
+        }
+
+        let can_remove = plot.panes.len() > 1;
+
+        if ui
+            .add_enabled(can_remove, egui::Button::new("Remove last plot"))
+            .clicked()
+        {
+            plot.remove_last_pane();
+        }
+    });
+}
+
+fn show_pane(
+    ui: &mut egui::Ui,
+    plot: &mut PlotModel,
+    pane_index: usize,
+    min_x: f64,
+    max_x: f64,
+    height: f32,
+) {
+    let pane_id = plot.panes[pane_index].id;
 
     Plot::new(("signals", pane_id))
-        .height(ui.available_height())
+        .height(height)
         .allow_drag(true)
         .allow_zoom(true)
         .auto_bounds([false, true])
@@ -42,7 +83,7 @@ pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore)
             } if !plot_name.is_empty() => Some(format!(
                 "{}\n{}, {:.1}",
                 plot_name,
-                mark_for_timestamp(position.x),
+                mark_for_timestamp(position.x,),
                 position.y,
             )),
 
@@ -64,6 +105,7 @@ pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore)
                 plot.manual_x_bounds = None;
 
                 plot_ui.set_auto_bounds([false, true]);
+
                 plot_ui.set_plot_bounds_x(min_x..=max_x);
             } else if user_interacted {
                 plot.follow_latest = false;
@@ -75,16 +117,15 @@ pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore)
                 plot.manual_x_bounds = Some((bounds.min()[0], bounds.max()[0]));
             } else if plot.follow_latest {
                 plot_ui.set_auto_bounds([false, true]);
+
                 plot_ui.set_plot_bounds_x(min_x..=max_x);
-            } else {
+            } else if let Some((manual_min_x, manual_max_x)) = plot.manual_x_bounds {
                 plot_ui.set_auto_bounds([false, false]);
 
-                let bounds = plot_ui.plot_bounds();
-
-                plot.manual_x_bounds = Some((bounds.min()[0], bounds.max()[0]));
+                plot_ui.set_plot_bounds_x(manual_min_x..=manual_max_x);
             }
 
-            for line in &plot.panes[0].lines {
+            for line in &plot.panes[pane_index].lines {
                 plot_ui.line(
                     Line::new(line.name.clone(), PlotPoints::Borrowed(&line.points)).width(4.0),
                 );
@@ -118,39 +159,52 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
             plot.manual_x_bounds.unwrap_or(live_bounds)
         };
 
-        let lines = &mut plot.panes[0].lines;
+        let default_pane_id = plot.panes[0].id;
 
-        lines.resize_with(series.len(), PlotLine::default);
+        let series_panes = &plot.series_panes;
 
-        let mut prepared_count = 0;
+        for pane in &mut plot.panes {
+            pane.lines.resize_with(series.len(), PlotLine::default);
 
-        for signal_series in series {
-            if !signal_series.visible {
-                continue;
+            let mut prepared_count = 0;
+
+            for signal_series in series {
+                if !signal_series.visible {
+                    continue;
+                }
+
+                let assigned_pane = series_panes
+                    .get(&signal_series.id)
+                    .copied()
+                    .unwrap_or(default_pane_id);
+
+                if assigned_pane != pane.id {
+                    continue;
+                }
+
+                let start_idx = signal_series
+                    .samples
+                    .partition_point(|sample| sample.timestamp < min_x);
+
+                let end_idx = signal_series
+                    .samples
+                    .partition_point(|sample| sample.timestamp <= max_x);
+
+                let visible_samples = &signal_series.samples[start_idx..end_idx];
+
+                let line = &mut pane.lines[prepared_count];
+
+                line.name.clone_from(&signal_series.name);
+
+                line.points.clear();
+
+                downsample_min_max_into(visible_samples, DOWNSAMPLE_BUCKETS, &mut line.points);
+
+                prepared_count += 1;
             }
 
-            let start_idx = signal_series
-                .samples
-                .partition_point(|sample| sample.timestamp < min_x);
-
-            let end_idx = signal_series
-                .samples
-                .partition_point(|sample| sample.timestamp <= max_x);
-
-            let visible_samples = &signal_series.samples[start_idx..end_idx];
-
-            let line = &mut lines[prepared_count];
-
-            line.name.clone_from(&signal_series.name);
-
-            line.points.clear();
-
-            downsample_min_max_into(visible_samples, DOWNSAMPLE_BUCKETS, &mut line.points);
-
-            prepared_count += 1;
+            pane.lines.truncate(prepared_count);
         }
-
-        lines.truncate(prepared_count);
 
         (min_x, max_x)
     })
