@@ -2,7 +2,7 @@ use eframe::egui;
 use egui_extras::{Size, StripBuilder};
 use std::time::Duration;
 
-use crate::acquisition::SignalGenerator;
+use crate::acquisition::{CombinedSource, SignalGenerator};
 use crate::components::{
     command_model::CommandModel, command_view, controls_model::ControlsModel, controls_view,
     plot_model::PlotModel, plot_view, serial_settings_model::SerialSettingsModel,
@@ -29,21 +29,18 @@ pub struct MyApp {
 impl MyApp {
     pub fn new() -> Self {
         let series = SeriesStore::new();
-
         let (command_sender, command_receiver) = crossbeam_channel::bounded(32);
-
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
-
         let worker_handle = WorkerHandle::new(command_sender);
-
         let worker_config = WorkerConfig::new(Duration::from_millis(1000));
+        let source = CombinedSource::new(vec![Box::new(SignalGenerator::new())]);
 
         let controls = ControlsModel::new(
             series.clone(),
             worker_handle.clone(),
             command_receiver,
             event_sender,
-            Box::new(SignalGenerator::new()),
+            Box::new(source),
             Box::new(NullSampleSink::new()),
             worker_config,
         );
