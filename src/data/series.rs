@@ -15,39 +15,91 @@ impl std::fmt::Display for SeriesId {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SeriesSource {
     Generated(Signal),
+
+    SerialCommand { command: String },
+}
+
+impl SeriesSource {
+    pub fn generated_signal(&self) -> Option<&Signal> {
+        match self {
+            Self::Generated(signal) => Some(signal),
+            Self::SerialCommand { .. } => None,
+        }
+    }
+
+    pub(crate) fn default_name_prefix(&self) -> &str {
+        match self {
+            Self::Generated(signal) => signal.kind_name(),
+            Self::SerialCommand { .. } => "serial",
+        }
+    }
 }
 
 impl std::fmt::Display for SeriesSource {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Generated(signal) => signal.fmt(formatter),
+
+            Self::SerialCommand { command } => {
+                write!(formatter, "COM command: {command}")
+            }
         }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct NewSeries {
-    signal: Signal,
+    source: SeriesSource,
     name: Option<String>,
 }
 
 impl NewSeries {
     pub fn unnamed(signal: Signal) -> Self {
-        Self { signal, name: None }
+        Self {
+            source: SeriesSource::Generated(signal),
+            name: None,
+        }
     }
 
     pub fn named(signal: Signal, name: impl Into<String>) -> Self {
         Self {
-            signal,
+            source: SeriesSource::Generated(signal),
             name: Some(name.into()),
         }
     }
 
+    pub fn serial_command(command: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            source: SeriesSource::SerialCommand {
+                command: command.into(),
+            },
+            name: Some(name.into()),
+        }
+    }
+
+    pub(crate) fn into_source_parts(self) -> (SeriesSource, Option<String>) {
+        (self.source, self.name)
+    }
+
+    // Сохраняет совместимость существующих тестов
+    // генератора и DSL.
+    #[cfg(test)]
     pub(crate) fn into_parts(self) -> (Signal, Option<String>) {
-        (self.signal, self.name)
+        let (source, name) = self.into_source_parts();
+
+        match source {
+            SeriesSource::Generated(signal) => (signal, name),
+
+            SeriesSource::SerialCommand { .. } => {
+                panic!(
+                    "expected generated series, \
+                     found serial series",
+                )
+            }
+        }
     }
 }
 

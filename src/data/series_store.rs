@@ -17,13 +17,22 @@ struct SeriesStoreInner {
 pub enum AddSeriesError {
     InvalidSignal(SignalValidationError),
     InvalidName(SeriesNameError),
+    EmptySerialCommand,
+    SerialCommandContainsLineBreak,
 }
 
 impl std::fmt::Display for AddSeriesError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidSignal(error) => error.fmt(formatter),
+
             Self::InvalidName(error) => error.fmt(formatter),
+
+            Self::EmptySerialCommand => formatter.write_str("Serial command cannot be empty"),
+
+            Self::SerialCommandContainsLineBreak => {
+                formatter.write_str("Serial command cannot contain a line break")
+            }
         }
     }
 }
@@ -33,6 +42,8 @@ impl std::error::Error for AddSeriesError {
         match self {
             Self::InvalidSignal(error) => Some(error),
             Self::InvalidName(error) => Some(error),
+
+            Self::EmptySerialCommand | Self::SerialCommandContainsLineBreak => None,
         }
     }
 }
@@ -113,9 +124,9 @@ impl SeriesStore {
     }
 
     pub fn add_series(&self, new_series: NewSeries) -> Result<SeriesId, AddSeriesError> {
-        let (signal, requested_name) = new_series.into_parts();
+        let (source, requested_name) = new_series.into_source_parts();
 
-        signal.validate()?;
+        let source = normalize_series_source(source)?;
 
         self.with_mut(|series| {
             let custom_name = match requested_name {
@@ -135,9 +146,9 @@ impl SeriesStore {
             let id = SeriesId::new(self.inner.next_id.fetch_add(1, Ordering::Relaxed));
 
             let name = custom_name
-                .unwrap_or_else(|| generate_default_name(series, signal.kind_name(), id));
+                .unwrap_or_else(|| generate_default_name(series, source.default_name_prefix(), id));
 
-            series.push(SignalSeries::new(id, name, SeriesSource::Generated(signal)));
+            series.push(SignalSeries::new(id, name, source));
 
             Ok(id)
         })
@@ -195,6 +206,7 @@ impl SeriesStore {
             };
 
             series.visible = visible;
+
             true
         })
     }
@@ -206,6 +218,7 @@ impl SeriesStore {
             };
 
             series.remove(index);
+
             true
         })
     }
@@ -218,6 +231,32 @@ impl Default for SeriesStore {
                 series: Mutex::new(Vec::new()),
                 next_id: AtomicU64::new(1),
             }),
+        }
+    }
+}
+
+fn normalize_series_source(source: SeriesSource) -> Result<SeriesSource, AddSeriesError> {
+    match source {
+        SeriesSource::Generated(signal) => {
+            signal.validate()?;
+
+            Ok(SeriesSource::Generated(signal))
+        }
+
+        SeriesSource::SerialCommand { command } => {
+            if command.contains('\r') || command.contains('\n') {
+                return Err(AddSeriesError::SerialCommandContainsLineBreak);
+            }
+
+            let command = command.trim();
+
+            if command.is_empty() {
+                return Err(AddSeriesError::EmptySerialCommand);
+            }
+
+            Ok(SeriesSource::SerialCommand {
+                command: command.to_owned(),
+            })
         }
     }
 }
@@ -248,10 +287,9 @@ fn generate_default_name(series: &[SignalSeries], prefix: &str, id: SeriesId) ->
 
 #[cfg(test)]
 mod tests {
-    use super::SeriesStore;
+    use super::{RenameSeriesError, SeriesStore};
 
-    use crate::data::series_store::RenameSeriesError;
-    use crate::data::{AddSeriesError, NewSeries, SeriesId, SeriesNameError, Signal};
+    use crate::data::{AddSeriesError, NewSeries, SeriesId, SeriesNameError, SeriesSource, Signal};
 
     fn add_unnamed(store: &SeriesStore, signal: Signal) -> SeriesId {
         store.add_series(NewSeries::unnamed(signal)).unwrap()
@@ -270,7 +308,7 @@ mod tests {
         let stored_ids =
             store.with(|series| series.iter().map(|series| series.id).collect::<Vec<_>>());
 
-        assert_eq!(stored_ids, vec![first_id, second_id]);
+        assert_eq!(stored_ids, vec![first_id, second_id],);
     }
 
     #[test]
@@ -357,7 +395,7 @@ mod tests {
                 .collect::<Vec<_>>()
         });
 
-        assert_eq!(names, vec!["sine1", "square2"]);
+        assert_eq!(names, vec!["sine1", "square2"],);
     }
 
     #[test]
@@ -393,7 +431,7 @@ mod tests {
 
         let metadata = store.metadata();
 
-        assert_eq!(metadata[0].name, "temperature");
+        assert_eq!(metadata[0].name, "temperature",);
     }
 
     #[test]
@@ -409,7 +447,7 @@ mod tests {
 
         let metadata = store.metadata();
 
-        assert_eq!(metadata[0].name, "temperature");
+        assert_eq!(metadata[0].name, "temperature",);
     }
 
     #[test]
@@ -431,7 +469,7 @@ mod tests {
         assert_eq!(
             result,
             Err(AddSeriesError::InvalidName(SeriesNameError::Duplicate(
-                "temperature".to_owned()
+                "temperature".to_owned(),
             ),)),
         );
     }
@@ -476,10 +514,11 @@ mod tests {
             ))
             .unwrap();
 
-        assert_eq!(store.remove_series_by_name("temperature"), Some(id),);
+        assert_eq!(store.remove_series_by_name("temperature",), Some(id),);
 
         assert!(store.metadata().is_empty());
-        assert_eq!(store.remove_series_by_name("temperature"), None,);
+
+        assert_eq!(store.remove_series_by_name("temperature",), None,);
     }
 
     #[test]
@@ -502,7 +541,22 @@ mod tests {
 
         assert_eq!(metadata.len(), 1);
         assert_eq!(metadata[0].id, id);
-        assert_eq!(metadata[0].name, "room_temperature");
+
+        assert_eq!(metadata[0].name, "room_temperature",);
+    }
+
+    #[test]
+    fn accepts_unchanged_name_during_rename() {
+        let store = SeriesStore::new();
+
+        let id = store
+            .add_series(NewSeries::named(
+                Signal::Constant { value: 1.0 },
+                "temperature",
+            ))
+            .unwrap();
+
+        assert_eq!(store.rename_series("temperature", "temperature",), Ok(id),);
     }
 
     #[test]
@@ -522,7 +576,7 @@ mod tests {
         assert_eq!(
             result,
             Err(RenameSeriesError::InvalidName(SeriesNameError::Duplicate(
-                "second".to_owned()
+                "second".to_owned(),
             ),)),
         );
     }
@@ -537,5 +591,45 @@ mod tests {
             result,
             Err(RenameSeriesError::NotFound("missing".to_owned(),)),
         );
+    }
+
+    #[test]
+    fn stores_serial_command_series() {
+        let store = SeriesStore::new();
+
+        store
+            .add_series(NewSeries::serial_command("  get  ", "random_walk"))
+            .unwrap();
+
+        let metadata = store.metadata();
+
+        assert_eq!(metadata.len(), 1);
+
+        assert_eq!(metadata[0].name, "random_walk",);
+
+        assert_eq!(
+            metadata[0].source,
+            SeriesSource::SerialCommand {
+                command: "get".to_owned(),
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_empty_serial_command() {
+        let store = SeriesStore::new();
+
+        let result = store.add_series(NewSeries::serial_command("   ", "random_walk"));
+
+        assert_eq!(result, Err(AddSeriesError::EmptySerialCommand),);
+    }
+
+    #[test]
+    fn rejects_serial_command_with_line_break() {
+        let store = SeriesStore::new();
+
+        let result = store.add_series(NewSeries::serial_command("get\nnext", "random_walk"));
+
+        assert_eq!(result, Err(AddSeriesError::SerialCommandContainsLineBreak,),);
     }
 }

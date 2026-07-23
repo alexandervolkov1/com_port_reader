@@ -90,8 +90,9 @@ pub fn parse_series(input: &str) -> Result<NewSeries, String> {
         "triangle" | "tri" => parse_triangle(&mut tokens),
         "saw" | "sawtooth" => parse_sawtooth(&mut tokens),
         "const" | "constant" => parse_constant(&mut tokens),
+        "serial" | "com" => parse_serial(&mut tokens),
 
-        _ => Err(format!("Unknown signal type: {kind}")),
+        _ => Err(format!("Unknown signal type: {kind}",)),
     }
 }
 
@@ -187,6 +188,40 @@ fn finish(signal: Signal, name: Option<String>) -> Result<NewSeries, String> {
         Some(name) => NewSeries::named(signal, name),
         None => NewSeries::unnamed(signal),
     })
+}
+
+fn parse_serial(tokens: &mut SplitWhitespace<'_>) -> Result<NewSeries, String> {
+    let Some(command) = tokens.next() else {
+        return Err("Missing command for serial series".to_owned());
+    };
+
+    if command.starts_with("--") {
+        return Err("Missing command for serial series".to_owned());
+    }
+
+    let mut name = None;
+
+    while let Some(argument) = tokens.next() {
+        match argument {
+            "--name" => {
+                parse_name(tokens, &mut name)?;
+            }
+
+            option if option.starts_with("--") => {
+                return Err(format!("Unknown option: {option}",));
+            }
+
+            argument => {
+                return Err(format!("Unexpected argument: {argument}",));
+            }
+        }
+    }
+
+    let Some(name) = name else {
+        return Err("Serial series requires option '--name'".to_owned());
+    };
+
+    Ok(NewSeries::serial_command(command, name))
 }
 
 struct NumericParameter {
@@ -298,7 +333,10 @@ fn next_option_value<'a>(
 mod tests {
     use super::{parse_command, parse_series};
 
-    use crate::{data::Signal, user_command::UserCommand};
+    use crate::{
+        data::{SeriesSource, Signal},
+        user_command::UserCommand,
+    };
 
     #[test]
     fn parses_positional_parameters() {
@@ -595,5 +633,25 @@ mod tests {
         let result = parse_command("rename temperature room extra");
 
         assert_eq!(result.unwrap_err(), "Unexpected argument: extra",);
+    }
+
+    #[test]
+    fn parses_serial_series() {
+        let command = parse_command("add serial get --name random_walk").unwrap();
+
+        let UserCommand::Add(new_series) = command else {
+            panic!("expected add command");
+        };
+
+        let (source, name) = new_series.into_source_parts();
+
+        assert_eq!(name.as_deref(), Some("random_walk"),);
+
+        assert_eq!(
+            source,
+            SeriesSource::SerialCommand {
+                command: "get".to_owned(),
+            },
+        );
     }
 }

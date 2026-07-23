@@ -1,4 +1,4 @@
-use crate::data::{Sample, SeriesMetadata, SeriesSample, SeriesSource};
+use crate::data::{Sample, SeriesMetadata, SeriesSample};
 
 use super::{AcquisitionError, AcquisitionSource};
 
@@ -22,9 +22,11 @@ impl AcquisitionSource for SignalGenerator {
         output.reserve(series.len());
 
         for signal_series in series {
-            let value = match &signal_series.source {
-                SeriesSource::Generated(signal) => signal.value_at(elapsed_seconds),
+            let Some(signal) = signal_series.source.generated_signal() else {
+                continue;
             };
+
+            let value = signal.value_at(elapsed_seconds);
 
             output.push(SeriesSample::new(
                 signal_series.id,
