@@ -180,26 +180,9 @@ fn show_settings_window(
 
             ui.separator();
 
-            ui.horizontal(|ui| {
-                ui.label("Test command:");
-
-                if ui.button("sin").clicked() {
-                    model.test_command(worker_handle, "sin");
-                }
-
-                if ui.button("noise").clicked() {
-                    model.test_command(worker_handle, "noise");
-                }
-            });
-
-            ui.small(
-                "Each test opens the port, sends one command, \
-                                    reads one f64 response and closes the port.",
-            );
-
-            ui.separator();
-
-            ui.small("Settings will be applied when the COM port is opened.");
+            if ui.button("Test get").clicked() {
+                model.test_command(worker_handle, "get");
+            }
         });
 
     model.set_settings_open(open);

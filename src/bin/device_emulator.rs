@@ -1,9 +1,8 @@
 use std::{
     env,
     error::Error,
-    f64::consts::TAU,
     io::{self, Read, Write},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serialport::{ClearBuffer, DataBits, FlowControl, Parity, StopBits};
@@ -12,10 +11,7 @@ const DEFAULT_BAUD_RATE: u32 = 9_600;
 const MAX_COMMAND_LENGTH: usize = 256;
 
 struct DeviceEmulator {
-    started_at: Instant,
-    sine_amplitude: f64,
-    sine_period: f64,
-    noise_amplitude: f64,
+    accumulated_value: i64,
     random_state: u64,
 }
 
@@ -26,94 +22,33 @@ impl DeviceEmulator {
             .map_or(1, |duration| duration.as_nanos() as u64 | 1);
 
         Self {
-            started_at: Instant::now(),
-            sine_amplitude: 1.0,
-            sine_period: 30.0,
-            noise_amplitude: 0.1,
+            accumulated_value: 0,
             random_state,
         }
     }
 
     fn handle_command(&mut self, command: &str) -> String {
-        let arguments = command.split_whitespace().collect::<Vec<_>>();
+        match command.trim() {
+            "get" => {
+                self.accumulated_value += self.random_step();
 
-        match arguments.as_slice() {
-            ["sin"] => self.sine_value().to_string(),
-
-            ["noise"] => self.noise_value().to_string(),
-
-            ["set", "sin_amplitude", value] => {
-                set_non_negative(&mut self.sine_amplitude, value, "sin_amplitude")
+                format!("{:.1}", self.accumulated_value as f64,)
             }
 
-            ["set", "noise_amplitude", value] => {
-                set_non_negative(&mut self.noise_amplitude, value, "noise_amplitude")
-            }
+            "" => "error empty command".to_owned(),
 
-            ["set", "sin_period", value] => {
-                set_positive(&mut self.sine_period, value, "sin_period")
-            }
-
-            [] => "error empty command".to_owned(),
-
-            _ => format!("error unknown command: {command}",),
+            command => format!("error unknown command: {command}",),
         }
     }
 
-    fn sine_value(&self) -> f64 {
-        let elapsed = self.started_at.elapsed().as_secs_f64();
-
-        let phase = TAU * elapsed / self.sine_period;
-
-        self.sine_amplitude * phase.sin()
-    }
-
-    fn noise_value(&mut self) -> f64 {
-        // Простой xorshift64 без дополнительной зависимости rand.
+    fn random_step(&mut self) -> i64 {
+        // Простой xorshift64.
         self.random_state ^= self.random_state << 13;
         self.random_state ^= self.random_state >> 7;
         self.random_state ^= self.random_state << 17;
 
-        let normalized = self.random_state as f64 / u64::MAX as f64;
-
-        let bipolar = normalized * 2.0 - 1.0;
-
-        self.noise_amplitude * bipolar
+        if self.random_state & 1 == 0 { -1 } else { 1 }
     }
-}
-
-fn set_non_negative(target: &mut f64, value: &str, parameter_name: &str) -> String {
-    let Ok(value) = value.parse::<f64>() else {
-        return format!("error invalid value for {parameter_name}",);
-    };
-
-    if !value.is_finite() || value < 0.0 {
-        return format!(
-            "error {parameter_name} must be \
-             finite and non-negative",
-        );
-    }
-
-    *target = value;
-
-    format!("ok {parameter_name} {value}")
-}
-
-fn set_positive(target: &mut f64, value: &str, parameter_name: &str) -> String {
-    let Ok(value) = value.parse::<f64>() else {
-        return format!("error invalid value for {parameter_name}",);
-    };
-
-    if !value.is_finite() || value <= 0.0 {
-        return format!(
-            "error {parameter_name} must be \
-             finite and greater than zero",
-        );
-    }
-
-    *target = value;
-
-    format!("ok {parameter_name} {value}")
 }
 
 fn main() {
@@ -168,16 +103,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     port.clear(ClearBuffer::All)?;
 
     println!(
-        "Device emulator is running on \
+        "Random walk emulator is running on \
          {port_name} at {baud_rate} baud.",
     );
 
-    println!("Commands:");
-    println!("  sin");
-    println!("  noise");
-    println!("  set sin_amplitude <value>");
-    println!("  set noise_amplitude <value>");
-    println!("  set sin_period <seconds>");
+    println!("Command: get");
     println!("Press Ctrl+C to stop.");
 
     let mut emulator = DeviceEmulator::new();
@@ -235,44 +165,32 @@ mod tests {
     use super::DeviceEmulator;
 
     #[test]
-    fn changes_sine_amplitude() {
+    fn moves_one_step_for_each_request() {
         let mut emulator = DeviceEmulator::new();
+        let mut previous_value = 0.0_f64;
 
-        assert_eq!(
-            emulator.handle_command("set sin_amplitude 2.5",),
-            "ok sin_amplitude 2.5",
-        );
+        for _ in 0..100 {
+            let current_value = emulator.handle_command("get").parse::<f64>().unwrap();
 
-        assert_eq!(emulator.sine_amplitude, 2.5);
+            assert_eq!((current_value - previous_value).abs(), 1.0,);
+
+            previous_value = current_value;
+        }
     }
 
     #[test]
-    fn changes_noise_amplitude() {
+    fn rejects_unknown_command() {
         let mut emulator = DeviceEmulator::new();
 
-        assert_eq!(
-            emulator.handle_command("set noise_amplitude 0.25",),
-            "ok noise_amplitude 0.25",
-        );
-
-        assert_eq!(emulator.noise_amplitude, 0.25);
-    }
-
-    #[test]
-    fn rejects_invalid_period() {
-        let mut emulator = DeviceEmulator::new();
-
-        let response = emulator.handle_command("set sin_period 0");
+        let response = emulator.handle_command("unknown");
 
         assert!(response.starts_with("error"));
     }
 
     #[test]
-    fn returns_numeric_values() {
+    fn rejects_empty_command() {
         let mut emulator = DeviceEmulator::new();
 
-        assert!(emulator.handle_command("sin").parse::<f64>().is_ok(),);
-
-        assert!(emulator.handle_command("noise").parse::<f64>().is_ok(),);
+        assert_eq!(emulator.handle_command("   "), "error empty command",);
     }
 }
