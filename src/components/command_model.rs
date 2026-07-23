@@ -1,24 +1,30 @@
+use crossbeam_channel::Receiver;
+
 use crate::{
+    app_log::LogHandle,
     dsl::parse_command,
     user_command::UserCommand,
     worker::{WorkerEvent, WorkerHandle, WorkerHandleError},
 };
-use crossbeam_channel::Receiver;
 
 pub struct CommandModel {
     worker_handle: WorkerHandle,
     event_receiver: Receiver<WorkerEvent>,
     command_buffer: String,
-    last_response: String,
+    log: LogHandle,
 }
 
 impl CommandModel {
-    pub fn new(worker_handle: WorkerHandle, event_receiver: Receiver<WorkerEvent>) -> Self {
+    pub fn new(
+        worker_handle: WorkerHandle,
+        event_receiver: Receiver<WorkerEvent>,
+        log: LogHandle,
+    ) -> Self {
         Self {
             worker_handle,
             event_receiver,
             command_buffer: String::new(),
-            last_response: String::new(),
+            log,
         }
     }
 
@@ -26,13 +32,15 @@ impl CommandModel {
         &mut self.command_buffer
     }
 
-    pub fn last_response(&self) -> &str {
-        &self.last_response
-    }
-
     pub fn poll_events(&mut self) {
         while let Ok(event) = self.event_receiver.try_recv() {
-            self.last_response = event.to_string();
+            let message = event.to_string();
+
+            if worker_event_is_error(&event) {
+                self.log.error(message);
+            } else {
+                self.log.info(message);
+            }
         }
     }
 
@@ -43,7 +51,7 @@ impl CommandModel {
             }
 
             Err(error) => {
-                self.last_response = error;
+                self.log.error(error);
             }
         }
 
@@ -51,31 +59,38 @@ impl CommandModel {
     }
 
     pub fn execute(&mut self, command: UserCommand) {
-        match command {
-            UserCommand::Add(new_series) => {
-                if let Err(error) = self.worker_handle.add_series(new_series) {
-                    self.set_worker_error(error);
-                }
-            }
+        let result = match command {
+            UserCommand::Add(new_series) => self.worker_handle.add_series(new_series),
 
-            UserCommand::Delete { name } => {
-                if let Err(error) = self.worker_handle.remove_series_by_name(name) {
-                    self.set_worker_error(error);
-                }
-            }
+            UserCommand::Delete { name } => self.worker_handle.remove_series_by_name(name),
 
             UserCommand::Rename {
                 current_name,
                 new_name,
-            } => {
-                if let Err(error) = self.worker_handle.rename_series(current_name, new_name) {
-                    self.set_worker_error(error);
-                }
-            }
+            } => self.worker_handle.rename_series(current_name, new_name),
+        };
+
+        if let Err(error) = result {
+            self.set_worker_error(error);
         }
     }
 
-    fn set_worker_error(&mut self, error: WorkerHandleError) {
-        self.last_response = format!("Failed to send command: {error}");
+    fn set_worker_error(&self, error: WorkerHandleError) {
+        self.log.error(format!("Failed to send command: {error}",));
     }
+}
+
+fn worker_event_is_error(event: &WorkerEvent) -> bool {
+    matches!(
+        event,
+        WorkerEvent::SeriesAddFailed(_)
+            | WorkerEvent::AcquisitionStartFailed(_)
+            | WorkerEvent::AcquisitionFailed(_)
+            | WorkerEvent::AcquisitionStopFailed(_)
+            | WorkerEvent::SeriesNotFound(_)
+            | WorkerEvent::SeriesRenameFailed(_)
+            | WorkerEvent::SampleSinkFailed(_)
+            | WorkerEvent::SerialPortTestFailed { .. }
+            | WorkerEvent::SerialCommandFailed { .. }
+    )
 }

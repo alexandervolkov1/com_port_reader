@@ -13,6 +13,10 @@ use crate::data::SeriesStore;
 use crate::sample_sink::NullSampleSink;
 use crate::serial_connection::SerialConfigStore;
 use crate::worker::{WorkerConfig, WorkerHandle};
+use crate::{
+    app_log::{LogHandle, LogModel},
+    components::log_view,
+};
 
 const SERIES_PANEL_WIDTH: f32 = 150.0;
 const TOGGLE_WIDTH: f32 = 22.0;
@@ -27,10 +31,13 @@ pub struct MyApp {
     series_editor: SeriesEditorModel,
     serial_settings: SerialSettingsModel,
     script: ScriptModel,
+    log: LogModel,
+    log_handle: LogHandle,
 }
 
 impl MyApp {
     pub fn new() -> Self {
+        let (log, log_handle) = LogModel::new();
         let series = SeriesStore::new();
         let (command_sender, command_receiver) = crossbeam_channel::bounded(32);
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
@@ -53,8 +60,7 @@ impl MyApp {
             worker_config,
         );
 
-        let command = CommandModel::new(worker_handle.clone(), event_receiver);
-
+        let command = CommandModel::new(worker_handle.clone(), event_receiver, log_handle.clone());
         Self {
             controls,
             plot: PlotModel::new(),
@@ -64,7 +70,9 @@ impl MyApp {
             series_panel_open: false,
             series_editor: SeriesEditorModel::default(),
             serial_settings,
-            script: ScriptModel::default(),
+            script: ScriptModel::new(),
+            log,
+            log_handle,
         }
     }
 }
@@ -72,6 +80,15 @@ impl MyApp {
 impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.command.poll_events();
+        self.log.poll();
+
+        egui::Panel::bottom("application_log")
+            .resizable(true)
+            .default_size(150.0)
+            .min_size(80.0)
+            .show(ui, |ui| {
+                log_view::show(ui, &mut self.log);
+            });
 
         egui::CentralPanel::default().show(ui, |ui| {
             controls_view::show(ui, &mut self.controls);
@@ -80,7 +97,13 @@ impl eframe::App for MyApp {
 
             command_view::show(ui, &mut self.command);
 
-            script_view::show(ui, &mut self.script, &mut self.command, &self.controls);
+            script_view::show(
+                ui,
+                &mut self.script,
+                &mut self.command,
+                &self.controls,
+                &self.log_handle,
+            );
 
             ui.separator();
 

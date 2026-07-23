@@ -2,6 +2,7 @@
 
 mod acquisition;
 mod app;
+mod app_log;
 mod components;
 mod data;
 mod dsl;

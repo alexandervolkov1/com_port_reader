@@ -246,7 +246,9 @@ impl Worker {
                     }
 
                     Ok(WorkerCommand::RemoveSeries(id)) => {
-                        series.remove_series(id);
+                        if series.remove_series(id) {
+                            let _ = event_sender.send(WorkerEvent::SeriesRemoved(id));
+                        }
                     }
 
                     Ok(WorkerCommand::SetVisibility { id, visible }) => {
