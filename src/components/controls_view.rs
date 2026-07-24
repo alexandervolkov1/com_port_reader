@@ -4,11 +4,16 @@ use crate::components::controls_model::ControlsModel;
 
 pub fn show(ui: &mut egui::Ui, controls: &mut ControlsModel) {
     ui.horizontal(|ui| {
-        if ui.button("Start").clicked() {
+        let running = controls.is_running();
+
+        if ui
+            .add_enabled(!running, egui::Button::new("Start"))
+            .clicked()
+        {
             controls.start();
         }
 
-        if ui.button("Stop").clicked() {
+        if ui.add_enabled(running, egui::Button::new("Stop")).clicked() {
             controls.stop();
         }
 
@@ -16,7 +21,7 @@ pub fn show(ui: &mut egui::Ui, controls: &mut ControlsModel) {
             controls.clear();
         }
 
-        if controls.is_running() {
+        if running {
             ui.colored_label(egui::Color32::from_rgb(0, 150, 0), "Signals: ● Running");
         } else {
             ui.colored_label(egui::Color32::GRAY, "Signals: ■ Stopped");
