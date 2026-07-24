@@ -15,35 +15,42 @@ use crate::device_emulator::DeviceEmulator;
 const READ_TIMEOUT: Duration = Duration::from_millis(100);
 const MAX_COMMAND_LENGTH: usize = 256;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeviceEmulatorPortConfig {
+    pub port_name: String,
+    pub baud_rate: u32,
+    pub data_bits: DataBits,
+    pub parity: Parity,
+    pub stop_bits: StopBits,
+    pub flow_control: FlowControl,
+}
+
 pub struct DeviceEmulatorHandle {
     stop_requested: Arc<AtomicBool>,
     thread: Option<JoinHandle<Result<(), DeviceEmulatorHandleError>>>,
 }
 
 impl DeviceEmulatorHandle {
-    pub fn start(
-        port_name: impl Into<String>,
-        baud_rate: u32,
-    ) -> Result<Self, DeviceEmulatorHandleError> {
-        let port_name = port_name.into();
-
-        if port_name.trim().is_empty() {
+    pub fn start(config: DeviceEmulatorPortConfig) -> Result<Self, DeviceEmulatorHandleError> {
+        if config.port_name.trim().is_empty() {
             return Err(DeviceEmulatorHandleError::from(
                 "Emulator COM port cannot be empty",
             ));
         }
 
-        if baud_rate == 0 {
+        if config.baud_rate == 0 {
             return Err(DeviceEmulatorHandleError::from(
                 "Emulator baud rate must be greater than zero",
             ));
         }
 
-        let port = serialport::new(&port_name, baud_rate)
-            .data_bits(DataBits::Eight)
-            .parity(Parity::None)
-            .stop_bits(StopBits::One)
-            .flow_control(FlowControl::None)
+        // Открываем порт до запуска потока, чтобы ошибка
+        // сразу вернулась вызывающему коду.
+        let port = serialport::new(&config.port_name, config.baud_rate)
+            .data_bits(config.data_bits)
+            .parity(config.parity)
+            .stop_bits(config.stop_bits)
+            .flow_control(config.flow_control)
             .timeout(READ_TIMEOUT)
             .open()?;
 
@@ -53,14 +60,22 @@ impl DeviceEmulatorHandle {
 
         let thread_stop_requested = Arc::clone(&stop_requested);
 
+        let thread_name = format!("device-emulator-{}", config.port_name);
+
         let thread = thread::Builder::new()
-            .name(format!("device-emulator-{port_name}"))
+            .name(thread_name)
             .spawn(move || run_emulator(port, thread_stop_requested))?;
 
         Ok(Self {
             stop_requested,
             thread: Some(thread),
         })
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.thread
+            .as_ref()
+            .is_some_and(|thread| !thread.is_finished())
     }
 
     pub fn stop(&mut self) -> Result<(), DeviceEmulatorHandleError> {

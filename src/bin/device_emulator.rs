@@ -7,12 +7,18 @@ mod device_emulator_handle;
 use std::{
     env,
     error::Error,
-    io::{self},
+    io,
+    sync::mpsc::{self, RecvTimeoutError},
+    thread,
+    time::Duration,
 };
 
-use device_emulator_handle::DeviceEmulatorHandle;
+use device_emulator_handle::{DeviceEmulatorHandle, DeviceEmulatorPortConfig};
+
+use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 const DEFAULT_BAUD_RATE: u32 = 9_600;
+const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 fn main() {
     if let Err(error) = run() {
@@ -56,7 +62,16 @@ fn run() -> Result<(), Box<dyn Error>> {
         .into());
     }
 
-    let mut emulator = DeviceEmulatorHandle::start(port_name.clone(), baud_rate)?;
+    let config = DeviceEmulatorPortConfig {
+        port_name: port_name.clone(),
+        baud_rate,
+        data_bits: DataBits::Eight,
+        parity: Parity::None,
+        stop_bits: StopBits::One,
+        flow_control: FlowControl::None,
+    };
+
+    let mut emulator = DeviceEmulatorHandle::start(config)?;
 
     println!(
         "Random walk emulator is running on \
@@ -68,10 +83,30 @@ fn run() -> Result<(), Box<dyn Error>> {
     println!("  get <walk-id> [step]");
     println!("Press Enter to stop.");
 
-    let mut input = String::new();
+    let (stop_sender, stop_receiver) = mpsc::channel();
 
-    io::stdin().read_line(&mut input)?;
+    // stdin блокируется в своём потоке, а основной поток
+    // одновременно следит за состоянием эмулятора.
+    let _input_thread = thread::spawn(move || {
+        let mut input = String::new();
 
+        let _read_result = io::stdin().read_line(&mut input);
+
+        let _send_result = stop_sender.send(());
+    });
+
+    while emulator.is_running() {
+        match stop_receiver.recv_timeout(STATUS_POLL_INTERVAL) {
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => {
+                break;
+            }
+
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+    }
+
+    // Если поток уже аварийно завершился, stop()
+    // присоединит его и вернёт исходную ошибку.
     emulator.stop()?;
 
     println!("Device emulator stopped.");
