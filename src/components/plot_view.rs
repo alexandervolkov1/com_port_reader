@@ -13,6 +13,7 @@ use egui_plot::{HoverPosition, Line, Plot, PlotPoints};
 const WINDOW_SECONDS: f64 = 3600.0;
 const DOWNSAMPLE_BUCKETS: usize = 2000;
 const MIN_PANE_HEIGHT: f32 = 80.0;
+const X_AXIS_LINK_GROUP: &str = "signal_plots_x_axis";
 
 pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore) {
     let (min_x, max_x) = prepare_lines(plot, series_store);
@@ -58,11 +59,13 @@ fn show_pane(
 ) {
     let pane_id = plot.panes[pane_index].id;
 
-    Plot::new(("signals", pane_id))
+    let plot_response = Plot::new(("signals", pane_id))
         .height(height)
         .allow_drag(true)
         .allow_zoom(true)
+        .allow_double_click_reset(false)
         .auto_bounds([false, true])
+        .link_axis(X_AXIS_LINK_GROUP, [true, false])
         .x_grid_spacer(egui_plot::uniform_grid_spacer(|input| {
             let span = input.bounds.1 - input.bounds.0;
 
@@ -83,41 +86,15 @@ fn show_pane(
             } if !plot_name.is_empty() => Some(format!(
                 "{}\n{}, {:.1}",
                 plot_name,
-                mark_for_timestamp(position.x,),
+                mark_for_timestamp(position.x),
                 position.y,
             )),
 
             _ => None,
         })
         .show(ui, |plot_ui| {
-            let response = plot_ui.response();
-
-            let pointer_scrolled = response.hovered()
-                && plot_ui.ctx().input(|input| {
-                    input.smooth_scroll_delta != egui::Vec2::ZERO
-                        || (input.zoom_delta() - 1.0).abs() > f32::EPSILON
-                });
-
-            let user_interacted = response.dragged() || pointer_scrolled;
-
-            if response.double_clicked() {
-                plot.follow_latest = true;
-                plot.manual_x_bounds = None;
-
+            if plot.follow_latest {
                 plot_ui.set_auto_bounds([false, true]);
-
-                plot_ui.set_plot_bounds_x(min_x..=max_x);
-            } else if user_interacted {
-                plot.follow_latest = false;
-
-                plot_ui.set_auto_bounds([false, false]);
-
-                let bounds = plot_ui.plot_bounds();
-
-                plot.manual_x_bounds = Some((bounds.min()[0], bounds.max()[0]));
-            } else if plot.follow_latest {
-                plot_ui.set_auto_bounds([false, true]);
-
                 plot_ui.set_plot_bounds_x(min_x..=max_x);
             } else if let Some((manual_min_x, manual_max_x)) = plot.manual_x_bounds {
                 plot_ui.set_auto_bounds([false, false]);
@@ -131,6 +108,27 @@ fn show_pane(
                 );
             }
         });
+
+    let response = &plot_response.response;
+
+    let pointer_scrolled = response.hovered()
+        && ui.ctx().input(|input| {
+            input.smooth_scroll_delta != egui::Vec2::ZERO
+                || (input.zoom_delta() - 1.0).abs() > f32::EPSILON
+        });
+
+    let user_interacted = response.dragged() || pointer_scrolled;
+
+    if response.double_clicked() {
+        plot.follow_latest = true;
+        plot.manual_x_bounds = None;
+    } else if user_interacted {
+        plot.follow_latest = false;
+
+        let bounds = plot_response.transform.bounds();
+
+        plot.manual_x_bounds = Some((bounds.min()[0], bounds.max()[0]));
+    }
 }
 
 fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64) {
