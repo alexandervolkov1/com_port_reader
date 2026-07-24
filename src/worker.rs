@@ -380,16 +380,16 @@ impl Worker {
         }
     }
 
-    pub fn start(&self) {
-        let _ = self.commands.start();
+    pub fn start(&self) -> Result<(), WorkerHandleError> {
+        self.commands.start()
     }
 
-    pub fn stop(&self) {
-        let _ = self.commands.stop();
+    pub fn stop(&self) -> Result<(), WorkerHandleError> {
+        self.commands.stop()
     }
 
-    pub fn clear_series(&self) {
-        let _ = self.commands.clear_series();
+    pub fn clear_series(&self) -> Result<(), WorkerHandleError> {
+        self.commands.clear_series()
     }
 
     pub fn is_running(&self) -> bool {

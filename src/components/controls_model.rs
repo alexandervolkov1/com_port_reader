@@ -4,15 +4,17 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     acquisition::AcquisitionSource,
+    app_log::LogHandle,
     data::SeriesStore,
     sample_sink::SampleSink,
-    worker::{Worker, WorkerCommand, WorkerConfig, WorkerEvent, WorkerHandle},
+    worker::{Worker, WorkerCommand, WorkerConfig, WorkerEvent, WorkerHandle, WorkerHandleError},
 };
 
 pub struct ControlsModel {
     worker: Worker,
     recording_file: Option<PathBuf>,
     recording_error: Option<String>,
+    log: LogHandle,
 }
 
 impl ControlsModel {
@@ -24,6 +26,7 @@ impl ControlsModel {
         source: Box<dyn AcquisitionSource>,
         sink: Box<dyn SampleSink>,
         config: WorkerConfig,
+        log: LogHandle,
     ) -> Self {
         let worker = Worker::spawn(
             worker_handle,
@@ -39,19 +42,20 @@ impl ControlsModel {
             worker,
             recording_file: None,
             recording_error: None,
+            log,
         }
     }
 
     pub fn start(&self) {
-        self.worker.start();
+        self.report_worker_error("start acquisition", self.worker.start());
     }
 
     pub fn stop(&self) {
-        self.worker.stop();
+        self.report_worker_error("stop acquisition", self.worker.stop());
     }
 
     pub fn clear(&self) {
-        self.worker.clear_series();
+        self.report_worker_error("clear series", self.worker.clear_series());
     }
 
     pub fn is_running(&self) -> bool {
@@ -74,7 +78,10 @@ impl ControlsModel {
             }
 
             Err(error) => {
-                self.recording_error = Some(error.to_string());
+                let message = format!("Failed to start recording: {error}");
+
+                self.recording_error = Some(message.clone());
+                self.log.error(message);
             }
         }
     }
@@ -86,7 +93,10 @@ impl ControlsModel {
             }
 
             Err(error) => {
-                self.recording_error = Some(error.to_string());
+                let message = format!("Failed to stop recording: {error}");
+
+                self.recording_error = Some(message.clone());
+                self.log.error(message);
             }
         }
     }
@@ -101,5 +111,11 @@ impl ControlsModel {
 
     pub fn recording_error(&self) -> Option<&str> {
         self.recording_error.as_deref()
+    }
+
+    fn report_worker_error(&self, action: &str, result: Result<(), WorkerHandleError>) {
+        if let Err(error) = result {
+            self.log.error(format!("Failed to {action}: {error}"));
+        }
     }
 }

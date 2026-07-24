@@ -1,15 +1,16 @@
 use eframe::egui::{self, ScrollArea};
 
 use crate::{
-    components::{plot_model::PlotModel, series_editor_model::SeriesEditorModel},
+    components::{
+        command_model::CommandModel, plot_model::PlotModel, series_editor_model::SeriesEditorModel,
+    },
     data::{SeriesId, SeriesStore},
-    worker::WorkerHandle,
 };
 
 pub fn show(
     ui: &mut egui::Ui,
     series_store: &SeriesStore,
-    worker_handle: &WorkerHandle,
+    commands: &CommandModel,
     plot: &mut PlotModel,
     editor: &mut SeriesEditorModel,
 ) {
@@ -41,7 +42,7 @@ pub fn show(
             ui.group(|ui| {
                 ui.horizontal(|ui| {
                     if ui.checkbox(&mut visible, "").changed() {
-                        let _ = worker_handle.set_visibility(series.id, visible);
+                        commands.set_visibility(series.id, visible);
                     }
 
                     ui.label(&series.name)
@@ -75,7 +76,7 @@ pub fn show(
         }
 
         if let Some(id) = remove_id {
-            let _ = worker_handle.remove_series(id);
+            commands.remove_series(id);
         }
     });
 }

@@ -58,6 +58,7 @@ impl MyApp {
             Box::new(source),
             Box::new(NullSampleSink::new()),
             worker_config,
+            log_handle.clone(),
         );
 
         let command = CommandModel::new(worker_handle.clone(), event_receiver, log_handle.clone());
@@ -130,7 +131,7 @@ impl eframe::App for MyApp {
                             series_view::show(
                                 ui,
                                 &self.series,
-                                &self.worker_handle,
+                                &self.command,
                                 &mut self.plot,
                                 &mut self.series_editor,
                             );

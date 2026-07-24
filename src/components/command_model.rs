@@ -1,5 +1,7 @@
 use crossbeam_channel::Receiver;
 
+use crate::data::SeriesId;
+
 use crate::{
     app_log::LogHandle,
     dsl::parse_command,
@@ -71,6 +73,18 @@ impl CommandModel {
         };
 
         if let Err(error) = result {
+            self.set_worker_error(error);
+        }
+    }
+
+    pub fn set_visibility(&self, id: SeriesId, visible: bool) {
+        if let Err(error) = self.worker_handle.set_visibility(id, visible) {
+            self.set_worker_error(error);
+        }
+    }
+
+    pub fn remove_series(&self, id: SeriesId) {
+        if let Err(error) = self.worker_handle.remove_series(id) {
             self.set_worker_error(error);
         }
     }
