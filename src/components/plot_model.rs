@@ -22,6 +22,7 @@ pub struct PlotLine {
 pub struct PlotPane {
     pub id: PlotPaneId,
     pub lines: Vec<PlotLine>,
+    pub auto_y: bool,
 }
 
 impl PlotPane {
@@ -29,6 +30,7 @@ impl PlotPane {
         Self {
             id,
             lines: Vec::new(),
+            auto_y: true,
         }
     }
 }
@@ -110,6 +112,7 @@ mod tests {
 
         assert_eq!(plot.panes.len(), 1);
         assert!(plot.panes[0].lines.is_empty());
+        assert!(plot.panes[0].auto_y);
     }
 
     #[test]
@@ -117,6 +120,8 @@ mod tests {
         let mut plot = PlotModel::new();
 
         plot.add_pane();
+
+        assert!(plot.panes[1].auto_y);
 
         assert_eq!(plot.panes.len(), 2);
 

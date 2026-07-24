@@ -8,11 +8,15 @@ use crate::{
 };
 
 use eframe::egui;
-use egui_plot::{HoverPosition, Line, Plot, PlotPoints};
+use egui_plot::{AxisHints, GridInput, GridMark, HoverPosition, Line, Plot, PlotPoints};
 
 const WINDOW_SECONDS: f64 = 3600.0;
 const DOWNSAMPLE_BUCKETS: usize = 2000;
 const MIN_PANE_HEIGHT: f32 = 80.0;
+
+const Y_AXIS_MIN_WIDTH: f32 = 50.0;
+const Y_LABEL_MIN_SPACING: f32 = 14.0;
+const Y_LABEL_FULL_SPACING: f32 = 20.0;
 
 pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore) {
     let (min_x, max_x) = prepare_lines(plot, series_store);
@@ -56,6 +60,8 @@ fn show_pane(
     height: f32,
 ) {
     let pane_id = plot.panes[pane_index].id;
+    let auto_y = plot.panes[pane_index].auto_y;
+    let pane_is_empty = plot.panes[pane_index].lines.is_empty();
 
     let requested_x_bounds = if plot.follow_latest {
         (min_x, max_x)
@@ -63,8 +69,15 @@ fn show_pane(
         plot.manual_x_bounds.unwrap_or((min_x, max_x))
     };
 
-    let plot_response = Plot::new(("signals", pane_id))
+    let plot_widget = Plot::new(("signals", pane_id))
         .height(height)
+        .custom_y_axes(vec![
+            AxisHints::new_y()
+                .min_thickness(Y_AXIS_MIN_WIDTH)
+                .label_spacing(egui::Rangef::new(Y_LABEL_MIN_SPACING, Y_LABEL_FULL_SPACING)),
+        ])
+        .y_grid_spacer(y_grid_marks)
+        .y_axis_formatter(|mark, _range| format_y_mark(mark))
         .allow_drag(true)
         .allow_zoom(true)
         .allow_double_click_reset(false)
@@ -94,22 +107,24 @@ fn show_pane(
             )),
 
             _ => None,
-        })
-        .show(ui, |plot_ui| {
-            if plot.follow_latest {
-                plot_ui.set_auto_bounds([false, true]);
-            } else {
-                plot_ui.set_auto_bounds([false, false]);
-            }
-
-            plot_ui.set_plot_bounds_x(requested_x_bounds.0..=requested_x_bounds.1);
-
-            for line in &plot.panes[pane_index].lines {
-                plot_ui.line(
-                    Line::new(line.name.clone(), PlotPoints::Borrowed(&line.points)).width(4.0),
-                );
-            }
         });
+
+    let plot_widget = if pane_is_empty {
+        plot_widget.default_y_bounds(-1.0, 1.0)
+    } else {
+        plot_widget
+    };
+
+    let plot_response = plot_widget.show(ui, |plot_ui| {
+        plot_ui.set_auto_bounds([false, auto_y]);
+
+        plot_ui.set_plot_bounds_x(requested_x_bounds.0..=requested_x_bounds.1);
+
+        for line in &plot.panes[pane_index].lines {
+            plot_ui
+                .line(Line::new(line.name.clone(), PlotPoints::Borrowed(&line.points)).width(4.0));
+        }
+    });
 
     let response = &plot_response.response;
     let actual_bounds = plot_response.transform.bounds();
@@ -134,9 +149,90 @@ fn show_pane(
     if response.double_clicked() {
         plot.follow_latest = true;
         plot.manual_x_bounds = None;
+
+        for pane in &mut plot.panes {
+            pane.auto_y = true;
+        }
     } else if user_interacted {
         plot.follow_latest = false;
         plot.manual_x_bounds = Some(actual_x_bounds);
+        plot.panes[pane_index].auto_y = false;
+    }
+}
+
+fn y_grid_marks(input: GridInput) -> Vec<GridMark> {
+    const EGUI_PLOT_MIN_GRID_SPACING: f64 = 8.0;
+
+    if !input.base_step_size.is_finite()
+        || input.base_step_size <= 0.0
+        || !input.bounds.0.is_finite()
+        || !input.bounds.1.is_finite()
+    {
+        return Vec::new();
+    }
+
+    let minimum_step =
+        input.base_step_size * f64::from(Y_LABEL_FULL_SPACING) / EGUI_PLOT_MIN_GRID_SPACING;
+
+    let step = nice_y_step(minimum_step);
+
+    let first_index = (input.bounds.0 / step).ceil() as i64;
+
+    let last_index = (input.bounds.1 / step).floor() as i64;
+
+    if first_index > last_index {
+        return Vec::new();
+    }
+
+    (first_index..=last_index)
+        .map(|index| GridMark {
+            value: index as f64 * step,
+            step_size: step,
+        })
+        .collect()
+}
+
+fn nice_y_step(minimum_step: f64) -> f64 {
+    let magnitude = 10_f64.powf(minimum_step.log10().floor());
+
+    let normalized = minimum_step / magnitude;
+
+    let factor = if normalized <= 1.0 {
+        1.0
+    } else if normalized <= 2.0 {
+        2.0
+    } else if normalized <= 5.0 {
+        5.0
+    } else {
+        10.0
+    };
+
+    factor * magnitude
+}
+
+fn format_y_mark(mark: GridMark) -> String {
+    let step = mark.step_size.abs();
+
+    let value = if mark.value.abs() < step * 1.0e-9 {
+        0.0
+    } else {
+        mark.value
+    };
+
+    if value == 0.0 {
+        return "0".to_owned();
+    }
+
+    let decimals = if step >= 1.0 {
+        0
+    } else {
+        (-step.log10()).ceil() as usize
+    };
+
+    if decimals <= 6 {
+        format!("{value:.decimals$}")
+    } else {
+        format!("{value:.3e}")
     }
 }
 
