@@ -13,7 +13,6 @@ use egui_plot::{HoverPosition, Line, Plot, PlotPoints};
 const WINDOW_SECONDS: f64 = 3600.0;
 const DOWNSAMPLE_BUCKETS: usize = 2000;
 const MIN_PANE_HEIGHT: f32 = 80.0;
-const X_AXIS_LINK_GROUP: &str = "signal_plots_x_axis";
 
 pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore) {
     let (min_x, max_x) = prepare_lines(plot, series_store);
@@ -21,7 +20,6 @@ pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore)
     let pane_count = plot.panes.len();
 
     let spacing = ui.spacing().item_spacing.y;
-
     let controls_height = ui.spacing().interact_size.y;
 
     let reserved_height = controls_height + spacing * pane_count as f32;
@@ -59,13 +57,18 @@ fn show_pane(
 ) {
     let pane_id = plot.panes[pane_index].id;
 
+    let requested_x_bounds = if plot.follow_latest {
+        (min_x, max_x)
+    } else {
+        plot.manual_x_bounds.unwrap_or((min_x, max_x))
+    };
+
     let plot_response = Plot::new(("signals", pane_id))
         .height(height)
         .allow_drag(true)
         .allow_zoom(true)
         .allow_double_click_reset(false)
         .auto_bounds([false, true])
-        .link_axis(X_AXIS_LINK_GROUP, [true, false])
         .x_grid_spacer(egui_plot::uniform_grid_spacer(|input| {
             let span = input.bounds.1 - input.bounds.0;
 
@@ -95,12 +98,11 @@ fn show_pane(
         .show(ui, |plot_ui| {
             if plot.follow_latest {
                 plot_ui.set_auto_bounds([false, true]);
-                plot_ui.set_plot_bounds_x(min_x..=max_x);
-            } else if let Some((manual_min_x, manual_max_x)) = plot.manual_x_bounds {
+            } else {
                 plot_ui.set_auto_bounds([false, false]);
-
-                plot_ui.set_plot_bounds_x(manual_min_x..=manual_max_x);
             }
+
+            plot_ui.set_plot_bounds_x(requested_x_bounds.0..=requested_x_bounds.1);
 
             for line in &plot.panes[pane_index].lines {
                 plot_ui.line(
@@ -110,25 +112,40 @@ fn show_pane(
         });
 
     let response = &plot_response.response;
+    let actual_bounds = plot_response.transform.bounds();
 
-    let pointer_scrolled = response.hovered()
+    let actual_x_bounds = (actual_bounds.min()[0], actual_bounds.max()[0]);
+
+    let pointer_navigation = response.contains_pointer()
         && ui.ctx().input(|input| {
             input.smooth_scroll_delta != egui::Vec2::ZERO
-                || (input.zoom_delta() - 1.0).abs() > f32::EPSILON
+                || input.zoom_delta_2d() != egui::Vec2::splat(1.0)
         });
 
-    let user_interacted = response.dragged() || pointer_scrolled;
+    let x_bounds_changed = x_bounds_differ(requested_x_bounds, actual_x_bounds);
+
+    let pointer_down = ui.ctx().input(|input| input.pointer.any_down());
+
+    let user_interacted = response.dragged()
+        || response.drag_stopped()
+        || pointer_navigation
+        || (pointer_down && x_bounds_changed);
 
     if response.double_clicked() {
         plot.follow_latest = true;
         plot.manual_x_bounds = None;
     } else if user_interacted {
         plot.follow_latest = false;
-
-        let bounds = plot_response.transform.bounds();
-
-        plot.manual_x_bounds = Some((bounds.min()[0], bounds.max()[0]));
+        plot.manual_x_bounds = Some(actual_x_bounds);
     }
+}
+
+fn x_bounds_differ(expected: (f64, f64), actual: (f64, f64)) -> bool {
+    let expected_span = (expected.1 - expected.0).abs();
+
+    let tolerance = expected_span.max(1.0) * 1.0e-9;
+
+    (expected.0 - actual.0).abs() > tolerance || (expected.1 - actual.1).abs() > tolerance
 }
 
 fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64) {
@@ -145,7 +162,11 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
             .map(|sample| sample.timestamp)
             .fold(latest_x, f64::min);
 
-        let live_bounds = if latest_x - first_x < WINDOW_SECONDS {
+        let data_span = latest_x - first_x;
+
+        let live_bounds = if data_span <= 0.0 {
+            (latest_x - WINDOW_SECONDS, latest_x)
+        } else if data_span < WINDOW_SECONDS {
             (first_x, latest_x)
         } else {
             (latest_x - WINDOW_SECONDS, latest_x)
@@ -162,8 +183,8 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
                 .iter()
                 .any(|stored_series| stored_series.id == *series_id)
         });
-        let default_pane_id = plot.panes[0].id;
 
+        let default_pane_id = plot.panes[0].id;
         let series_panes = &plot.series_panes;
 
         for pane in &mut plot.panes {
