@@ -1,18 +1,18 @@
 #[path = "../device_emulator.rs"]
 mod device_emulator;
 
+#[path = "../device_emulator_handle.rs"]
+mod device_emulator_handle;
+
 use std::{
     env,
     error::Error,
-    io::{self, Read, Write},
-    time::Duration,
+    io::{self},
 };
 
-use device_emulator::DeviceEmulator;
-use serialport::{ClearBuffer, DataBits, FlowControl, Parity, StopBits};
+use device_emulator_handle::DeviceEmulatorHandle;
 
 const DEFAULT_BAUD_RATE: u32 = 9_600;
-const MAX_COMMAND_LENGTH: usize = 256;
 
 fn main() {
     if let Err(error) = run() {
@@ -51,20 +51,12 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "too many arguments; usage: \
-                 device_emulator <PORT> [BAUD]",
+             device_emulator <PORT> [BAUD]",
         )
         .into());
     }
 
-    let mut port = serialport::new(&port_name, baud_rate)
-        .data_bits(DataBits::Eight)
-        .parity(Parity::None)
-        .stop_bits(StopBits::One)
-        .flow_control(FlowControl::None)
-        .timeout(Duration::from_millis(100))
-        .open()?;
-
-    port.clear(ClearBuffer::All)?;
+    let mut emulator = DeviceEmulatorHandle::start(port_name.clone(), baud_rate)?;
 
     println!(
         "Random walk emulator is running on \
@@ -74,61 +66,15 @@ fn run() -> Result<(), Box<dyn Error>> {
     println!("Commands:");
     println!("  get");
     println!("  get <walk-id> [step]");
-    println!("Press Ctrl+C to stop.");
+    println!("Press Enter to stop.");
 
-    let mut emulator = DeviceEmulator::new();
-    let mut command_buffer = Vec::new();
-    let mut read_buffer = [0_u8; 64];
+    let mut input = String::new();
 
-    loop {
-        match port.read(&mut read_buffer) {
-            Ok(0) => {}
+    io::stdin().read_line(&mut input)?;
 
-            Ok(bytes_read) => {
-                for &byte in &read_buffer[..bytes_read] {
-                    match byte {
-                        b'\n' => {
-                            let command =
-                                String::from_utf8_lossy(&command_buffer).trim().to_owned();
+    emulator.stop()?;
 
-                            command_buffer.clear();
+    println!("Device emulator stopped.");
 
-                            let response = emulator.handle_command(&command);
-
-                            println!("< {command}");
-                            println!("> {response}");
-
-                            writeln!(port, "{response}")?;
-
-                            port.flush()?;
-                        }
-
-                        b'\r' => {}
-
-                        value => {
-                            if command_buffer.len() >= MAX_COMMAND_LENGTH {
-                                command_buffer.clear();
-
-                                writeln!(
-                                    port,
-                                    "error command is \
-                                     too long",
-                                )?;
-
-                                port.flush()?;
-                            } else {
-                                command_buffer.push(value);
-                            }
-                        }
-                    }
-                }
-            }
-
-            Err(error) if error.kind() == io::ErrorKind::TimedOut => {}
-
-            Err(error) => {
-                return Err(error.into());
-            }
-        }
-    }
+    Ok(())
 }
