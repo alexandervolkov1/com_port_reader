@@ -37,7 +37,7 @@ pub struct PlotModel {
     pub follow_latest: bool,
     pub manual_x_bounds: Option<(f64, f64)>,
     pub panes: Vec<PlotPane>,
-    pub series_panes: HashMap<SeriesId, PlotPaneId>,
+    pub(crate) series_panes: HashMap<SeriesId, PlotPaneId>,
     next_pane_id: u64,
 }
 
@@ -70,6 +70,27 @@ impl PlotModel {
         self.series_panes
             .retain(|_, pane_id| *pane_id != removed_pane.id);
     }
+
+    pub fn pane_for_series(&self, series_id: SeriesId) -> PlotPaneId {
+        self.series_panes
+            .get(&series_id)
+            .copied()
+            .unwrap_or(self.panes[0].id)
+    }
+
+    pub fn assign_series(&mut self, series_id: SeriesId, pane_id: PlotPaneId) {
+        if !self.panes.iter().any(|pane| pane.id == pane_id) {
+            return;
+        }
+
+        let default_pane_id = self.panes[0].id;
+
+        if pane_id == default_pane_id {
+            self.series_panes.remove(&series_id);
+        } else {
+            self.series_panes.insert(series_id, pane_id);
+        }
+    }
 }
 
 impl Default for PlotModel {
@@ -81,6 +102,7 @@ impl Default for PlotModel {
 #[cfg(test)]
 mod tests {
     use super::PlotModel;
+    use crate::data::SeriesId;
 
     #[test]
     fn starts_with_one_plot_pane() {
@@ -110,5 +132,37 @@ mod tests {
         plot.remove_last_pane();
 
         assert_eq!(plot.panes.len(), 1);
+    }
+
+    #[test]
+    fn assigns_series_to_plot_pane() {
+        let mut plot = PlotModel::new();
+        let series_id = SeriesId::new(42);
+
+        plot.add_pane();
+
+        let second_pane_id = plot.panes[1].id;
+
+        plot.assign_series(series_id, second_pane_id);
+
+        assert_eq!(plot.pane_for_series(series_id), second_pane_id,);
+    }
+
+    #[test]
+    fn returns_series_to_first_pane_when_removed() {
+        let mut plot = PlotModel::new();
+        let series_id = SeriesId::new(42);
+
+        plot.add_pane();
+
+        let first_pane_id = plot.panes[0].id;
+
+        let second_pane_id = plot.panes[1].id;
+
+        plot.assign_series(series_id, second_pane_id);
+
+        plot.remove_last_pane();
+
+        assert_eq!(plot.pane_for_series(series_id), first_pane_id,);
     }
 }

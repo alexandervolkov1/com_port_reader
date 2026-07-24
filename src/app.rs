@@ -131,6 +131,7 @@ impl eframe::App for MyApp {
                                 ui,
                                 &self.series,
                                 &self.worker_handle,
+                                &mut self.plot,
                                 &mut self.series_editor,
                             );
                         });

@@ -159,6 +159,11 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
             plot.manual_x_bounds.unwrap_or(live_bounds)
         };
 
+        plot.series_panes.retain(|series_id, _| {
+            series
+                .iter()
+                .any(|stored_series| stored_series.id == *series_id)
+        });
         let default_pane_id = plot.panes[0].id;
 
         let series_panes = &plot.series_panes;
