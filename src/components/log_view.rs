@@ -3,8 +3,6 @@ use eframe::egui;
 use crate::app_log::{LogLevel, LogModel};
 
 pub fn show(ui: &mut egui::Ui, model: &mut LogModel) {
-    model.poll();
-
     ui.horizontal(|ui| {
         ui.strong("Application log");
 
