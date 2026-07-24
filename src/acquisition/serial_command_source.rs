@@ -1,5 +1,5 @@
 use crate::{
-    data::{Sample, SeriesMetadata, SeriesSample, SeriesSource},
+    data::{Sample, SeriesId, SeriesMetadata, SeriesSample, SeriesSource},
     serial_connection::{SerialConfigStore, SerialConnection},
 };
 
@@ -46,6 +46,14 @@ impl SerialCommandSource {
     }
 }
 
+fn serial_request(id: SeriesId, command: &str, step: f64) -> String {
+    if command.eq_ignore_ascii_case("get") {
+        format!("get {id} {step}")
+    } else {
+        command.to_owned()
+    }
+}
+
 impl AcquisitionSource for SerialCommandSource {
     fn sample(
         &mut self,
@@ -56,7 +64,7 @@ impl AcquisitionSource for SerialCommandSource {
     ) -> Result<(), AcquisitionError> {
         let has_serial_series = series
             .iter()
-            .any(|series| matches!(&series.source, SeriesSource::SerialCommand { .. },));
+            .any(|series| matches!(&series.source, SeriesSource::SerialCommand { .. }));
 
         if !has_serial_series {
             return Ok(());
@@ -65,15 +73,17 @@ impl AcquisitionSource for SerialCommandSource {
         let connection = self.connection()?;
 
         for series in series {
-            let SeriesSource::SerialCommand { command, .. } = &series.source else {
+            let SeriesSource::SerialCommand { command, step } = &series.source else {
                 continue;
             };
 
-            let value = connection.request_f64(command).map_err(|error| {
+            let request = serial_request(series.id, command, *step);
+
+            let value = connection.request_f64(&request).map_err(|error| {
                 AcquisitionError::from(format!(
-                    "COM series '{}': command \
+                    "COM series '{}': request \
                          '{}' failed: {error}",
-                    series.name, command,
+                    series.name, request,
                 ))
             })?;
 
@@ -92,7 +102,7 @@ impl AcquisitionSource for SerialCommandSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{AcquisitionSource, SerialCommandSource};
+    use super::{AcquisitionSource, SerialCommandSource, serial_request};
 
     use crate::{
         data::{SeriesId, SeriesMetadata, SeriesSource, Signal},
@@ -144,5 +154,26 @@ mod tests {
         );
 
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn formats_keyed_get_request() {
+        let request = serial_request(SeriesId::new(42), "get", 0.25);
+
+        assert_eq!(request, "get 42 0.25");
+    }
+
+    #[test]
+    fn normalizes_get_command_case() {
+        let request = serial_request(SeriesId::new(7), "GET", 2.0);
+
+        assert_eq!(request, "get 7 2");
+    }
+
+    #[test]
+    fn preserves_other_serial_commands() {
+        let request = serial_request(SeriesId::new(42), "status", 5.0);
+
+        assert_eq!(request, "status");
     }
 }
