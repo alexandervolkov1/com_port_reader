@@ -3,6 +3,8 @@ pub mod command_view;
 pub mod controls_model;
 pub mod controls_view;
 pub mod device_emulator_model;
+pub mod help_model;
+pub mod help_view;
 pub mod log_view;
 mod plot_downsampling;
 pub mod plot_model;

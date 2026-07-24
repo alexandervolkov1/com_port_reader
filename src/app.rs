@@ -5,9 +5,10 @@ use std::time::Duration;
 use crate::acquisition::{CombinedSource, SerialCommandSource, SignalGenerator};
 use crate::components::{
     command_model::CommandModel, command_view, controls_model::ControlsModel, controls_view,
-    device_emulator_model::DeviceEmulatorModel, plot_model::PlotModel, plot_view,
-    script_model::ScriptModel, script_view, serial_settings_model::SerialSettingsModel,
-    serial_settings_view, series_editor_model::SeriesEditorModel, series_editor_view, series_view,
+    device_emulator_model::DeviceEmulatorModel, help_model::HelpModel, help_view,
+    plot_model::PlotModel, plot_view, script_model::ScriptModel, script_view,
+    serial_settings_model::SerialSettingsModel, serial_settings_view,
+    series_editor_model::SeriesEditorModel, series_editor_view, series_view,
 };
 use crate::data::SeriesStore;
 use crate::sample_sink::NullSampleSink;
@@ -34,6 +35,7 @@ pub struct MyApp {
     log: LogModel,
     log_handle: LogHandle,
     device_emulator: DeviceEmulatorModel,
+    help: HelpModel,
 }
 
 impl MyApp {
@@ -77,6 +79,7 @@ impl MyApp {
             log,
             log_handle,
             device_emulator,
+            help: HelpModel::default(),
         }
     }
 }
@@ -86,6 +89,10 @@ impl eframe::App for MyApp {
         self.device_emulator.poll();
         self.command.poll_events();
         self.log.poll();
+
+        egui::Panel::top("application_menu").show(ui, |ui| {
+            help_view::show_menu(ui, &mut self.help);
+        });
 
         egui::Panel::bottom("application_log")
             .resizable(true)
@@ -165,6 +172,8 @@ impl eframe::App for MyApp {
             }
             series_editor_view::show(ui.ctx(), &mut self.series_editor, &mut self.command);
         });
+
+        help_view::show_window(ui.ctx(), &mut self.help);
 
         ui.ctx().request_repaint_after(Duration::from_millis(33));
     }
