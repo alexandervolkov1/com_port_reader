@@ -85,8 +85,6 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let (stop_sender, stop_receiver) = mpsc::channel();
 
-    // stdin блокируется в своём потоке, а основной поток
-    // одновременно следит за состоянием эмулятора.
     let _input_thread = thread::spawn(move || {
         let mut input = String::new();
 
@@ -105,8 +103,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // Если поток уже аварийно завершился, stop()
-    // присоединит его и вернёт исходную ошибку.
     emulator.stop()?;
 
     println!("Device emulator stopped.");

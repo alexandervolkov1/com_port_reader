@@ -5,9 +5,9 @@ use std::time::Duration;
 use crate::acquisition::{CombinedSource, SerialCommandSource, SignalGenerator};
 use crate::components::{
     command_model::CommandModel, command_view, controls_model::ControlsModel, controls_view,
-    plot_model::PlotModel, plot_view, script_model::ScriptModel, script_view,
-    serial_settings_model::SerialSettingsModel, serial_settings_view,
-    series_editor_model::SeriesEditorModel, series_editor_view, series_view,
+    device_emulator_model::DeviceEmulatorModel, plot_model::PlotModel, plot_view,
+    script_model::ScriptModel, script_view, serial_settings_model::SerialSettingsModel,
+    serial_settings_view, series_editor_model::SeriesEditorModel, series_editor_view, series_view,
 };
 use crate::data::SeriesStore;
 use crate::sample_sink::NullSampleSink;
@@ -33,11 +33,13 @@ pub struct MyApp {
     script: ScriptModel,
     log: LogModel,
     log_handle: LogHandle,
+    device_emulator: DeviceEmulatorModel,
 }
 
 impl MyApp {
     pub fn new() -> Self {
         let (log, log_handle) = LogModel::new();
+        let device_emulator = DeviceEmulatorModel::new(log_handle.clone());
         let series = SeriesStore::new();
         let (command_sender, command_receiver) = crossbeam_channel::bounded(32);
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
@@ -74,12 +76,14 @@ impl MyApp {
             script: ScriptModel::new(),
             log,
             log_handle,
+            device_emulator,
         }
     }
 }
 
 impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.device_emulator.poll();
         self.command.poll_events();
         self.log.poll();
 
@@ -108,7 +112,13 @@ impl eframe::App for MyApp {
 
             ui.separator();
 
-            serial_settings_view::show(ui, &mut self.serial_settings, &self.worker_handle);
+            serial_settings_view::show(
+                ui,
+                &mut self.serial_settings,
+                &mut self.device_emulator,
+                &self.worker_handle,
+            );
+
             ui.separator();
 
             if self.series_panel_open {

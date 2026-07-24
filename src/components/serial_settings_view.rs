@@ -1,7 +1,9 @@
 use eframe::egui;
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 
-use super::serial_settings_model::SerialSettingsModel;
+use super::{
+    device_emulator_model::DeviceEmulatorModel, serial_settings_model::SerialSettingsModel,
+};
 use crate::worker::WorkerHandle;
 
 const BAUD_RATES: &[u32] = &[1_200, 2_400, 4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
@@ -23,7 +25,12 @@ const FLOW_CONTROLS: &[FlowControl] = &[
     FlowControl::Hardware,
 ];
 
-pub fn show(ui: &mut egui::Ui, model: &mut SerialSettingsModel, worker_handle: &WorkerHandle) {
+pub fn show(
+    ui: &mut egui::Ui,
+    model: &mut SerialSettingsModel,
+    emulator: &mut DeviceEmulatorModel,
+    worker_handle: &WorkerHandle,
+) {
     ui.horizontal(|ui| {
         ui.label("COM port:");
 
@@ -60,12 +67,15 @@ pub fn show(ui: &mut egui::Ui, model: &mut SerialSettingsModel, worker_handle: &
         ui.colored_label(egui::Color32::RED, error);
     }
 
-    show_settings_window(ui.ctx(), model, worker_handle);
+    emulator.synchronize_ports(model.ports(), model.selected_port());
+
+    show_settings_window(ui.ctx(), model, emulator, worker_handle);
 }
 
 fn show_settings_window(
     context: &egui::Context,
     model: &mut SerialSettingsModel,
+    emulator: &mut DeviceEmulatorModel,
     worker_handle: &WorkerHandle,
 ) {
     let mut open = model.settings_open();
@@ -183,10 +193,74 @@ fn show_settings_window(
             if ui.button("Test get").clicked() {
                 model.test_command(worker_handle, "get");
             }
+
+            ui.separator();
+            show_emulator_controls(ui, model, emulator);
         });
 
     model.publish_config();
     model.set_settings_open(open);
+}
+
+fn show_emulator_controls(
+    ui: &mut egui::Ui,
+    serial: &SerialSettingsModel,
+    emulator: &mut DeviceEmulatorModel,
+) {
+    ui.label("Device emulator");
+
+    ui.horizontal(|ui| {
+        ui.label("Emulator port:");
+
+        let mut selected_port = emulator.selected_port().map(str::to_owned);
+
+        let selected_text = selected_port
+            .clone()
+            .unwrap_or_else(|| "No free ports".to_owned());
+
+        ui.add_enabled_ui(!emulator.is_running(), |ui| {
+            egui::ComboBox::from_id_salt("device_emulator_port")
+                .selected_text(selected_text)
+                .show_ui(ui, |ui| {
+                    for port in serial.ports() {
+                        if Some(port.as_str()) == serial.selected_port() {
+                            continue;
+                        }
+
+                        ui.selectable_value(&mut selected_port, Some(port.clone()), port);
+                    }
+                });
+        });
+
+        if selected_port.as_deref() != emulator.selected_port() {
+            emulator.set_selected_port(selected_port);
+        }
+    });
+
+    ui.horizontal(|ui| {
+        let can_start = emulator.can_start(serial.selected_port());
+
+        if ui
+            .add_enabled(can_start, egui::Button::new("Start emulator"))
+            .clicked()
+        {
+            emulator.start(serial.settings(), serial.selected_port());
+        }
+
+        if ui
+            .add_enabled(emulator.is_running(), egui::Button::new("Stop emulator"))
+            .clicked()
+        {
+            emulator.stop();
+        }
+        if let Some(error) = emulator.error() {
+            ui.colored_label(egui::Color32::RED, error);
+        }
+    });
+
+    if let Some(error) = emulator.error() {
+        ui.colored_label(egui::Color32::RED, error);
+    }
 }
 
 fn data_bits_label(value: DataBits) -> &'static str {

@@ -5,6 +5,8 @@ mod app;
 mod app_log;
 mod components;
 mod data;
+mod device_emulator;
+mod device_emulator_handle;
 mod dsl;
 mod sample_sink;
 mod script;

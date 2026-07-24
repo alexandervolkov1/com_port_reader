@@ -44,8 +44,6 @@ impl DeviceEmulatorHandle {
             ));
         }
 
-        // Открываем порт до запуска потока, чтобы ошибка
-        // сразу вернулась вызывающему коду.
         let port = serialport::new(&config.port_name, config.baud_rate)
             .data_bits(config.data_bits)
             .parity(config.parity)
