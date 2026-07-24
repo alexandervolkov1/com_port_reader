@@ -1,59 +1,23 @@
+#[path = "../device_emulator.rs"]
+mod device_emulator;
+
 use std::{
     env,
     error::Error,
     io::{self, Read, Write},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
+use device_emulator::DeviceEmulator;
 use serialport::{ClearBuffer, DataBits, FlowControl, Parity, StopBits};
 
 const DEFAULT_BAUD_RATE: u32 = 9_600;
 const MAX_COMMAND_LENGTH: usize = 256;
 
-struct DeviceEmulator {
-    accumulated_value: i64,
-    random_state: u64,
-}
-
-impl DeviceEmulator {
-    fn new() -> Self {
-        let random_state = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(1, |duration| duration.as_nanos() as u64 | 1);
-
-        Self {
-            accumulated_value: 0,
-            random_state,
-        }
-    }
-
-    fn handle_command(&mut self, command: &str) -> String {
-        match command.trim() {
-            "get" => {
-                self.accumulated_value += self.random_step();
-
-                format!("{:.1}", self.accumulated_value as f64,)
-            }
-
-            "" => "error empty command".to_owned(),
-
-            command => format!("error unknown command: {command}",),
-        }
-    }
-
-    fn random_step(&mut self) -> i64 {
-        // Простой xorshift64.
-        self.random_state ^= self.random_state << 13;
-        self.random_state ^= self.random_state >> 7;
-        self.random_state ^= self.random_state << 17;
-
-        if self.random_state & 1 == 0 { -1 } else { 1 }
-    }
-}
-
 fn main() {
     if let Err(error) = run() {
         eprintln!("Device emulator failed: {error}");
+
         std::process::exit(1);
     }
 }
@@ -74,8 +38,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
-                    "invalid baud rate '{value}': \
-                         {error}",
+                    "invalid baud rate \
+                         '{value}': {error}",
                 ),
             )
         })?,
@@ -107,7 +71,9 @@ fn run() -> Result<(), Box<dyn Error>> {
          {port_name} at {baud_rate} baud.",
     );
 
-    println!("Command: get");
+    println!("Commands:");
+    println!("  get");
+    println!("  get <walk-id> [step]");
     println!("Press Ctrl+C to stop.");
 
     let mut emulator = DeviceEmulator::new();
@@ -133,6 +99,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                             println!("> {response}");
 
                             writeln!(port, "{response}")?;
+
                             port.flush()?;
                         }
 
@@ -142,7 +109,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                             if command_buffer.len() >= MAX_COMMAND_LENGTH {
                                 command_buffer.clear();
 
-                                writeln!(port, "error command is too long",)?;
+                                writeln!(
+                                    port,
+                                    "error command is \
+                                     too long",
+                                )?;
 
                                 port.flush()?;
                             } else {
@@ -155,42 +126,9 @@ fn run() -> Result<(), Box<dyn Error>> {
 
             Err(error) if error.kind() == io::ErrorKind::TimedOut => {}
 
-            Err(error) => return Err(error.into()),
+            Err(error) => {
+                return Err(error.into());
+            }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::DeviceEmulator;
-
-    #[test]
-    fn moves_one_step_for_each_request() {
-        let mut emulator = DeviceEmulator::new();
-        let mut previous_value = 0.0_f64;
-
-        for _ in 0..100 {
-            let current_value = emulator.handle_command("get").parse::<f64>().unwrap();
-
-            assert_eq!((current_value - previous_value).abs(), 1.0,);
-
-            previous_value = current_value;
-        }
-    }
-
-    #[test]
-    fn rejects_unknown_command() {
-        let mut emulator = DeviceEmulator::new();
-
-        let response = emulator.handle_command("unknown");
-
-        assert!(response.starts_with("error"));
-    }
-
-    #[test]
-    fn rejects_empty_command() {
-        let mut emulator = DeviceEmulator::new();
-
-        assert_eq!(emulator.handle_command("   "), "error empty command",);
     }
 }
