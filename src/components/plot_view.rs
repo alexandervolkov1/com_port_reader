@@ -93,7 +93,7 @@ fn show_pane(
                 [1800.0, 600.0, 60.0]
             }
         }))
-        .x_axis_formatter(|mark, _range| mark_for_timestamp(mark.value))
+        .x_axis_formatter(format_x_mark)
         .label_formatter(|position| match position {
             HoverPosition::NearDataPoint {
                 plot_name,
@@ -328,4 +328,16 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
 
         (min_x, max_x)
     })
+}
+
+fn format_x_mark(mark: GridMark, visible_range: &std::ops::RangeInclusive<f64>) -> String {
+    let distance_from_left = mark.value - *visible_range.start();
+
+    let edge_margin = mark.step_size.abs() * 0.2;
+
+    if distance_from_left < edge_margin {
+        String::new()
+    } else {
+        mark_for_timestamp(mark.value)
+    }
 }
