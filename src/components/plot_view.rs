@@ -17,6 +17,7 @@ const MIN_PANE_HEIGHT: f32 = 80.0;
 const Y_AXIS_MIN_WIDTH: f32 = 50.0;
 const Y_LABEL_MIN_SPACING: f32 = 14.0;
 const Y_LABEL_FULL_SPACING: f32 = 20.0;
+const X_LABEL_LEFT_MARGIN: f64 = 0.035;
 
 pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore) {
     let (min_x, max_x) = prepare_lines(plot, series_store);
@@ -331,11 +332,12 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
 }
 
 fn format_x_mark(mark: GridMark, visible_range: &std::ops::RangeInclusive<f64>) -> String {
-    let distance_from_left = mark.value - *visible_range.start();
+    let min_x = *visible_range.start();
+    let max_x = *visible_range.end();
 
-    let edge_margin = mark.step_size.abs() * 0.2;
+    let edge_margin = (max_x - min_x).abs() * X_LABEL_LEFT_MARGIN;
 
-    if distance_from_left < edge_margin {
+    if mark.value < min_x + edge_margin {
         String::new()
     } else {
         mark_for_timestamp(mark.value)
