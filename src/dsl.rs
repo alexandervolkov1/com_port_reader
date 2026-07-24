@@ -15,6 +15,8 @@ const DUTY_CYCLE_OPTIONS: &[&str] = &["--duty", "--duty-cycle"];
 
 const VALUE_OPTIONS: &[&str] = &["--value", "--val"];
 
+const STEP_OPTIONS: &[&str] = &["--step"];
+
 pub fn parse_command(input: &str) -> Result<UserCommand, String> {
     let input = input.trim();
 
@@ -201,27 +203,51 @@ fn parse_serial(tokens: &mut SplitWhitespace<'_>) -> Result<NewSeries, String> {
 
     let mut name = None;
 
+    let mut step = NumericParameter::new("step", STEP_OPTIONS, DEFAULT_SERIAL_STEP);
+
     while let Some(argument) = tokens.next() {
         match argument {
             "--name" => {
                 parse_name(tokens, &mut name)?;
             }
 
+            option if STEP_OPTIONS.contains(&option) => {
+                let value = next_option_value(tokens, option)?;
+
+                step.set(value)?;
+            }
+
             option if option.starts_with("--") => {
-                return Err(format!("Unknown option: {option}",));
+                return Err(format!("Unknown option: {option}"));
             }
 
             argument => {
-                return Err(format!("Unexpected argument: {argument}",));
+                return Err(format!("Unexpected argument: {argument}"));
             }
         }
     }
 
-    Ok(match name {
-        Some(name) => NewSeries::named_serial_command(command, DEFAULT_SERIAL_STEP, name),
+    let step = step.value();
 
-        None => NewSeries::unnamed_serial_command(command, DEFAULT_SERIAL_STEP),
+    validate_serial_step(step)?;
+
+    Ok(match name {
+        Some(name) => NewSeries::named_serial_command(command, step, name),
+
+        None => NewSeries::unnamed_serial_command(command, step),
     })
+}
+
+fn validate_serial_step(step: f64) -> Result<(), String> {
+    if !step.is_finite() {
+        return Err("Step must be finite".to_owned());
+    }
+
+    if step <= 0.0 {
+        return Err("Step must be greater than 0".to_owned());
+    }
+
+    Ok(())
 }
 
 struct NumericParameter {
@@ -652,7 +678,7 @@ mod tests {
             SeriesSource::SerialCommand {
                 command: "get".to_owned(),
                 step: DEFAULT_SERIAL_STEP,
-            }
+            },
         );
     }
 
@@ -673,7 +699,59 @@ mod tests {
             SeriesSource::SerialCommand {
                 command: "get".to_owned(),
                 step: DEFAULT_SERIAL_STEP,
-            }
+            },
+        );
+    }
+
+    #[test]
+    fn parses_serial_step() {
+        let command = parse_command("com get --step 0.25 --name slow_walk").unwrap();
+
+        let UserCommand::Add(new_series) = command else {
+            panic!("expected add command");
+        };
+
+        let (source, name) = new_series.into_source_parts();
+
+        assert_eq!(name.as_deref(), Some("slow_walk"),);
+
+        assert_eq!(
+            source,
+            SeriesSource::SerialCommand {
+                command: "get".to_owned(),
+                step: 0.25,
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_non_positive_serial_step() {
+        let result = parse_command("com get --step 0");
+
+        assert_eq!(result.unwrap_err(), "Step must be greater than 0",);
+    }
+
+    #[test]
+    fn rejects_non_finite_serial_step() {
+        let result = parse_command("com get --step NaN");
+
+        assert_eq!(result.unwrap_err(), "Step must be finite",);
+    }
+
+    #[test]
+    fn rejects_missing_serial_step_value() {
+        let result = parse_command("com get --step");
+
+        assert_eq!(result.unwrap_err(), "Missing value for option '--step'",);
+    }
+
+    #[test]
+    fn rejects_duplicate_serial_step() {
+        let result = parse_command("com get --step 1 --step 2");
+
+        assert_eq!(
+            result.unwrap_err(),
+            "Parameter 'step' specified more than once",
         );
     }
 }
