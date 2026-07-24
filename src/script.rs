@@ -110,7 +110,8 @@ rename sine_test new_sine
             source,
             SeriesSource::SerialCommand {
                 command: "get".to_owned(),
-            },
+                step: 1.0,
+            }
         );
 
         let Some(UserCommand::Delete { name }) = commands.next() else {

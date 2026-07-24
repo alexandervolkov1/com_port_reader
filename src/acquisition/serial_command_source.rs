@@ -65,7 +65,7 @@ impl AcquisitionSource for SerialCommandSource {
         let connection = self.connection()?;
 
         for series in series {
-            let SeriesSource::SerialCommand { command } = &series.source else {
+            let SeriesSource::SerialCommand { command, .. } = &series.source else {
                 continue;
             };
 
@@ -126,6 +126,7 @@ mod tests {
             name: "random_walk".to_owned(),
             source: SeriesSource::SerialCommand {
                 command: "get".to_owned(),
+                step: 1.0,
             },
             visible: true,
         }];

@@ -19,6 +19,7 @@ pub enum AddSeriesError {
     InvalidName(SeriesNameError),
     EmptySerialCommand,
     SerialCommandContainsLineBreak,
+    InvalidSerialStep,
 }
 
 impl std::fmt::Display for AddSeriesError {
@@ -33,6 +34,10 @@ impl std::fmt::Display for AddSeriesError {
             Self::SerialCommandContainsLineBreak => {
                 formatter.write_str("Serial command cannot contain a line break")
             }
+
+            Self::InvalidSerialStep => {
+                formatter.write_str("Serial step must be finite and greater than zero")
+            }
         }
     }
 }
@@ -42,7 +47,9 @@ impl std::error::Error for AddSeriesError {
         match self {
             Self::InvalidSignal(error) => Some(error),
             Self::InvalidName(error) => Some(error),
-            Self::EmptySerialCommand | Self::SerialCommandContainsLineBreak => None,
+            Self::EmptySerialCommand
+            | Self::SerialCommandContainsLineBreak
+            | Self::InvalidSerialStep => None,
         }
     }
 }
@@ -242,7 +249,7 @@ fn normalize_series_source(source: SeriesSource) -> Result<SeriesSource, AddSeri
             Ok(SeriesSource::Generated(signal))
         }
 
-        SeriesSource::SerialCommand { command } => {
+        SeriesSource::SerialCommand { command, step } => {
             if command.contains('\r') || command.contains('\n') {
                 return Err(AddSeriesError::SerialCommandContainsLineBreak);
             }
@@ -253,8 +260,13 @@ fn normalize_series_source(source: SeriesSource) -> Result<SeriesSource, AddSeri
                 return Err(AddSeriesError::EmptySerialCommand);
             }
 
+            if !step.is_finite() || step <= 0.0 {
+                return Err(AddSeriesError::InvalidSerialStep);
+            }
+
             Ok(SeriesSource::SerialCommand {
                 command: command.to_owned(),
+                step,
             })
         }
     }
@@ -597,19 +609,23 @@ mod tests {
         let store = SeriesStore::new();
 
         store
-            .add_series(NewSeries::named_serial_command("  get  ", "random_walk"))
+            .add_series(NewSeries::named_serial_command(
+                "  get  ",
+                0.25,
+                "random_walk",
+            ))
             .unwrap();
 
         let metadata = store.metadata();
 
         assert_eq!(metadata.len(), 1);
-
-        assert_eq!(metadata[0].name, "random_walk",);
+        assert_eq!(metadata[0].name, "random_walk");
 
         assert_eq!(
             metadata[0].source,
             SeriesSource::SerialCommand {
                 command: "get".to_owned(),
+                step: 0.25,
             },
         );
     }
@@ -618,7 +634,7 @@ mod tests {
     fn rejects_empty_serial_command() {
         let store = SeriesStore::new();
 
-        let result = store.add_series(NewSeries::named_serial_command("   ", "random_walk"));
+        let result = store.add_series(NewSeries::named_serial_command("   ", 1.0, "random_walk"));
 
         assert_eq!(result, Err(AddSeriesError::EmptySerialCommand),);
     }
@@ -627,9 +643,24 @@ mod tests {
     fn rejects_serial_command_with_line_break() {
         let store = SeriesStore::new();
 
-        let result = store.add_series(NewSeries::named_serial_command("get\nnext", "random_walk"));
+        let result = store.add_series(NewSeries::named_serial_command(
+            "get\nnext",
+            1.0,
+            "random_walk",
+        ));
 
         assert_eq!(result, Err(AddSeriesError::SerialCommandContainsLineBreak,),);
+    }
+
+    #[test]
+    fn rejects_invalid_serial_step() {
+        let store = SeriesStore::new();
+
+        for step in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let result = store.add_series(NewSeries::unnamed_serial_command("get", step));
+
+            assert_eq!(result, Err(AddSeriesError::InvalidSerialStep),);
+        }
     }
 
     #[test]
@@ -637,7 +668,7 @@ mod tests {
         let store = SeriesStore::new();
 
         store
-            .add_series(NewSeries::unnamed_serial_command("get"))
+            .add_series(NewSeries::unnamed_serial_command("get", 1.0))
             .unwrap();
 
         let metadata = store.metadata();
@@ -649,6 +680,7 @@ mod tests {
             metadata[0].source,
             SeriesSource::SerialCommand {
                 command: "get".to_owned(),
+                step: 1.0,
             },
         );
     }

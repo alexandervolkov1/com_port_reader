@@ -1,5 +1,7 @@
 use super::{Sample, Signal};
 
+pub const DEFAULT_SERIAL_STEP: f64 = 1.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SeriesId(u64);
 
@@ -18,8 +20,7 @@ impl std::fmt::Display for SeriesId {
 #[derive(Clone, Debug, PartialEq)]
 pub enum SeriesSource {
     Generated(Signal),
-
-    SerialCommand { command: String },
+    SerialCommand { command: String, step: f64 },
 }
 
 impl SeriesSource {
@@ -43,8 +44,8 @@ impl std::fmt::Display for SeriesSource {
         match self {
             Self::Generated(signal) => signal.fmt(formatter),
 
-            Self::SerialCommand { command } => {
-                write!(formatter, "COM command: {command}")
+            Self::SerialCommand { command, step } => {
+                write!(formatter, "COM command: {command}, step: {step}",)
             }
         }
     }
@@ -71,19 +72,25 @@ impl NewSeries {
         }
     }
 
-    pub fn unnamed_serial_command(command: impl Into<String>) -> Self {
+    pub fn unnamed_serial_command(command: impl Into<String>, step: f64) -> Self {
         Self {
             source: SeriesSource::SerialCommand {
                 command: command.into(),
+                step,
             },
             name: None,
         }
     }
 
-    pub fn named_serial_command(command: impl Into<String>, name: impl Into<String>) -> Self {
+    pub fn named_serial_command(
+        command: impl Into<String>,
+        step: f64,
+        name: impl Into<String>,
+    ) -> Self {
         Self {
             source: SeriesSource::SerialCommand {
                 command: command.into(),
+                step,
             },
             name: Some(name.into()),
         }

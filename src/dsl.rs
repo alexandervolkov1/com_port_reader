@@ -1,7 +1,7 @@
 use std::str::SplitWhitespace;
 
 use crate::{
-    data::{NewSeries, Signal},
+    data::{DEFAULT_SERIAL_STEP, NewSeries, Signal},
     user_command::UserCommand,
 };
 
@@ -218,9 +218,9 @@ fn parse_serial(tokens: &mut SplitWhitespace<'_>) -> Result<NewSeries, String> {
     }
 
     Ok(match name {
-        Some(name) => NewSeries::named_serial_command(command, name),
+        Some(name) => NewSeries::named_serial_command(command, DEFAULT_SERIAL_STEP, name),
 
-        None => NewSeries::unnamed_serial_command(command),
+        None => NewSeries::unnamed_serial_command(command, DEFAULT_SERIAL_STEP),
     })
 }
 
@@ -334,7 +334,7 @@ mod tests {
     use super::{parse_command, parse_series};
 
     use crate::{
-        data::{SeriesSource, Signal},
+        data::{DEFAULT_SERIAL_STEP, SeriesSource, Signal},
         user_command::UserCommand,
     };
 
@@ -651,7 +651,8 @@ mod tests {
             source,
             SeriesSource::SerialCommand {
                 command: "get".to_owned(),
-            },
+                step: DEFAULT_SERIAL_STEP,
+            }
         );
     }
 
@@ -671,7 +672,8 @@ mod tests {
             source,
             SeriesSource::SerialCommand {
                 command: "get".to_owned(),
-            },
+                step: DEFAULT_SERIAL_STEP,
+            }
         );
     }
 }
