@@ -9,6 +9,7 @@ pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
 
 use crate::sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError};
+use crate::utils::current_time_f64;
 use crate::{
     acquisition::{AcquisitionError, AcquisitionSource},
     data::{SeriesSample, SeriesStore, SignalSeries},
@@ -20,7 +21,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::thread::{self, JoinHandle};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 enum AcquisitionState {
     Stopped,
@@ -73,10 +74,7 @@ impl Worker {
                 {
                     let elapsed_seconds = started_at.elapsed().as_secs_f64();
 
-                    let timestamp = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs_f64();
+                    let timestamp = current_time_f64();
 
                     sample_batch.clear();
 
