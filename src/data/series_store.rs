@@ -624,7 +624,7 @@ mod tests {
         assert_eq!(
             metadata[0].source,
             SeriesSource::SerialCommand {
-                command: "get".to_owned(),
+                command: "walk".to_owned(),
                 step: 0.25,
             },
         );
@@ -657,7 +657,7 @@ mod tests {
         let store = SeriesStore::new();
 
         for step in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-            let result = store.add_series(NewSeries::unnamed_serial_command("get", step));
+            let result = store.add_series(NewSeries::unnamed_serial_command("walk", step));
 
             assert_eq!(result, Err(AddSeriesError::InvalidSerialStep),);
         }
@@ -668,7 +668,7 @@ mod tests {
         let store = SeriesStore::new();
 
         store
-            .add_series(NewSeries::unnamed_serial_command("get", 1.0))
+            .add_series(NewSeries::unnamed_serial_command("walk", 1.0))
             .unwrap();
 
         let metadata = store.metadata();
@@ -679,7 +679,7 @@ mod tests {
         assert_eq!(
             metadata[0].source,
             SeriesSource::SerialCommand {
-                command: "get".to_owned(),
+                command: "walk".to_owned(),
                 step: 1.0,
             },
         );

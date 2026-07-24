@@ -79,8 +79,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     );
 
     println!("Commands:");
-    println!("  get");
-    println!("  get <walk-id> [step]");
+    println!("  walk");
+    println!("  walk <walk-id> [step]");
     println!("Press Enter to stop.");
 
     let (stop_sender, stop_receiver) = mpsc::channel();

@@ -676,7 +676,7 @@ mod tests {
         assert_eq!(
             source,
             SeriesSource::SerialCommand {
-                command: "get".to_owned(),
+                command: "walk".to_owned(),
                 step: DEFAULT_SERIAL_STEP,
             },
         );
@@ -697,7 +697,7 @@ mod tests {
         assert_eq!(
             source,
             SeriesSource::SerialCommand {
-                command: "get".to_owned(),
+                command: "walk".to_owned(),
                 step: DEFAULT_SERIAL_STEP,
             },
         );
@@ -718,7 +718,7 @@ mod tests {
         assert_eq!(
             source,
             SeriesSource::SerialCommand {
-                command: "get".to_owned(),
+                command: "walk".to_owned(),
                 step: 0.25,
             },
         );

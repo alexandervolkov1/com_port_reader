@@ -33,7 +33,7 @@ impl DeviceEmulator {
         let mut tokens = command.split_whitespace();
 
         match tokens.next() {
-            Some("get") => self.handle_get(tokens),
+            Some("walk") => self.handle_walk(tokens),
 
             Some(_) => {
                 format!("error unknown command: {command}")
@@ -43,7 +43,7 @@ impl DeviceEmulator {
         }
     }
 
-    fn handle_get<'a>(&mut self, mut tokens: impl Iterator<Item = &'a str>) -> String {
+    fn handle_walk<'a>(&mut self, mut tokens: impl Iterator<Item = &'a str>) -> String {
         let walk_id = tokens.next().unwrap_or(DEFAULT_WALK_ID);
 
         let step = match tokens.next() {
@@ -156,7 +156,7 @@ mod tests {
         let mut previous_value = 0.0;
 
         for _ in 0..100 {
-            let current_value = response_value(&mut emulator, "get");
+            let current_value = response_value(&mut emulator, "walk");
 
             assert_eq!((current_value - previous_value).abs(), 1.0,);
 

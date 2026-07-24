@@ -190,8 +190,8 @@ fn show_settings_window(
 
             ui.separator();
 
-            if ui.button("Test get").clicked() {
-                model.test_command(worker_handle, "get");
+            if ui.button("Test walk").clicked() {
+                model.test_command(worker_handle, "walk");
             }
 
             ui.separator();

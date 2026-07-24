@@ -47,8 +47,8 @@ impl SerialCommandSource {
 }
 
 fn serial_request(id: SeriesId, command: &str, step: f64) -> String {
-    if command.eq_ignore_ascii_case("get") {
-        format!("get {id} {step}")
+    if command.eq_ignore_ascii_case("walk") {
+        format!("walk {id} {step}")
     } else {
         command.to_owned()
     }
@@ -135,7 +135,7 @@ mod tests {
             id: SeriesId::new(1),
             name: "random_walk".to_owned(),
             source: SeriesSource::SerialCommand {
-                command: "get".to_owned(),
+                command: "walk".to_owned(),
                 step: 1.0,
             },
             visible: true,
@@ -158,14 +158,14 @@ mod tests {
 
     #[test]
     fn formats_keyed_get_request() {
-        let request = serial_request(SeriesId::new(42), "get", 0.25);
+        let request = serial_request(SeriesId::new(42), "walk", 0.25);
 
         assert_eq!(request, "get 42 0.25");
     }
 
     #[test]
     fn normalizes_get_command_case() {
-        let request = serial_request(SeriesId::new(7), "GET", 2.0);
+        let request = serial_request(SeriesId::new(7), "WALK", 2.0);
 
         assert_eq!(request, "get 7 2");
     }

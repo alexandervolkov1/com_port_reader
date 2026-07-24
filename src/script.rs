@@ -109,7 +109,7 @@ rename sine_test new_sine
         assert_eq!(
             source,
             SeriesSource::SerialCommand {
-                command: "get".to_owned(),
+                command: "walk".to_owned(),
                 step: 1.0,
             }
         );
