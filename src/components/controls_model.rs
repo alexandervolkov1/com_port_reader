@@ -63,12 +63,6 @@ impl ControlsModel {
     }
 
     pub fn start_recording(&mut self) {
-        if self.is_recording() {
-            self.log.info("Recording is already active.");
-
-            return;
-        }
-
         let now = Local::now();
 
         let date = now.format("%Y-%m-%d").to_string();

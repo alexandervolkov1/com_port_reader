@@ -202,6 +202,7 @@ impl Worker {
                                     };
 
                                     thread_running.store(true, Ordering::Release);
+                                    let _ = event_sender.send(WorkerEvent::AcquisitionStarted);
                                 }
 
                                 Err(error) => {
@@ -218,17 +219,27 @@ impl Worker {
 
                             thread_running.store(false, Ordering::Release);
 
+                            let mut stopped_cleanly = true;
+
                             if let Err(error) = source.stop() {
+                                stopped_cleanly = false;
+
                                 let _ =
                                     event_sender.send(WorkerEvent::AcquisitionStopFailed(error));
                             }
 
                             if let Err(error) = sink.flush() {
+                                stopped_cleanly = false;
+
                                 let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
 
                                 sink = Box::new(NullSampleSink::new());
 
                                 thread_sample_sink_active.store(false, Ordering::Release);
+                            }
+
+                            if stopped_cleanly {
+                                let _ = event_sender.send(WorkerEvent::AcquisitionStopped);
                             }
                         }
                     }
@@ -255,6 +266,8 @@ impl Worker {
 
                     Ok(WorkerCommand::ClearSeries) => {
                         series.clear();
+
+                        let _ = event_sender.send(WorkerEvent::SeriesCleared);
                     }
 
                     Ok(WorkerCommand::StartCsvRecording(path)) => {
@@ -266,11 +279,13 @@ impl Worker {
 
                         thread_sample_sink_active.store(false, Ordering::Release);
 
-                        match CsvSampleSink::create(path) {
+                        match CsvSampleSink::create(&path) {
                             Ok(csv_sink) => {
                                 sink = Box::new(csv_sink);
 
                                 thread_sample_sink_active.store(true, Ordering::Release);
+
+                                let _ = event_sender.send(WorkerEvent::RecordingStarted(path));
                             }
 
                             Err(error) => {
@@ -280,13 +295,25 @@ impl Worker {
                     }
 
                     Ok(WorkerCommand::StopRecording) => {
-                        if let Err(error) = sink.flush() {
-                            let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
-                        }
+                        let was_recording = thread_sample_sink_active.load(Ordering::Acquire);
+
+                        let flush_result = sink.flush();
 
                         sink = Box::new(NullSampleSink::new());
 
                         thread_sample_sink_active.store(false, Ordering::Release);
+
+                        match flush_result {
+                            Ok(()) if was_recording => {
+                                let _ = event_sender.send(WorkerEvent::RecordingStopped);
+                            }
+
+                            Ok(()) => {}
+
+                            Err(error) => {
+                                let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
+                            }
+                        }
                     }
 
                     Ok(WorkerCommand::Shutdown) => {

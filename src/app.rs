@@ -42,15 +42,29 @@ pub struct MyApp {
 impl MyApp {
     pub fn new() -> Self {
         let (config, config_warning) = AppConfig::load_or_default(CONFIG_PATH);
+
         let (log, log_handle) = LogModel::new();
+
+        if let Some(warning) = config_warning {
+            log_handle.error(warning);
+        }
+
         let device_emulator = DeviceEmulatorModel::new(log_handle.clone());
+
         let series = SeriesStore::new();
+
         let (command_sender, command_receiver) = crossbeam_channel::bounded(32);
+
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
+
         let worker_handle = WorkerHandle::new(command_sender);
+
         let serial_config_store = SerialConfigStore::new();
+
         let serial_settings = SerialSettingsModel::new(serial_config_store.clone());
+
         let worker_config = WorkerConfig::new(config.application.poll_interval());
+
         let source = CombinedSource::new(vec![
             Box::new(SignalGenerator::new()),
             Box::new(SerialCommandSource::new(serial_config_store)),
@@ -68,7 +82,9 @@ impl MyApp {
         );
 
         let command = CommandModel::new(worker_handle.clone(), event_receiver, log_handle.clone());
+
         Self {
+            config,
             controls,
             plot: PlotModel::new(),
             command,
@@ -82,7 +98,6 @@ impl MyApp {
             log_handle,
             device_emulator,
             help: HelpModel::default(),
-            config,
         }
     }
 }
@@ -106,7 +121,7 @@ impl eframe::App for MyApp {
             });
 
         egui::CentralPanel::default().show(ui, |ui| {
-            controls_view::show(ui, &mut self.controls);
+            controls_view::show(ui, &mut self.controls, &self.command);
 
             ui.separator();
 
@@ -115,7 +130,7 @@ impl eframe::App for MyApp {
             script_view::show(
                 ui,
                 &mut self.script,
-                &mut self.command,
+                &self.command,
                 &mut self.controls,
                 &self.log_handle,
             );

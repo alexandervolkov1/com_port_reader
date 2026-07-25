@@ -211,4 +211,32 @@ triangle --per 0
             Some(UserCommand::StartRecording),
         ));
     }
+
+    #[test]
+    fn parses_control_commands_from_script() {
+        let commands = parse_script(
+            "\
+    clear
+    start_recording
+    start
+    stop
+    stop_recording
+    ",
+        )
+        .unwrap();
+
+        let mut commands = commands.into_iter();
+
+        assert!(matches!(commands.next(), Some(UserCommand::Clear),));
+
+        assert!(matches!(commands.next(), Some(UserCommand::StartRecording),));
+
+        assert!(matches!(commands.next(), Some(UserCommand::Start),));
+
+        assert!(matches!(commands.next(), Some(UserCommand::Stop),));
+
+        assert!(matches!(commands.next(), Some(UserCommand::StopRecording),));
+
+        assert!(commands.next().is_none());
+    }
 }

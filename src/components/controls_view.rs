@@ -1,8 +1,11 @@
 use eframe::egui;
 
-use crate::components::controls_model::ControlsModel;
+use crate::{
+    components::{command_model::CommandModel, controls_model::ControlsModel},
+    user_command::UserCommand,
+};
 
-pub fn show(ui: &mut egui::Ui, controls: &mut ControlsModel) {
+pub fn show(ui: &mut egui::Ui, controls: &mut ControlsModel, commands: &CommandModel) {
     ui.horizontal(|ui| {
         let running = controls.is_running();
 
@@ -10,15 +13,15 @@ pub fn show(ui: &mut egui::Ui, controls: &mut ControlsModel) {
             .add_enabled(!running, egui::Button::new("Start"))
             .clicked()
         {
-            controls.start();
+            commands.execute(UserCommand::Start, controls);
         }
 
         if ui.add_enabled(running, egui::Button::new("Stop")).clicked() {
-            controls.stop();
+            commands.execute(UserCommand::Stop, controls);
         }
 
         if ui.button("Clear").clicked() {
-            controls.clear();
+            commands.execute(UserCommand::Clear, controls);
         }
 
         if running {
@@ -35,14 +38,14 @@ pub fn show(ui: &mut egui::Ui, controls: &mut ControlsModel) {
             .add_enabled(!recording, egui::Button::new("Start recording"))
             .clicked()
         {
-            controls.start_recording();
+            commands.execute(UserCommand::StartRecording, controls);
         }
 
         if ui
             .add_enabled(recording, egui::Button::new("Stop recording"))
             .clicked()
         {
-            controls.stop_recording();
+            commands.execute(UserCommand::StopRecording, controls);
         }
 
         match (recording, controls.is_running()) {
@@ -61,7 +64,7 @@ pub fn show(ui: &mut egui::Ui, controls: &mut ControlsModel) {
     });
 
     if let Some(path) = controls.recording_file() {
-        ui.label(format!("Protocol: {}", path.display()));
+        ui.label(format!("Protocol: {}", path.display(),));
     }
 
     if let Some(error) = controls.recording_error() {

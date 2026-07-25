@@ -81,8 +81,24 @@ impl CommandModel {
                 }
             }
 
+            UserCommand::Start => {
+                controls.start();
+            }
+
+            UserCommand::Stop => {
+                controls.stop();
+            }
+
+            UserCommand::Clear => {
+                controls.clear();
+            }
+
             UserCommand::StartRecording => {
                 controls.start_recording();
+            }
+
+            UserCommand::StopRecording => {
+                controls.stop_recording();
             }
         }
     }

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::serial_connection::SerialConnectionError;
 use crate::{
     acquisition::AcquisitionError,
@@ -7,6 +9,11 @@ use crate::{
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkerEvent {
+    AcquisitionStarted,
+    AcquisitionStopped,
+    RecordingStarted(PathBuf),
+    RecordingStopped,
+    SeriesCleared,
     SeriesAdded(SeriesId),
     SeriesAddFailed(AddSeriesError),
     AcquisitionStartFailed(AcquisitionError),
@@ -41,6 +48,17 @@ pub enum WorkerEvent {
 impl std::fmt::Display for WorkerEvent {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::AcquisitionStarted => formatter.write_str("Acquisition started."),
+
+            Self::AcquisitionStopped => formatter.write_str("Acquisition stopped."),
+
+            Self::RecordingStarted(path) => {
+                write!(formatter, "CSV recording started: '{}'.", path.display(),)
+            }
+
+            Self::RecordingStopped => formatter.write_str("CSV recording stopped."),
+
+            Self::SeriesCleared => formatter.write_str("All series cleared."),
             Self::SeriesAdded(id) => {
                 write!(formatter, "Series {id} added.")
             }

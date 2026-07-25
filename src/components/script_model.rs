@@ -13,10 +13,10 @@ impl ScriptModel {
         Self
     }
 
-    pub fn start_from_file(
+    pub fn run_file(
         &mut self,
         path: &Path,
-        commands: &mut CommandModel,
+        commands: &CommandModel,
         controls: &mut ControlsModel,
         log: &LogHandle,
     ) {
@@ -54,12 +54,9 @@ impl ScriptModel {
             commands.execute(command, controls);
         }
 
-        controls.start();
-
         log.info(format!(
             "Submitted {command_count} command(s) \
-             from '{}' and requested acquisition \
-             start.",
+             from script '{}'.",
             path.display(),
         ));
     }

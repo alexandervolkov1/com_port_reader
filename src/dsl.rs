@@ -43,7 +43,27 @@ pub fn parse_command(input: &str) -> Result<UserCommand, String> {
     }
 
     if first_token.eq_ignore_ascii_case("start_recording") {
-        return parse_start_recording(arguments);
+        return parse_without_arguments(arguments, UserCommand::StartRecording);
+    }
+
+    if first_token.eq_ignore_ascii_case("start") {
+        return parse_without_arguments(arguments, UserCommand::Start);
+    }
+
+    if first_token.eq_ignore_ascii_case("stop") {
+        return parse_without_arguments(arguments, UserCommand::Stop);
+    }
+
+    if first_token.eq_ignore_ascii_case("clear") {
+        return parse_without_arguments(arguments, UserCommand::Clear);
+    }
+
+    if first_token.eq_ignore_ascii_case("start_recording") {
+        return parse_without_arguments(arguments, UserCommand::StartRecording);
+    }
+
+    if first_token.eq_ignore_ascii_case("stop_recording") {
+        return parse_without_arguments(arguments, UserCommand::StopRecording);
     }
 
     parse_series(input).map(UserCommand::Add)
@@ -360,12 +380,12 @@ fn next_option_value<'a>(
     Ok(value)
 }
 
-fn parse_start_recording(arguments: &str) -> Result<UserCommand, String> {
+fn parse_without_arguments(arguments: &str, command: UserCommand) -> Result<UserCommand, String> {
     if let Some(argument) = arguments.split_whitespace().next() {
         return Err(format!("Unexpected argument: {argument}",));
     }
 
-    Ok(UserCommand::StartRecording)
+    Ok(command)
 }
 
 #[cfg(test)]
@@ -780,5 +800,37 @@ mod tests {
         let result = parse_command("start_recording extra");
 
         assert_eq!(result.unwrap_err(), "Unexpected argument: extra",);
+    }
+
+    #[test]
+    fn parses_control_commands() {
+        assert!(matches!(
+            parse_command("start").unwrap(),
+            UserCommand::Start,
+        ));
+
+        assert!(matches!(parse_command("stop").unwrap(), UserCommand::Stop,));
+
+        assert!(matches!(
+            parse_command("clear").unwrap(),
+            UserCommand::Clear,
+        ));
+
+        assert!(matches!(
+            parse_command("start_recording").unwrap(),
+            UserCommand::StartRecording,
+        ));
+
+        assert!(matches!(
+            parse_command("stop_recording").unwrap(),
+            UserCommand::StopRecording,
+        ));
+    }
+
+    #[test]
+    fn rejects_control_command_arguments() {
+        let result = parse_command("start now");
+
+        assert_eq!(result.unwrap_err(), "Unexpected argument: now",);
     }
 }

@@ -177,8 +177,9 @@ fn show_command_reference(ui: &mut egui::Ui) {
     ui.add_space(8.0);
 
     ui.label(
-        "Script files can be opened with Start from file. \
-         All lines are validated before commands are submitted.",
+        "Script files can be executed with Run script. \
+         The script controls acquisition explicitly \
+         using start and stop commands.",
     );
 
     ui.separator();
@@ -191,6 +192,26 @@ fn show_command_reference(ui: &mut egui::Ui) {
          If acquisition is stopped, recording remains paused \
          until Start is pressed.",
     );
+
+    reference(
+        ui,
+        "stop_recording",
+        "Flushes and closes the current protocol file.",
+    );
+
+    ui.separator();
+    ui.heading("Acquisition");
+
+    reference(ui, "start", "Starts signal acquisition.");
+
+    reference(
+        ui,
+        "stop",
+        "Stops signal acquisition. Active CSV \
+         recording remains open and paused.",
+    );
+
+    reference(ui, "clear", "Removes all signal series and their data.");
 }
 
 fn reference(ui: &mut egui::Ui, syntax: &str, description: &str) {

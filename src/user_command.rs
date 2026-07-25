@@ -12,5 +12,11 @@ pub enum UserCommand {
         current_name: String,
         new_name: String,
     },
+
+    Start,
+    Stop,
+    Clear,
+
     StartRecording,
+    StopRecording,
 }
