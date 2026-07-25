@@ -213,6 +213,40 @@ impl SerialSettingsModel {
             settings.timeout_ms,
         ))
     }
+
+    pub fn write_to_config(&self, config: &mut ConfigSerialSettings) {
+        config.main_port = self.selected_port.clone().unwrap_or_default();
+
+        config.baud_rate = self.settings.baud_rate;
+
+        config.data_bits = match self.settings.data_bits {
+            DataBits::Five => 5,
+            DataBits::Six => 6,
+            DataBits::Seven => 7,
+            DataBits::Eight => 8,
+        };
+
+        config.parity = match self.settings.parity {
+            Parity::None => ConfigParity::None,
+            Parity::Even => ConfigParity::Even,
+            Parity::Odd => ConfigParity::Odd,
+        };
+
+        config.stop_bits = match self.settings.stop_bits {
+            StopBits::One => 1,
+            StopBits::Two => 2,
+        };
+
+        config.flow_control = match self.settings.flow_control {
+            FlowControl::None => ConfigFlowControl::None,
+
+            FlowControl::Software => ConfigFlowControl::Software,
+
+            FlowControl::Hardware => ConfigFlowControl::Hardware,
+        };
+
+        config.timeout_ms = self.settings.timeout_ms;
+    }
 }
 
 impl Default for SerialSettingsModel {

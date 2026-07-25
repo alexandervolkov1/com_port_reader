@@ -5,7 +5,11 @@ use super::{
     device_emulator_model::DeviceEmulatorModel, serial_settings_model::SerialSettingsModel,
 };
 
-use crate::worker::WorkerHandle;
+use crate::{
+    app_config::{AppConfig, ApplicationSettings, CONFIG_PATH},
+    app_log::LogHandle,
+    worker::WorkerHandle,
+};
 
 const BAUD_RATES: &[u32] = &[1_200, 2_400, 4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
 
@@ -40,8 +44,11 @@ pub fn show_window(
     model: &mut SerialSettingsModel,
     emulator: &mut DeviceEmulatorModel,
     worker_handle: &WorkerHandle,
+    config: &mut AppConfig,
+    log: &LogHandle,
 ) {
     let mut open = model.settings_open();
+    let mut save_requested = false;
 
     if !open {
         return;
@@ -53,6 +60,18 @@ pub fn show_window(
         .resizable(false)
         .default_width(420.0)
         .show(context, |ui| {
+            ui.heading("Application");
+
+            show_application_settings(ui, &mut config.application);
+
+            ui.small(
+                "FPS and plot point limit apply immediately. \
+                 Poll interval applies after restarting the \
+                 application.",
+            );
+
+            ui.separator();
+
             ui.heading("COM ports");
 
             show_main_port_controls(ui, model, worker_handle);
@@ -81,10 +100,32 @@ pub fn show_window(
             ui.separator();
 
             show_emulator_controls(ui, model, emulator);
+
+            ui.separator();
+
+            if ui.button("Save to config.toml").clicked() {
+                save_requested = true;
+            }
         });
 
     model.publish_config();
     model.set_settings_open(open);
+
+    if save_requested {
+        model.write_to_config(&mut config.serial);
+
+        config.serial.emulator_port = emulator.selected_port().unwrap_or_default().to_owned();
+
+        match config.save(CONFIG_PATH) {
+            Ok(()) => {
+                log.info(format!("Settings saved to '{CONFIG_PATH}'.",));
+            }
+
+            Err(error) => {
+                log.error(error);
+            }
+        }
+    }
 }
 
 fn show_main_port_controls(
@@ -315,4 +356,42 @@ fn flow_control_label(value: FlowControl) -> &'static str {
 
         FlowControl::Hardware => "Hardware (RTS/CTS)",
     }
+}
+
+fn show_application_settings(ui: &mut egui::Ui, settings: &mut ApplicationSettings) {
+    egui::Grid::new("application_settings_grid")
+        .num_columns(2)
+        .spacing([20.0, 10.0])
+        .show(ui, |ui| {
+            ui.label("FPS:");
+
+            ui.add(
+                egui::DragValue::new(&mut settings.fps)
+                    .range(1..=240)
+                    .speed(1.0),
+            );
+
+            ui.end_row();
+
+            ui.label("Poll interval:");
+
+            ui.add(
+                egui::DragValue::new(&mut settings.poll_interval_ms)
+                    .range(1..=86_400_000)
+                    .speed(10.0)
+                    .suffix(" ms"),
+            );
+
+            ui.end_row();
+
+            ui.label("Plot points per series:");
+
+            ui.add(
+                egui::DragValue::new(&mut settings.max_plot_points_per_series)
+                    .range(4..=100_000)
+                    .speed(100.0),
+            );
+
+            ui.end_row();
+        });
 }

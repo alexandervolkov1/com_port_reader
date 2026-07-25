@@ -75,6 +75,27 @@ impl AppConfig {
 
         Ok(())
     }
+
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), String> {
+        self.validate()?;
+
+        let contents = toml::to_string_pretty(self).map_err(|error| {
+            format!(
+                "Failed to serialize configuration: \
+                     {error}",
+            )
+        })?;
+
+        let path = path.as_ref();
+
+        fs::write(path, contents).map_err(|error| {
+            format!(
+                "Failed to write configuration '{}': \
+                 {error}",
+                path.display(),
+            )
+        })
+    }
 }
 
 impl Default for AppConfig {

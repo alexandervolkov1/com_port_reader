@@ -201,6 +201,8 @@ impl eframe::App for MyApp {
             &mut self.serial_settings,
             &mut self.device_emulator,
             &self.worker_handle,
+            &mut self.config,
+            &self.log_handle,
         );
 
         help_view::show_window(ui.ctx(), &mut self.help);
