@@ -1,6 +1,10 @@
 # Symmetric sine-wave braid
 # Phase step: 45 degrees = pi / 4
 
+stop
+stop_recording
+clear
+
 sin --amp 100 --per 300 --phase 0.000000 --name braid_1
 sin --amp 90  --per 300 --phase 0.785398 --name braid_2
 sin --amp 80  --per 300 --phase 1.570796 --name braid_3
@@ -11,3 +15,5 @@ sin --amp 90  --per 300 --phase 4.712389 --name braid_7
 sin --amp 100 --per 300 --phase 5.497787 --name braid_8
 
 const --value 0 --name center
+
+start

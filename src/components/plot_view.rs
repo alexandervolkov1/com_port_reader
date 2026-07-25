@@ -11,7 +11,6 @@ use eframe::egui;
 use egui_plot::{AxisHints, GridInput, GridMark, HoverPosition, Line, Plot, PlotPoints};
 
 const WINDOW_SECONDS: f64 = 3600.0;
-const DOWNSAMPLE_BUCKETS: usize = 2000;
 const MIN_PANE_HEIGHT: f32 = 80.0;
 
 const Y_AXIS_MIN_WIDTH: f32 = 50.0;
@@ -19,8 +18,13 @@ const Y_LABEL_MIN_SPACING: f32 = 14.0;
 const Y_LABEL_FULL_SPACING: f32 = 20.0;
 const X_LABEL_LEFT_MARGIN: f64 = 0.035;
 
-pub fn show(ui: &mut egui::Ui, plot: &mut PlotModel, series_store: &SeriesStore) {
-    let (min_x, max_x) = prepare_lines(plot, series_store);
+pub fn show(
+    ui: &mut egui::Ui,
+    plot: &mut PlotModel,
+    series_store: &SeriesStore,
+    max_points_per_series: usize,
+) {
+    let (min_x, max_x) = prepare_lines(plot, series_store, max_points_per_series);
 
     let pane_count = plot.panes.len();
 
@@ -245,7 +249,11 @@ fn x_bounds_differ(expected: (f64, f64), actual: (f64, f64)) -> bool {
     (expected.0 - actual.0).abs() > tolerance || (expected.1 - actual.1).abs() > tolerance
 }
 
-fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64) {
+fn prepare_lines(
+    plot: &mut PlotModel,
+    series_store: &SeriesStore,
+    max_points_per_series: usize,
+) -> (f64, f64) {
     series_store.with(|series| {
         let latest_x = series
             .iter()
@@ -319,8 +327,7 @@ fn prepare_lines(plot: &mut PlotModel, series_store: &SeriesStore) -> (f64, f64)
 
                 line.points.clear();
 
-                downsample_min_max_into(visible_samples, DOWNSAMPLE_BUCKETS, &mut line.points);
-
+                downsample_min_max_into(visible_samples, max_points_per_series, &mut line.points);
                 prepared_count += 1;
             }
 

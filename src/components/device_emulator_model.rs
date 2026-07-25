@@ -12,9 +12,14 @@ pub struct DeviceEmulatorModel {
 }
 
 impl DeviceEmulatorModel {
-    pub fn new(log: LogHandle) -> Self {
+    pub fn new(configured_port: &str, log: LogHandle) -> Self {
         Self {
-            selected_port: None,
+            selected_port: if configured_port.is_empty() {
+                None
+            } else {
+                Some(configured_port.to_owned())
+            },
+
             handle: None,
             error: None,
             log,
@@ -39,11 +44,7 @@ impl DeviceEmulatorModel {
             return;
         }
 
-        let selection_is_available = self.selected_port.as_deref().is_some_and(|selected_port| {
-            ports.iter().any(|port| port == selected_port) && Some(selected_port) != client_port
-        });
-
-        if !selection_is_available {
+        if self.selected_port.is_none() {
             self.selected_port = ports
                 .iter()
                 .find(|port| Some(port.as_str()) != client_port)

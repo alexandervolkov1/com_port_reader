@@ -4,18 +4,25 @@ use crate::data::Sample;
 
 pub(super) fn downsample_min_max_into(
     samples: &[Sample],
-    target_buckets: usize,
+    max_points: usize,
     output: &mut Vec<PlotPoint>,
 ) {
-    if samples.len() <= target_buckets || target_buckets < 2 {
+    debug_assert!(max_points >= 4, "max_points must be at least 4",);
+
+    if samples.len() <= max_points {
         output.extend(samples.iter().copied().map(plot_point_from_sample));
 
         return;
     }
 
+    // На каждый блок может приходиться две точки:
+    // минимальная и максимальная. Ещё две позиции
+    // оставляем для первого и последнего отсчётов.
+    let target_buckets = max_points.saturating_sub(2).div_ceil(2).max(1);
+
     let bucket_size = samples.len().div_ceil(target_buckets);
 
-    output.reserve(target_buckets * 2 + 2);
+    output.reserve(max_points);
 
     let mut last_added_index = None;
 
@@ -38,6 +45,7 @@ pub(super) fn downsample_min_max_into(
         }
 
         let minimum_index = bucket_offset + minimum_index;
+
         let maximum_index = bucket_offset + maximum_index;
 
         let (first_index, second_index) = if minimum_index <= maximum_index {
@@ -96,7 +104,7 @@ mod tests {
 
         assert_eq!(
             point_pairs(&points),
-            vec![(1.0, 10.0), (2.0, 20.0), (3.0, 30.0)],
+            vec![(1.0, 10.0), (2.0, 20.0), (3.0, 30.0),],
         );
     }
 
@@ -115,7 +123,7 @@ mod tests {
 
         let mut points = Vec::new();
 
-        downsample_min_max_into(&samples, 2, &mut points);
+        downsample_min_max_into(&samples, 6, &mut points);
 
         assert_eq!(
             point_pairs(&points),
@@ -143,12 +151,25 @@ mod tests {
 
         let mut points = Vec::new();
 
-        downsample_min_max_into(&samples, 2, &mut points);
+        downsample_min_max_into(&samples, 4, &mut points);
 
-        assert_eq!(
-            point_pairs(&points),
-            vec![(0.0, 5.0), (3.0, 5.0), (5.0, 5.0)],
-        );
+        assert_eq!(point_pairs(&points), vec![(0.0, 5.0), (5.0, 5.0)],);
+    }
+
+    #[test]
+    fn does_not_exceed_requested_point_count() {
+        let samples = (0..100)
+            .map(|index| Sample::new(f64::from(index), f64::from(index % 7)))
+            .collect::<Vec<_>>();
+
+        let mut points = Vec::new();
+
+        downsample_min_max_into(&samples, 10, &mut points);
+
+        assert!(points.len() <= 10);
+
+        assert_eq!(points.first().unwrap().x, 0.0);
+        assert_eq!(points.last().unwrap().x, 99.0);
     }
 
     fn point_pairs(points: &[egui_plot::PlotPoint]) -> Vec<(f64, f64)> {

@@ -49,8 +49,8 @@ impl MyApp {
             log_handle.error(warning);
         }
 
-        let device_emulator = DeviceEmulatorModel::new(log_handle.clone());
-
+        let device_emulator =
+            DeviceEmulatorModel::new(&config.serial.emulator_port, log_handle.clone());
         let series = SeriesStore::new();
 
         let (command_sender, command_receiver) = crossbeam_channel::bounded(32);
@@ -61,7 +61,7 @@ impl MyApp {
 
         let serial_config_store = SerialConfigStore::new();
 
-        let serial_settings = SerialSettingsModel::new(serial_config_store.clone());
+        let serial_settings = SerialSettingsModel::new(serial_config_store.clone(), &config.serial);
 
         let worker_config = WorkerConfig::new(config.application.poll_interval());
 
@@ -153,7 +153,12 @@ impl eframe::App for MyApp {
                     .size(Size::exact(SERIES_PANEL_WIDTH))
                     .horizontal(|mut strip| {
                         strip.cell(|ui| {
-                            plot_view::show(ui, &mut self.plot, &self.series);
+                            plot_view::show(
+                                ui,
+                                &mut self.plot,
+                                &self.series,
+                                self.config.application.max_plot_points_per_series,
+                            );
                         });
 
                         strip.cell(|ui| {
@@ -178,7 +183,12 @@ impl eframe::App for MyApp {
                     .size(Size::exact(TOGGLE_WIDTH))
                     .horizontal(|mut strip| {
                         strip.cell(|ui| {
-                            plot_view::show(ui, &mut self.plot, &self.series);
+                            plot_view::show(
+                                ui,
+                                &mut self.plot,
+                                &self.series,
+                                self.config.application.max_plot_points_per_series,
+                            );
                         });
 
                         strip.cell(|ui| {

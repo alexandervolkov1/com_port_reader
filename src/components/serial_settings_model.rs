@@ -1,6 +1,10 @@
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 use crate::{
+    app_config::{
+        SerialFlowControl as ConfigFlowControl, SerialParity as ConfigParity,
+        SerialPortSettings as ConfigSerialSettings,
+    },
     serial_connection::{SerialConfigStore, SerialPortConfig},
     worker::WorkerHandle,
 };
@@ -13,6 +17,44 @@ pub struct SerialSettings {
     pub stop_bits: StopBits,
     pub flow_control: FlowControl,
     pub timeout_ms: u64,
+}
+
+impl From<&ConfigSerialSettings> for SerialSettings {
+    fn from(config: &ConfigSerialSettings) -> Self {
+        Self {
+            baud_rate: config.baud_rate,
+
+            data_bits: match config.data_bits {
+                5 => DataBits::Five,
+                6 => DataBits::Six,
+                7 => DataBits::Seven,
+                8 => DataBits::Eight,
+
+                _ => DataBits::Eight,
+            },
+
+            parity: match config.parity {
+                ConfigParity::None => Parity::None,
+                ConfigParity::Even => Parity::Even,
+                ConfigParity::Odd => Parity::Odd,
+            },
+
+            stop_bits: match config.stop_bits {
+                2 => StopBits::Two,
+                _ => StopBits::One,
+            },
+
+            flow_control: match config.flow_control {
+                ConfigFlowControl::None => FlowControl::None,
+
+                ConfigFlowControl::Software => FlowControl::Software,
+
+                ConfigFlowControl::Hardware => FlowControl::Hardware,
+            },
+
+            timeout_ms: config.timeout_ms,
+        }
+    }
 }
 
 impl Default for SerialSettings {
@@ -38,17 +80,20 @@ pub struct SerialSettingsModel {
 }
 
 impl SerialSettingsModel {
-    pub fn new(config_store: SerialConfigStore) -> Self {
+    pub fn new(config_store: SerialConfigStore, config: &ConfigSerialSettings) -> Self {
+        let selected_port = configured_port(&config.main_port);
+
         let mut model = Self {
             ports: Vec::new(),
-            selected_port: None,
-            settings: SerialSettings::default(),
+            selected_port,
+            settings: SerialSettings::from(config),
             settings_open: false,
             error: None,
             config_store,
         };
 
         model.refresh_ports();
+
         model
     }
 
@@ -60,12 +105,7 @@ impl SerialSettingsModel {
                 self.ports.sort();
                 self.ports.dedup();
 
-                let selection_is_available = self
-                    .selected_port
-                    .as_ref()
-                    .is_some_and(|selected| self.ports.contains(selected));
-
-                if !selection_is_available {
+                if self.selected_port.is_none() {
                     self.selected_port = self.ports.first().cloned();
                 }
 
@@ -74,7 +114,6 @@ impl SerialSettingsModel {
 
             Err(error) => {
                 self.ports.clear();
-                self.selected_port = None;
 
                 self.error = Some(format!("Failed to enumerate COM ports: {error}",));
             }
@@ -123,10 +162,29 @@ impl SerialSettingsModel {
     pub fn test_connection(&mut self, worker_handle: &WorkerHandle) {
         let Some(config) = self.serial_config() else {
             self.error = Some("Select a COM port first.".to_owned());
+
             return;
         };
 
         match worker_handle.test_serial_port(config) {
+            Ok(()) => {
+                self.error = None;
+            }
+
+            Err(error) => {
+                self.error = Some(error.to_string());
+            }
+        }
+    }
+
+    pub fn test_command(&mut self, worker_handle: &WorkerHandle, command: &str) {
+        let Some(config) = self.serial_config() else {
+            self.error = Some("Select a COM port first.".to_owned());
+
+            return;
+        };
+
+        match worker_handle.test_serial_command(config, command.to_owned()) {
             Ok(()) => {
                 self.error = None;
             }
@@ -155,27 +213,59 @@ impl SerialSettingsModel {
             settings.timeout_ms,
         ))
     }
-
-    pub fn test_command(&mut self, worker_handle: &WorkerHandle, command: &str) {
-        let Some(config) = self.serial_config() else {
-            self.error = Some("Select a COM port first.".to_owned());
-            return;
-        };
-
-        match worker_handle.test_serial_command(config, command.to_owned()) {
-            Ok(()) => {
-                self.error = None;
-            }
-
-            Err(error) => {
-                self.error = Some(error.to_string());
-            }
-        }
-    }
 }
 
 impl Default for SerialSettingsModel {
     fn default() -> Self {
-        Self::new(SerialConfigStore::new())
+        Self::new(SerialConfigStore::new(), &ConfigSerialSettings::default())
+    }
+}
+
+fn configured_port(port: &str) -> Option<String> {
+    if port.is_empty() {
+        None
+    } else {
+        Some(port.to_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serialport::{DataBits, FlowControl, Parity, StopBits};
+
+    use super::SerialSettings;
+    use crate::app_config::{SerialFlowControl, SerialParity, SerialPortSettings};
+
+    #[test]
+    fn converts_configuration_to_runtime_settings() {
+        let config = SerialPortSettings {
+            main_port: "COM3".to_owned(),
+            emulator_port: "COM4".to_owned(),
+            baud_rate: 115_200,
+            data_bits: 7,
+            parity: SerialParity::Even,
+            stop_bits: 2,
+            flow_control: SerialFlowControl::Hardware,
+            timeout_ms: 500,
+        };
+
+        let settings = SerialSettings::from(&config);
+
+        assert_eq!(settings.baud_rate, 115_200);
+        assert_eq!(settings.data_bits, DataBits::Seven);
+        assert_eq!(settings.parity, Parity::Even);
+        assert_eq!(settings.stop_bits, StopBits::Two);
+        assert_eq!(settings.flow_control, FlowControl::Hardware,);
+        assert_eq!(settings.timeout_ms, 500);
+    }
+
+    #[test]
+    fn empty_configured_port_is_not_selected() {
+        assert_eq!(super::configured_port(""), None);
+    }
+
+    #[test]
+    fn preserves_configured_port() {
+        assert_eq!(super::configured_port("COM3"), Some("COM3".to_owned()),);
     }
 }
