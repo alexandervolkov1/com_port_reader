@@ -6,17 +6,21 @@ pub const CONFIG_PATH: &str = "config.toml";
 
 const DEFAULT_FPS: u32 = 30;
 const DEFAULT_POLL_INTERVAL_MS: u64 = 1_000;
+const DEFAULT_MAX_PLOT_POINTS_PER_SERIES: usize = 4_000;
+
 const DEFAULT_BAUD_RATE: u32 = 9_600;
 const DEFAULT_DATA_BITS: u8 = 8;
 const DEFAULT_STOP_BITS: u8 = 1;
 const DEFAULT_TIMEOUT_MS: u64 = 250;
 
+const MIN_PLOT_POINTS_PER_SERIES: usize = 4;
+const MAX_PLOT_POINTS_PER_SERIES: usize = 100_000;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AppConfig {
     pub application: ApplicationSettings,
-    pub main_serial: SerialPortSettings,
-    pub emulator_serial: SerialPortSettings,
+    pub serial: SerialPortSettings,
 }
 
 impl AppConfig {
@@ -67,19 +71,7 @@ impl AppConfig {
 
     fn validate(&self) -> Result<(), String> {
         self.application.validate()?;
-
-        validate_serial("main_serial", &self.main_serial)?;
-
-        validate_serial("emulator_serial", &self.emulator_serial)?;
-
-        let main_port = self.main_serial.port.trim();
-        let emulator_port = self.emulator_serial.port.trim();
-
-        if !main_port.is_empty() && main_port.eq_ignore_ascii_case(emulator_port) {
-            return Err("main_serial.port and \
-                 emulator_serial.port must be different"
-                .to_owned());
-        }
+        self.serial.validate()?;
 
         Ok(())
     }
@@ -89,10 +81,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             application: ApplicationSettings::default(),
-
-            main_serial: SerialPortSettings::default(),
-
-            emulator_serial: SerialPortSettings::default(),
+            serial: SerialPortSettings::default(),
         }
     }
 }
@@ -102,6 +91,7 @@ impl Default for AppConfig {
 pub struct ApplicationSettings {
     pub fps: u32,
     pub poll_interval_ms: u64,
+    pub max_plot_points_per_series: usize,
 }
 
 impl ApplicationSettings {
@@ -115,15 +105,24 @@ impl ApplicationSettings {
 
     fn validate(&self) -> Result<(), String> {
         if !(1..=240).contains(&self.fps) {
-            return Err("application.fps must be between \
-                 1 and 240"
-                .to_owned());
+            return Err("application.fps must be between 1 and 240".to_owned());
         }
 
         if self.poll_interval_ms == 0 {
-            return Err("application.poll_interval_ms must \
-                 be greater than zero"
+            return Err("application.poll_interval_ms must be \
+                 greater than zero"
                 .to_owned());
+        }
+
+        if !(MIN_PLOT_POINTS_PER_SERIES..=MAX_PLOT_POINTS_PER_SERIES)
+            .contains(&self.max_plot_points_per_series)
+        {
+            return Err(format!(
+                "application.max_plot_points_per_series \
+                 must be between \
+                 {MIN_PLOT_POINTS_PER_SERIES} and \
+                 {MAX_PLOT_POINTS_PER_SERIES}",
+            ));
         }
 
         Ok(())
@@ -135,6 +134,7 @@ impl Default for ApplicationSettings {
         Self {
             fps: DEFAULT_FPS,
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
+            max_plot_points_per_series: DEFAULT_MAX_PLOT_POINTS_PER_SERIES,
         }
     }
 }
@@ -142,7 +142,8 @@ impl Default for ApplicationSettings {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SerialPortSettings {
-    pub port: String,
+    pub main_port: String,
+    pub emulator_port: String,
     pub baud_rate: u32,
     pub data_bits: u8,
     pub parity: SerialParity,
@@ -151,10 +152,43 @@ pub struct SerialPortSettings {
     pub timeout_ms: u64,
 }
 
+impl SerialPortSettings {
+    fn validate(&self) -> Result<(), String> {
+        validate_port_name("serial.main_port", &self.main_port)?;
+
+        validate_port_name("serial.emulator_port", &self.emulator_port)?;
+
+        if !self.main_port.is_empty() && self.main_port.eq_ignore_ascii_case(&self.emulator_port) {
+            return Err("serial.main_port and serial.emulator_port \
+                 must be different"
+                .to_owned());
+        }
+
+        if self.baud_rate == 0 {
+            return Err("serial.baud_rate must be greater than zero".to_owned());
+        }
+
+        if !matches!(self.data_bits, 5 | 6 | 7 | 8) {
+            return Err("serial.data_bits must be 5, 6, 7 or 8".to_owned());
+        }
+
+        if !matches!(self.stop_bits, 1 | 2) {
+            return Err("serial.stop_bits must be 1 or 2".to_owned());
+        }
+
+        if self.timeout_ms == 0 {
+            return Err("serial.timeout_ms must be greater than zero".to_owned());
+        }
+
+        Ok(())
+    }
+}
+
 impl Default for SerialPortSettings {
     fn default() -> Self {
         Self {
-            port: String::new(),
+            main_port: String::new(),
+            emulator_port: String::new(),
             baud_rate: DEFAULT_BAUD_RATE,
             data_bits: DEFAULT_DATA_BITS,
             parity: SerialParity::None,
@@ -183,37 +217,9 @@ pub enum SerialFlowControl {
     Hardware,
 }
 
-fn validate_serial(section: &str, settings: &SerialPortSettings) -> Result<(), String> {
-    if settings.port.trim() != settings.port {
-        return Err(format!(
-            "{section}.port cannot begin or end \
-             with whitespace",
-        ));
-    }
-
-    if settings.baud_rate == 0 {
-        return Err(format!(
-            "{section}.baud_rate must be greater \
-             than zero",
-        ));
-    }
-
-    if !matches!(settings.data_bits, 5 | 6 | 7 | 8) {
-        return Err(format!(
-            "{section}.data_bits must be \
-             5, 6, 7 or 8",
-        ));
-    }
-
-    if !matches!(settings.stop_bits, 1 | 2) {
-        return Err(format!("{section}.stop_bits must be 1 or 2",));
-    }
-
-    if settings.timeout_ms == 0 {
-        return Err(format!(
-            "{section}.timeout_ms must be greater \
-             than zero",
-        ));
+fn validate_port_name(field: &str, port: &str) -> Result<(), String> {
+    if port.trim() != port {
+        return Err(format!("{field} cannot begin or end with whitespace",));
     }
 
     Ok(())
@@ -228,16 +234,13 @@ mod tests {
         let config = AppConfig::default();
 
         assert_eq!(config.application.fps, 30);
-
         assert_eq!(config.application.poll_interval_ms, 1_000,);
+        assert_eq!(config.application.max_plot_points_per_series, 4_000,);
 
-        assert_eq!(config.main_serial.baud_rate, 9_600,);
-
-        assert_eq!(config.main_serial.data_bits, 8,);
-
-        assert_eq!(config.main_serial.parity, SerialParity::None,);
-
-        assert_eq!(config.main_serial.flow_control, SerialFlowControl::None,);
+        assert_eq!(config.serial.baud_rate, 9_600);
+        assert_eq!(config.serial.data_bits, 8);
+        assert_eq!(config.serial.parity, SerialParity::None,);
+        assert_eq!(config.serial.flow_control, SerialFlowControl::None,);
     }
 
     #[test]
@@ -251,18 +254,18 @@ fps = 60
         .unwrap();
 
         assert_eq!(config.application.fps, 60);
-
         assert_eq!(config.application.poll_interval_ms, 1_000,);
-
-        assert_eq!(config.main_serial.baud_rate, 9_600,);
+        assert_eq!(config.application.max_plot_points_per_series, 4_000,);
+        assert_eq!(config.serial.baud_rate, 9_600);
     }
 
     #[test]
     fn parses_serial_settings() {
         let config = AppConfig::parse(
             "\
-[main_serial]
-port = \"COM3\"
+[serial]
+main_port = \"COM3\"
+emulator_port = \"COM4\"
 baud_rate = 115200
 data_bits = 7
 parity = \"even\"
@@ -273,13 +276,11 @@ timeout_ms = 500
         )
         .unwrap();
 
-        assert_eq!(config.main_serial.port, "COM3",);
-
-        assert_eq!(config.main_serial.baud_rate, 115_200,);
-
-        assert_eq!(config.main_serial.parity, SerialParity::Even,);
-
-        assert_eq!(config.main_serial.flow_control, SerialFlowControl::Hardware,);
+        assert_eq!(config.serial.main_port, "COM3");
+        assert_eq!(config.serial.emulator_port, "COM4");
+        assert_eq!(config.serial.baud_rate, 115_200);
+        assert_eq!(config.serial.parity, SerialParity::Even,);
+        assert_eq!(config.serial.flow_control, SerialFlowControl::Hardware,);
     }
 
     #[test]
@@ -293,8 +294,24 @@ poll_interval_ms = 0
 
         assert_eq!(
             result.unwrap_err(),
-            "application.poll_interval_ms must \
-             be greater than zero",
+            "application.poll_interval_ms must be \
+             greater than zero",
+        );
+    }
+
+    #[test]
+    fn rejects_too_few_plot_points() {
+        let result = AppConfig::parse(
+            "\
+[application]
+max_plot_points_per_series = 3
+",
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            "application.max_plot_points_per_series \
+             must be between 4 and 100000",
         );
     }
 
@@ -302,18 +319,32 @@ poll_interval_ms = 0
     fn rejects_same_serial_ports() {
         let result = AppConfig::parse(
             "\
-[main_serial]
-port = \"COM3\"
-
-[emulator_serial]
-port = \"com3\"
+[serial]
+main_port = \"COM3\"
+emulator_port = \"com3\"
 ",
         );
 
         assert_eq!(
             result.unwrap_err(),
-            "main_serial.port and \
-             emulator_serial.port must be different",
+            "serial.main_port and serial.emulator_port \
+             must be different",
+        );
+    }
+
+    #[test]
+    fn rejects_whitespace_around_port() {
+        let result = AppConfig::parse(
+            "\
+[serial]
+main_port = \" COM3\"
+",
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            "serial.main_port cannot begin or end \
+             with whitespace",
         );
     }
 
