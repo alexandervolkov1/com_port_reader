@@ -109,7 +109,11 @@ impl eframe::App for MyApp {
         self.log.poll();
 
         egui::Panel::top("application_menu").show(ui, |ui| {
-            help_view::show_menu(ui, &mut self.help);
+            egui::MenuBar::new().ui(ui, |ui| {
+                serial_settings_view::show_menu_button(ui, &mut self.serial_settings);
+
+                help_view::show_menu_button(ui, &mut self.help);
+            });
         });
 
         egui::Panel::bottom("application_log")
@@ -133,15 +137,6 @@ impl eframe::App for MyApp {
                 &self.command,
                 &mut self.controls,
                 &self.log_handle,
-            );
-
-            ui.separator();
-
-            serial_settings_view::show(
-                ui,
-                &mut self.serial_settings,
-                &mut self.device_emulator,
-                &self.worker_handle,
             );
 
             ui.separator();
@@ -200,6 +195,13 @@ impl eframe::App for MyApp {
             }
             series_editor_view::show(ui.ctx(), &mut self.series_editor, &mut self.command);
         });
+
+        serial_settings_view::show_window(
+            ui.ctx(),
+            &mut self.serial_settings,
+            &mut self.device_emulator,
+            &self.worker_handle,
+        );
 
         help_view::show_window(ui.ctx(), &mut self.help);
 

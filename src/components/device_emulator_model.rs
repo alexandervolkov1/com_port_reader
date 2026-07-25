@@ -44,11 +44,15 @@ impl DeviceEmulatorModel {
             return;
         }
 
-        if self.selected_port.is_none() {
+        let conflicts_with_client = self.selected_port.as_deref() == client_port;
+
+        if self.selected_port.is_none() || conflicts_with_client {
             self.selected_port = ports
                 .iter()
                 .find(|port| Some(port.as_str()) != client_port)
                 .cloned();
+
+            self.error = None;
         }
     }
 

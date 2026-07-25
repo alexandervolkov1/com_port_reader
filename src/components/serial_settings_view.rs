@@ -4,6 +4,7 @@ use serialport::{DataBits, FlowControl, Parity, StopBits};
 use super::{
     device_emulator_model::DeviceEmulatorModel, serial_settings_model::SerialSettingsModel,
 };
+
 use crate::worker::WorkerHandle;
 
 const BAUD_RATES: &[u32] = &[1_200, 2_400, 4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
@@ -25,18 +26,80 @@ const FLOW_CONTROLS: &[FlowControl] = &[
     FlowControl::Hardware,
 ];
 
-pub fn show(
-    ui: &mut egui::Ui,
+pub fn show_menu_button(ui: &mut egui::Ui, model: &mut SerialSettingsModel) {
+    ui.menu_button("Settings", |ui| {
+        if ui.button("Open settings...").clicked() {
+            model.open_settings();
+            ui.close();
+        }
+    });
+}
+
+pub fn show_window(
+    context: &egui::Context,
     model: &mut SerialSettingsModel,
     emulator: &mut DeviceEmulatorModel,
     worker_handle: &WorkerHandle,
 ) {
+    let mut open = model.settings_open();
+
+    if !open {
+        return;
+    }
+
+    egui::Window::new("Settings")
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .default_width(420.0)
+        .show(context, |ui| {
+            ui.heading("COM ports");
+
+            show_main_port_controls(ui, model, worker_handle);
+            emulator.synchronize_ports(model.ports(), model.selected_port());
+
+            if let Some(error) = model.error() {
+                ui.colored_label(egui::Color32::RED, error);
+            }
+
+            ui.separator();
+
+            ui.heading("Serial line");
+
+            show_line_settings(ui, model);
+
+            ui.horizontal(|ui| {
+                if ui.button("Test connection").clicked() {
+                    model.test_connection(worker_handle);
+                }
+
+                if ui.button("Test walk").clicked() {
+                    model.test_command(worker_handle, "walk");
+                }
+            });
+
+            ui.separator();
+
+            show_emulator_controls(ui, model, emulator);
+        });
+
+    model.publish_config();
+    model.set_settings_open(open);
+}
+
+fn show_main_port_controls(
+    ui: &mut egui::Ui,
+    model: &mut SerialSettingsModel,
+    worker_handle: &WorkerHandle,
+) {
     ui.horizontal(|ui| {
-        ui.label("COM port:");
+        ui.label("Application port:");
 
         let mut selected_port = model.selected_port().map(str::to_owned);
 
-        let selected_text = selected_port.as_deref().unwrap_or("No ports found");
+        let selected_text = selected_port
+            .clone()
+            .unwrap_or_else(|| "No port selected".to_owned());
 
         egui::ComboBox::from_id_salt("serial_port_selector")
             .selected_text(selected_text)
@@ -50,156 +113,110 @@ pub fn show(
             model.set_selected_port(selected_port);
         }
 
-        if ui.button("Refresh ports").clicked() {
+        if ui.button("Refresh").clicked() {
             model.refresh_ports();
         }
 
-        if ui.button("COM settings").clicked() {
-            model.open_settings();
-        }
-
-        if ui.button("Test connection").clicked() {
+        if ui.button("Test").clicked() {
             model.test_connection(worker_handle);
         }
     });
-
-    if let Some(error) = model.error() {
-        ui.colored_label(egui::Color32::RED, error);
-    }
-
-    emulator.synchronize_ports(model.ports(), model.selected_port());
-
-    show_settings_window(ui.ctx(), model, emulator, worker_handle);
 }
 
-fn show_settings_window(
-    context: &egui::Context,
-    model: &mut SerialSettingsModel,
-    emulator: &mut DeviceEmulatorModel,
-    worker_handle: &WorkerHandle,
-) {
-    let mut open = model.settings_open();
+fn show_line_settings(ui: &mut egui::Ui, model: &mut SerialSettingsModel) {
+    let settings = model.settings_mut();
 
-    if !open {
-        return;
-    }
+    egui::Grid::new("serial_line_settings_grid")
+        .num_columns(2)
+        .spacing([20.0, 10.0])
+        .show(ui, |ui| {
+            ui.label("Baud rate:");
 
-    egui::Window::new("COM settings")
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .default_width(320.0)
-        .show(context, |ui| {
-            let settings = model.settings_mut();
-
-            egui::Grid::new("com_settings_grid")
-                .num_columns(2)
-                .spacing([20.0, 10.0])
-                .show(ui, |ui| {
-                    ui.label("Baud rate:");
-
-                    egui::ComboBox::from_id_salt("com_baud_rate")
-                        .selected_text(settings.baud_rate.to_string())
-                        .show_ui(ui, |ui| {
-                            for &baud_rate in BAUD_RATES {
-                                ui.selectable_value(
-                                    &mut settings.baud_rate,
-                                    baud_rate,
-                                    baud_rate.to_string(),
-                                );
-                            }
-                        });
-
-                    ui.end_row();
-
-                    ui.label("Data bits:");
-
-                    egui::ComboBox::from_id_salt("com_data_bits")
-                        .selected_text(data_bits_label(settings.data_bits))
-                        .show_ui(ui, |ui| {
-                            for &data_bits in DATA_BITS {
-                                ui.selectable_value(
-                                    &mut settings.data_bits,
-                                    data_bits,
-                                    data_bits_label(data_bits),
-                                );
-                            }
-                        });
-
-                    ui.end_row();
-
-                    ui.label("Parity:");
-
-                    egui::ComboBox::from_id_salt("com_parity")
-                        .selected_text(parity_label(settings.parity))
-                        .show_ui(ui, |ui| {
-                            for &parity in PARITIES {
-                                ui.selectable_value(
-                                    &mut settings.parity,
-                                    parity,
-                                    parity_label(parity),
-                                );
-                            }
-                        });
-
-                    ui.end_row();
-
-                    ui.label("Stop bits:");
-
-                    egui::ComboBox::from_id_salt("com_stop_bits")
-                        .selected_text(stop_bits_label(settings.stop_bits))
-                        .show_ui(ui, |ui| {
-                            for &stop_bits in STOP_BITS {
-                                ui.selectable_value(
-                                    &mut settings.stop_bits,
-                                    stop_bits,
-                                    stop_bits_label(stop_bits),
-                                );
-                            }
-                        });
-
-                    ui.end_row();
-
-                    ui.label("Flow control:");
-
-                    egui::ComboBox::from_id_salt("com_flow_control")
-                        .selected_text(flow_control_label(settings.flow_control))
-                        .show_ui(ui, |ui| {
-                            for &flow_control in FLOW_CONTROLS {
-                                ui.selectable_value(
-                                    &mut settings.flow_control,
-                                    flow_control,
-                                    flow_control_label(flow_control),
-                                );
-                            }
-                        });
-
-                    ui.end_row();
-
-                    ui.label("Read timeout:");
-
-                    ui.add(
-                        egui::DragValue::new(&mut settings.timeout_ms)
-                            .range(1..=60_000)
-                            .speed(10.0)
-                            .suffix(" ms"),
-                    );
-
-                    ui.end_row();
+            egui::ComboBox::from_id_salt("com_baud_rate")
+                .selected_text(settings.baud_rate.to_string())
+                .show_ui(ui, |ui| {
+                    for &baud_rate in BAUD_RATES {
+                        ui.selectable_value(
+                            &mut settings.baud_rate,
+                            baud_rate,
+                            baud_rate.to_string(),
+                        );
+                    }
                 });
 
-            ui.separator();
+            ui.end_row();
 
-            if ui.button("Test walk").clicked() {
-                model.test_command(worker_handle, "walk");
-            }
+            ui.label("Data bits:");
 
-            ui.separator();
-            show_emulator_controls(ui, model, emulator);
+            egui::ComboBox::from_id_salt("com_data_bits")
+                .selected_text(data_bits_label(settings.data_bits))
+                .show_ui(ui, |ui| {
+                    for &data_bits in DATA_BITS {
+                        ui.selectable_value(
+                            &mut settings.data_bits,
+                            data_bits,
+                            data_bits_label(data_bits),
+                        );
+                    }
+                });
+
+            ui.end_row();
+
+            ui.label("Parity:");
+
+            egui::ComboBox::from_id_salt("com_parity")
+                .selected_text(parity_label(settings.parity))
+                .show_ui(ui, |ui| {
+                    for &parity in PARITIES {
+                        ui.selectable_value(&mut settings.parity, parity, parity_label(parity));
+                    }
+                });
+
+            ui.end_row();
+
+            ui.label("Stop bits:");
+
+            egui::ComboBox::from_id_salt("com_stop_bits")
+                .selected_text(stop_bits_label(settings.stop_bits))
+                .show_ui(ui, |ui| {
+                    for &stop_bits in STOP_BITS {
+                        ui.selectable_value(
+                            &mut settings.stop_bits,
+                            stop_bits,
+                            stop_bits_label(stop_bits),
+                        );
+                    }
+                });
+
+            ui.end_row();
+
+            ui.label("Flow control:");
+
+            egui::ComboBox::from_id_salt("com_flow_control")
+                .selected_text(flow_control_label(settings.flow_control))
+                .show_ui(ui, |ui| {
+                    for &flow_control in FLOW_CONTROLS {
+                        ui.selectable_value(
+                            &mut settings.flow_control,
+                            flow_control,
+                            flow_control_label(flow_control),
+                        );
+                    }
+                });
+
+            ui.end_row();
+
+            ui.label("Read timeout:");
+
+            ui.add(
+                egui::DragValue::new(&mut settings.timeout_ms)
+                    .range(1..=60_000)
+                    .speed(10.0)
+                    .suffix(" ms"),
+            );
+
+            ui.end_row();
         });
-
-    model.publish_config();
-    model.set_settings_open(open);
 }
 
 fn show_emulator_controls(
@@ -207,7 +224,7 @@ fn show_emulator_controls(
     serial: &SerialSettingsModel,
     emulator: &mut DeviceEmulatorModel,
 ) {
-    ui.label("Device emulator");
+    ui.heading("Device emulator");
 
     ui.horizontal(|ui| {
         ui.label("Emulator port:");
@@ -216,7 +233,7 @@ fn show_emulator_controls(
 
         let selected_text = selected_port
             .clone()
-            .unwrap_or_else(|| "No free ports".to_owned());
+            .unwrap_or_else(|| "No port selected".to_owned());
 
         ui.add_enabled_ui(!emulator.is_running(), |ui| {
             egui::ComboBox::from_id_salt("device_emulator_port")
@@ -253,8 +270,11 @@ fn show_emulator_controls(
         {
             emulator.stop();
         }
-        if let Some(error) = emulator.error() {
-            ui.colored_label(egui::Color32::RED, error);
+
+        if emulator.is_running() {
+            ui.colored_label(egui::Color32::from_rgb(0, 150, 0), "● Running");
+        } else {
+            ui.colored_label(egui::Color32::GRAY, "■ Stopped");
         }
     });
 
@@ -290,7 +310,9 @@ fn stop_bits_label(value: StopBits) -> &'static str {
 fn flow_control_label(value: FlowControl) -> &'static str {
     match value {
         FlowControl::None => "None",
+
         FlowControl::Software => "Software (XON/XOFF)",
+
         FlowControl::Hardware => "Hardware (RTS/CTS)",
     }
 }

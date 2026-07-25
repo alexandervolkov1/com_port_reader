@@ -2,14 +2,12 @@ use eframe::egui;
 
 use super::help_model::HelpModel;
 
-pub fn show_menu(ui: &mut egui::Ui, model: &mut HelpModel) {
-    egui::MenuBar::new().ui(ui, |ui| {
-        ui.menu_button("Help", |ui| {
-            if ui.button("Command reference").clicked() {
-                model.open_command_reference();
-                ui.close();
-            }
-        });
+pub fn show_menu_button(ui: &mut egui::Ui, model: &mut HelpModel) {
+    ui.menu_button("Help", |ui| {
+        if ui.button("Command reference").clicked() {
+            model.open_command_reference();
+            ui.close();
+        }
     });
 }
 
