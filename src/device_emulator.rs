@@ -98,7 +98,6 @@ impl RandomWalk {
     }
 
     fn advance(&mut self, step: f64) -> f64 {
-        // Each walk owns its own xorshift64 state.
         self.random_state ^= self.random_state << 13;
         self.random_state ^= self.random_state >> 7;
         self.random_state ^= self.random_state << 17;
@@ -137,7 +136,6 @@ fn seed_for_walk(base_seed: u64, walk_id: &str) -> u64 {
         seed = seed.wrapping_mul(0x0000_0100_0000_01b3);
     }
 
-    // xorshift64 must not start from zero.
     seed | 1
 }
 
@@ -150,7 +148,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_plain_get_backward_compatible() {
+    fn keeps_plain_walk_compatible() {
         let mut emulator = DeviceEmulator::with_seed(1);
 
         let mut previous_value = 0.0;
@@ -171,7 +169,7 @@ mod tests {
         let mut previous_value = 0.0;
 
         for _ in 0..100 {
-            let current_value = response_value(&mut emulator, "get slow 0.25");
+            let current_value = response_value(&mut emulator, "walk slow 0.25");
 
             assert_eq!((current_value - previous_value).abs(), 0.25,);
 
@@ -183,17 +181,17 @@ mod tests {
     fn keeps_walk_random_states_independent() {
         let mut interleaved = DeviceEmulator::with_seed(42);
 
-        let first_before = response_value(&mut interleaved, "get first 2");
+        let first_before = response_value(&mut interleaved, "walk first 2");
 
-        response_value(&mut interleaved, "get second 0.5");
+        response_value(&mut interleaved, "walk second 0.5");
 
-        let first_after = response_value(&mut interleaved, "get first 2");
+        let first_after = response_value(&mut interleaved, "walk first 2");
 
         let mut isolated = DeviceEmulator::with_seed(42);
 
-        let expected_before = response_value(&mut isolated, "get first 2");
+        let expected_before = response_value(&mut isolated, "walk first 2");
 
-        let expected_after = response_value(&mut isolated, "get first 2");
+        let expected_after = response_value(&mut isolated, "walk first 2");
 
         assert_eq!(first_before, expected_before);
         assert_eq!(first_after, expected_after);
@@ -204,9 +202,13 @@ mod tests {
     fn rejects_invalid_step() {
         let mut emulator = DeviceEmulator::with_seed(1);
 
-        assert!(emulator.handle_command("get walk 0").starts_with("error"));
+        assert!(emulator.handle_command("walk test 0").starts_with("error"));
 
-        assert!(emulator.handle_command("get walk NaN").starts_with("error"));
+        assert!(
+            emulator
+                .handle_command("walk test NaN")
+                .starts_with("error")
+        );
     }
 
     #[test]
@@ -214,7 +216,7 @@ mod tests {
         let mut emulator = DeviceEmulator::with_seed(1);
 
         assert_eq!(
-            emulator.handle_command("get walk 1 extra"),
+            emulator.handle_command("walk test 1 extra",),
             "error unexpected argument: extra",
         );
     }

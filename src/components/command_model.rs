@@ -1,9 +1,9 @@
 use crossbeam_channel::Receiver;
 
-use crate::data::SeriesId;
-
 use crate::{
     app_log::LogHandle,
+    components::controls_model::ControlsModel,
+    data::{NewSeries, SeriesId},
     dsl::parse_command,
     user_command::UserCommand,
     worker::{WorkerEvent, WorkerHandle, WorkerHandleError},
@@ -46,10 +46,10 @@ impl CommandModel {
         }
     }
 
-    pub fn submit(&mut self) {
+    pub fn submit(&mut self, controls: &mut ControlsModel) {
         match parse_command(&self.command_buffer) {
             Ok(command) => {
-                self.execute(command);
+                self.execute(command, controls);
             }
 
             Err(error) => {
@@ -60,20 +60,30 @@ impl CommandModel {
         self.command_buffer.clear();
     }
 
-    pub fn execute(&mut self, command: UserCommand) {
-        let result = match command {
-            UserCommand::Add(new_series) => self.worker_handle.add_series(new_series),
+    pub fn execute(&self, command: UserCommand, controls: &mut ControlsModel) {
+        match command {
+            UserCommand::Add(new_series) => {
+                self.add_series(new_series);
+            }
 
-            UserCommand::Delete { name } => self.worker_handle.remove_series_by_name(name),
+            UserCommand::Delete { name } => {
+                if let Err(error) = self.worker_handle.remove_series_by_name(name) {
+                    self.set_worker_error(error);
+                }
+            }
 
             UserCommand::Rename {
                 current_name,
                 new_name,
-            } => self.worker_handle.rename_series(current_name, new_name),
-        };
+            } => {
+                if let Err(error) = self.worker_handle.rename_series(current_name, new_name) {
+                    self.set_worker_error(error);
+                }
+            }
 
-        if let Err(error) = result {
-            self.set_worker_error(error);
+            UserCommand::StartRecording => {
+                controls.start_recording();
+            }
         }
     }
 
@@ -91,6 +101,12 @@ impl CommandModel {
 
     fn set_worker_error(&self, error: WorkerHandleError) {
         self.log.error(format!("Failed to send command: {error}",));
+    }
+
+    pub fn add_series(&self, new_series: NewSeries) {
+        if let Err(error) = self.worker_handle.add_series(new_series) {
+            self.set_worker_error(error);
+        }
     }
 }
 

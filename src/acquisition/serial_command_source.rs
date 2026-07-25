@@ -157,17 +157,17 @@ mod tests {
     }
 
     #[test]
-    fn formats_keyed_get_request() {
+    fn formats_keyed_walk_request() {
         let request = serial_request(SeriesId::new(42), "walk", 0.25);
 
-        assert_eq!(request, "get 42 0.25");
+        assert_eq!(request, "walk 42 0.25");
     }
 
     #[test]
-    fn normalizes_get_command_case() {
+    fn normalizes_walk_command_case() {
         let request = serial_request(SeriesId::new(7), "WALK", 2.0);
 
-        assert_eq!(request, "get 7 2");
+        assert_eq!(request, "walk 7 2");
     }
 
     #[test]

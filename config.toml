@@ -1,0 +1,21 @@
+[application]
+fps = 30
+poll_interval_ms = 1000
+
+[main_serial]
+port = ""
+baud_rate = 9600
+data_bits = 8
+parity = "none"
+stop_bits = 1
+flow_control = "none"
+timeout_ms = 250
+
+[emulator_serial]
+port = ""
+baud_rate = 9600
+data_bits = 8
+parity = "none"
+stop_bits = 1
+flow_control = "none"
+timeout_ms = 250

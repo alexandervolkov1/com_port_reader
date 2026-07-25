@@ -11,7 +11,7 @@ pub fn show(
     ui: &mut egui::Ui,
     model: &mut ScriptModel,
     commands: &mut CommandModel,
-    controls: &ControlsModel,
+    controls: &mut ControlsModel,
     log: &LogHandle,
 ) {
     if ui.button("Start from file...").clicked() {

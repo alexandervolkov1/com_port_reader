@@ -6,7 +6,6 @@ use crate::{
         series_editor_model::{SeriesDraft, SeriesEditorModel},
     },
     data::SignalKind,
-    user_command::UserCommand,
 };
 
 pub fn show(context: &egui::Context, editor: &mut SeriesEditorModel, commands: &mut CommandModel) {
@@ -50,7 +49,7 @@ pub fn show(context: &egui::Context, editor: &mut SeriesEditorModel, commands: &
     if add_requested {
         match editor.build() {
             Ok(new_series) => {
-                commands.execute(UserCommand::Add(new_series));
+                commands.add_series(new_series);
                 editor.close();
             }
 

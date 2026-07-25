@@ -74,7 +74,7 @@ mod tests {
 # Test script
 
 sin --amp 10 --per 20 --name sine_test
-serial get
+serial walk
 delete old_series
 rename sine_test new_sine
 ";
@@ -198,5 +198,17 @@ triangle --per 0
             "Line 7: Period must be greater than 0\n\
              > sin --per 0",
         );
+    }
+
+    #[test]
+    fn parses_start_recording_from_script() {
+        let commands = parse_script("start_recording").unwrap();
+
+        assert_eq!(commands.len(), 1);
+
+        assert!(matches!(
+            commands.first(),
+            Some(UserCommand::StartRecording),
+        ));
     }
 }

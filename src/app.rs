@@ -1,8 +1,8 @@
 use eframe::egui;
 use egui_extras::{Size, StripBuilder};
-use std::time::Duration;
 
 use crate::acquisition::{CombinedSource, SerialCommandSource, SignalGenerator};
+use crate::app_config::{AppConfig, CONFIG_PATH};
 use crate::components::{
     command_model::CommandModel, command_view, controls_model::ControlsModel, controls_view,
     device_emulator_model::DeviceEmulatorModel, help_model::HelpModel, help_view,
@@ -36,10 +36,12 @@ pub struct MyApp {
     log_handle: LogHandle,
     device_emulator: DeviceEmulatorModel,
     help: HelpModel,
+    config: AppConfig,
 }
 
 impl MyApp {
     pub fn new() -> Self {
+        let (config, config_warning) = AppConfig::load_or_default(CONFIG_PATH);
         let (log, log_handle) = LogModel::new();
         let device_emulator = DeviceEmulatorModel::new(log_handle.clone());
         let series = SeriesStore::new();
@@ -48,7 +50,7 @@ impl MyApp {
         let worker_handle = WorkerHandle::new(command_sender);
         let serial_config_store = SerialConfigStore::new();
         let serial_settings = SerialSettingsModel::new(serial_config_store.clone());
-        let worker_config = WorkerConfig::new(Duration::from_millis(1000));
+        let worker_config = WorkerConfig::new(config.application.poll_interval());
         let source = CombinedSource::new(vec![
             Box::new(SignalGenerator::new()),
             Box::new(SerialCommandSource::new(serial_config_store)),
@@ -80,6 +82,7 @@ impl MyApp {
             log_handle,
             device_emulator,
             help: HelpModel::default(),
+            config,
         }
     }
 }
@@ -107,13 +110,13 @@ impl eframe::App for MyApp {
 
             ui.separator();
 
-            command_view::show(ui, &mut self.command);
+            command_view::show(ui, &mut self.command, &mut self.controls);
 
             script_view::show(
                 ui,
                 &mut self.script,
                 &mut self.command,
-                &self.controls,
+                &mut self.controls,
                 &self.log_handle,
             );
 
@@ -175,6 +178,7 @@ impl eframe::App for MyApp {
 
         help_view::show_window(ui.ctx(), &mut self.help);
 
-        ui.ctx().request_repaint_after(Duration::from_millis(33));
+        ui.ctx()
+            .request_repaint_after(self.config.application.repaint_interval());
     }
 }

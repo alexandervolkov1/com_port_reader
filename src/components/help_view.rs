@@ -180,6 +180,17 @@ fn show_command_reference(ui: &mut egui::Ui) {
         "Script files can be opened with Start from file. \
          All lines are validated before commands are submitted.",
     );
+
+    ui.separator();
+    ui.heading("Recording");
+
+    reference(
+        ui,
+        "start_recording",
+        "Creates a new protocol file and starts CSV recording. \
+         If acquisition is stopped, recording remains paused \
+         until Start is pressed.",
+    );
 }
 
 fn reference(ui: &mut egui::Ui, syntax: &str, description: &str) {

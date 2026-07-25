@@ -17,7 +17,7 @@ impl ScriptModel {
         &mut self,
         path: &Path,
         commands: &mut CommandModel,
-        controls: &ControlsModel,
+        controls: &mut ControlsModel,
         log: &LogHandle,
     ) {
         let contents = match fs::read_to_string(path) {
@@ -51,7 +51,7 @@ impl ScriptModel {
         let command_count = script_commands.len();
 
         for command in script_commands {
-            commands.execute(command);
+            commands.execute(command, controls);
         }
 
         controls.start();

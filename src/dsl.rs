@@ -41,6 +41,11 @@ pub fn parse_command(input: &str) -> Result<UserCommand, String> {
     if first_token.eq_ignore_ascii_case("rename") {
         return parse_rename(arguments);
     }
+
+    if first_token.eq_ignore_ascii_case("start_recording") {
+        return parse_start_recording(arguments);
+    }
+
     parse_series(input).map(UserCommand::Add)
 }
 
@@ -355,6 +360,14 @@ fn next_option_value<'a>(
     Ok(value)
 }
 
+fn parse_start_recording(arguments: &str) -> Result<UserCommand, String> {
+    if let Some(argument) = arguments.split_whitespace().next() {
+        return Err(format!("Unexpected argument: {argument}",));
+    }
+
+    Ok(UserCommand::StartRecording)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{parse_command, parse_series};
@@ -663,7 +676,7 @@ mod tests {
 
     #[test]
     fn parses_named_serial_series_without_add() {
-        let command = parse_command("serial get --name random_walk").unwrap();
+        let command = parse_command("serial walk --name random_walk").unwrap();
 
         let UserCommand::Add(new_series) = command else {
             panic!("expected add command");
@@ -684,7 +697,7 @@ mod tests {
 
     #[test]
     fn parses_unnamed_serial_series_with_add() {
-        let command = parse_command("add serial get").unwrap();
+        let command = parse_command("add serial walk").unwrap();
 
         let UserCommand::Add(new_series) = command else {
             panic!("expected add command");
@@ -705,7 +718,7 @@ mod tests {
 
     #[test]
     fn parses_serial_step() {
-        let command = parse_command("com get --step 0.25 --name slow_walk").unwrap();
+        let command = parse_command("com walk --step 0.25 --name slow_walk").unwrap();
 
         let UserCommand::Add(new_series) = command else {
             panic!("expected add command");
@@ -726,32 +739,46 @@ mod tests {
 
     #[test]
     fn rejects_non_positive_serial_step() {
-        let result = parse_command("com get --step 0");
+        let result = parse_command("com walk --step 0");
 
         assert_eq!(result.unwrap_err(), "Step must be greater than 0",);
     }
 
     #[test]
     fn rejects_non_finite_serial_step() {
-        let result = parse_command("com get --step NaN");
+        let result = parse_command("com walk --step NaN");
 
         assert_eq!(result.unwrap_err(), "Step must be finite",);
     }
 
     #[test]
     fn rejects_missing_serial_step_value() {
-        let result = parse_command("com get --step");
+        let result = parse_command("com walk --step");
 
         assert_eq!(result.unwrap_err(), "Missing value for option '--step'",);
     }
 
     #[test]
     fn rejects_duplicate_serial_step() {
-        let result = parse_command("com get --step 1 --step 2");
+        let result = parse_command("com walk --step 1 --step 2");
 
         assert_eq!(
             result.unwrap_err(),
             "Parameter 'step' specified more than once",
         );
+    }
+
+    #[test]
+    fn parses_start_recording_command() {
+        let command = parse_command("start_recording").unwrap();
+
+        assert!(matches!(command, UserCommand::StartRecording,));
+    }
+
+    #[test]
+    fn rejects_start_recording_argument() {
+        let result = parse_command("start_recording extra");
+
+        assert_eq!(result.unwrap_err(), "Unexpected argument: extra",);
     }
 }

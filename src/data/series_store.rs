@@ -610,7 +610,7 @@ mod tests {
 
         store
             .add_series(NewSeries::named_serial_command(
-                "  get  ",
+                "  walk  ",
                 0.25,
                 "random_walk",
             ))
@@ -644,7 +644,7 @@ mod tests {
         let store = SeriesStore::new();
 
         let result = store.add_series(NewSeries::named_serial_command(
-            "get\nnext",
+            "walk\nnext",
             1.0,
             "random_walk",
         ));
