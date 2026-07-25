@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use crate::data::{NewSeries, SeriesId};
 use crate::serial_connection::SerialPortConfig;
@@ -6,7 +6,7 @@ use crate::serial_connection::SerialPortConfig;
 pub enum WorkerCommand {
     Start,
     Stop,
-
+    SetPollInterval(Duration),
     AddSeries(NewSeries),
     RemoveSeries(SeriesId),
     SetVisibility {

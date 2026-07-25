@@ -65,9 +65,8 @@ pub fn show_window(
             show_application_settings(ui, &mut config.application);
 
             ui.small(
-                "FPS and plot point limit apply immediately. \
-                 Poll interval applies after restarting the \
-                 application.",
+                "FPS and plot point limit apply while editing. \
+                 Poll interval applies when settings are saved.",
             );
 
             ui.separator();
@@ -116,7 +115,27 @@ pub fn show_window(
 
         config.serial.emulator_port = emulator.selected_port().unwrap_or_default().to_owned();
 
-        match config.save(CONFIG_PATH) {
+        let apply_result = worker_handle.set_poll_interval(config.application.poll_interval());
+
+        let save_result = config.save(CONFIG_PATH);
+
+        match apply_result {
+            Ok(()) => {
+                log.info(format!(
+                    "Poll interval changed to {} ms.",
+                    config.application.poll_interval_ms,
+                ));
+            }
+
+            Err(error) => {
+                log.error(format!(
+                    "Failed to apply poll interval: \
+                     {error}",
+                ));
+            }
+        }
+
+        match save_result {
             Ok(()) => {
                 log.info(format!("Settings saved to '{CONFIG_PATH}'.",));
             }

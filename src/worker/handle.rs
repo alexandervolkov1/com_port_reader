@@ -1,5 +1,5 @@
 use crossbeam_channel::Sender;
-use std::{error::Error, fmt, path::PathBuf};
+use std::{error::Error, fmt, path::PathBuf, time::Duration};
 
 use crate::data::{NewSeries, SeriesId};
 use crate::serial_connection::SerialPortConfig;
@@ -81,6 +81,10 @@ impl WorkerHandle {
         command: String,
     ) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::TestSerialCommand { config, command })
+    }
+
+    pub fn set_poll_interval(&self, poll_interval: Duration) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::SetPollInterval(poll_interval))
     }
 }
 

@@ -53,9 +53,11 @@ impl Worker {
         let sample_sink_active = Arc::new(AtomicBool::new(false));
         let thread_sample_sink_active = sample_sink_active.clone();
         let thread_running = running.clone();
-        let poll_interval = config.poll_interval();
+        let initial_poll_interval = config.poll_interval();
 
         let thread = thread::spawn(move || {
+            let mut poll_interval = initial_poll_interval;
+
             let mut state = AcquisitionState::Stopped;
             let mut sample_batch: Vec<SeriesSample> = Vec::new();
             loop {
@@ -190,6 +192,17 @@ impl Worker {
                 };
 
                 match command_result {
+                    Ok(WorkerCommand::SetPollInterval(new_interval)) => {
+                        if new_interval.is_zero() {
+                            continue;
+                        }
+
+                        poll_interval = new_interval;
+
+                        if let AcquisitionState::Running { next_poll, .. } = &mut state {
+                            *next_poll = Instant::now() + poll_interval;
+                        }
+                    }
                     Ok(WorkerCommand::Start) => {
                         if matches!(state, AcquisitionState::Stopped) {
                             match source.start() {
