@@ -42,10 +42,6 @@ pub fn parse_command(input: &str) -> Result<UserCommand, String> {
         return parse_rename(arguments);
     }
 
-    if first_token.eq_ignore_ascii_case("start_recording") {
-        return parse_without_arguments(arguments, UserCommand::StartRecording);
-    }
-
     if first_token.eq_ignore_ascii_case("start") {
         return parse_without_arguments(arguments, UserCommand::Start);
     }

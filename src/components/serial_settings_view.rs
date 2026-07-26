@@ -87,10 +87,6 @@ pub fn show_window(
             show_line_settings(ui, model);
 
             ui.horizontal(|ui| {
-                if ui.button("Test connection").clicked() {
-                    model.test_connection(worker_handle);
-                }
-
                 if ui.button("Test walk").clicked() {
                     model.test_command(worker_handle, "walk");
                 }
@@ -177,7 +173,7 @@ fn show_main_port_controls(
             model.refresh_ports();
         }
 
-        if ui.button("Test").clicked() {
+        if ui.button("Test connection").clicked() {
             model.test_connection(worker_handle);
         }
     });
