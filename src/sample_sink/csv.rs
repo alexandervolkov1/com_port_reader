@@ -33,6 +33,8 @@ impl<W: Write> CsvSampleSink<W> {
     pub fn new(mut writer: W) -> Result<Self, SampleSinkError> {
         writeln!(writer, "timestamp,series_id,series_name,value",)?;
 
+        writer.flush()?;
+
         Ok(Self { writer })
     }
 
@@ -71,6 +73,8 @@ impl<W: Write + Send> SampleSink for CsvSampleSink<W> {
 
             writeln!(self.writer, ",{}", series_sample.sample.value,)?;
         }
+
+        self.writer.flush()?;
 
         Ok(())
     }
@@ -128,8 +132,6 @@ mod tests {
             &series,
         )
         .unwrap();
-
-        sink.flush().unwrap();
 
         let output = String::from_utf8(sink.into_inner()).unwrap();
 
