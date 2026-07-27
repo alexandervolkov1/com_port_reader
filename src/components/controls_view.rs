@@ -4,11 +4,19 @@ use crate::{
     components::{
         command_model::CommandModel,
         controls_model::{ControlsModel, RecordingTransition},
+        device_emulator_model::DeviceEmulatorModel,
+        serial_settings_model::SerialSettingsModel,
     },
     user_command::UserCommand,
 };
 
-pub fn show(ui: &mut egui::Ui, controls: &mut ControlsModel, commands: &CommandModel) {
+pub fn show(
+    ui: &mut egui::Ui,
+    controls: &mut ControlsModel,
+    commands: &CommandModel,
+    serial_settings: &SerialSettingsModel,
+    device_emulator: &mut DeviceEmulatorModel,
+) {
     ui.horizontal(|ui| {
         let running = controls.is_running();
 
@@ -16,15 +24,30 @@ pub fn show(ui: &mut egui::Ui, controls: &mut ControlsModel, commands: &CommandM
             .add_enabled(!running, egui::Button::new("Start"))
             .clicked()
         {
-            commands.execute(UserCommand::Start, controls);
+            commands.execute(
+                UserCommand::Start,
+                controls,
+                serial_settings,
+                device_emulator,
+            );
         }
 
         if ui.add_enabled(running, egui::Button::new("Stop")).clicked() {
-            commands.execute(UserCommand::Stop, controls);
+            commands.execute(
+                UserCommand::Stop,
+                controls,
+                serial_settings,
+                device_emulator,
+            );
         }
 
         if ui.button("Clear").clicked() {
-            commands.execute(UserCommand::Clear, controls);
+            commands.execute(
+                UserCommand::Clear,
+                controls,
+                serial_settings,
+                device_emulator,
+            );
         }
 
         if running {
@@ -48,7 +71,12 @@ pub fn show(ui: &mut egui::Ui, controls: &mut ControlsModel, commands: &CommandM
             )
             .clicked()
         {
-            commands.execute(UserCommand::StartRecording, controls);
+            commands.execute(
+                UserCommand::StartRecording,
+                controls,
+                serial_settings,
+                device_emulator,
+            );
         }
 
         if ui
@@ -58,7 +86,12 @@ pub fn show(ui: &mut egui::Ui, controls: &mut ControlsModel, commands: &CommandM
             )
             .clicked()
         {
-            commands.execute(UserCommand::StopRecording, controls);
+            commands.execute(
+                UserCommand::StopRecording,
+                controls,
+                serial_settings,
+                device_emulator,
+            );
         }
 
         match transition {

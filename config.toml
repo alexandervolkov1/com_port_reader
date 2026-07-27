@@ -1,11 +1,11 @@
 [application]
-fps = 10
-poll_interval_ms = 5000
+fps = 20
+poll_interval_ms = 1000
 max_plot_points_per_series = 1000
 
 [serial]
-main_port = "COM10"
-emulator_port = "COM11"
+main_port = "COM3"
+emulator_port = "COM4"
 baud_rate = 9600
 data_bits = 8
 parity = "none"

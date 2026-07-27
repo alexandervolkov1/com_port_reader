@@ -125,17 +125,30 @@ impl eframe::App for MyApp {
             });
 
         egui::CentralPanel::default().show(ui, |ui| {
-            controls_view::show(ui, &mut self.controls, &self.command);
-
+            controls_view::show(
+                ui,
+                &mut self.controls,
+                &self.command,
+                &self.serial_settings,
+                &mut self.device_emulator,
+            );
             ui.separator();
 
-            command_view::show(ui, &mut self.command, &mut self.controls);
+            command_view::show(
+                ui,
+                &mut self.command,
+                &mut self.controls,
+                &self.serial_settings,
+                &mut self.device_emulator,
+            );
 
             script_view::show(
                 ui,
                 &mut self.script,
                 &self.command,
                 &mut self.controls,
+                &self.serial_settings,
+                &mut self.device_emulator,
                 &self.log_handle,
             );
 

@@ -2,7 +2,10 @@ use std::{fs, path::Path};
 
 use crate::{
     app_log::LogHandle,
-    components::{command_model::CommandModel, controls_model::ControlsModel},
+    components::{
+        command_model::CommandModel, controls_model::ControlsModel,
+        device_emulator_model::DeviceEmulatorModel, serial_settings_model::SerialSettingsModel,
+    },
     script::parse_script,
 };
 
@@ -18,6 +21,8 @@ impl ScriptModel {
         path: &Path,
         commands: &CommandModel,
         controls: &mut ControlsModel,
+        serial_settings: &SerialSettingsModel,
+        device_emulator: &mut DeviceEmulatorModel,
         log: &LogHandle,
     ) {
         let contents = match fs::read_to_string(path) {
@@ -51,7 +56,7 @@ impl ScriptModel {
         let command_count = script_commands.len();
 
         for command in script_commands {
-            commands.execute(command, controls);
+            commands.execute(command, controls, serial_settings, device_emulator);
         }
 
         log.info(format!(

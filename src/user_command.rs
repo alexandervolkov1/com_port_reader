@@ -19,4 +19,7 @@ pub enum UserCommand {
 
     StartRecording,
     StopRecording,
+
+    StartEmulator,
+    StopEmulator,
 }

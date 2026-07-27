@@ -1,0 +1,5 @@
+start_emulator
+clear
+com walk --step 1 --name walk_1
+com walk --step 0.25 --name walk_2
+start

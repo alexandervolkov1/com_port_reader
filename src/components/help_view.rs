@@ -211,6 +211,18 @@ fn show_command_reference(ui: &mut egui::Ui) {
     );
 
     reference(ui, "clear", "Removes all signal series and their data.");
+
+    ui.separator();
+    ui.heading("Device emulator");
+
+    reference(
+        ui,
+        "start_emulator",
+        "Starts the device emulator on the port selected \
+         in Settings.",
+    );
+
+    reference(ui, "stop_emulator", "Stops the running device emulator.");
 }
 
 fn reference(ui: &mut egui::Ui, syntax: &str, description: &str) {

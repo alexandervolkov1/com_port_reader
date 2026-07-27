@@ -62,6 +62,14 @@ pub fn parse_command(input: &str) -> Result<UserCommand, String> {
         return parse_without_arguments(arguments, UserCommand::StopRecording);
     }
 
+    if first_token.eq_ignore_ascii_case("start_emulator") {
+        return parse_without_arguments(arguments, UserCommand::StartEmulator);
+    }
+
+    if first_token.eq_ignore_ascii_case("stop_emulator") {
+        return parse_without_arguments(arguments, UserCommand::StopEmulator);
+    }
+
     parse_series(input).map(UserCommand::Add)
 }
 
@@ -828,5 +836,31 @@ mod tests {
         let result = parse_command("start now");
 
         assert_eq!(result.unwrap_err(), "Unexpected argument: now",);
+    }
+
+    #[test]
+    fn parses_emulator_commands() {
+        assert!(matches!(
+            parse_command("start_emulator").unwrap(),
+            UserCommand::StartEmulator,
+        ));
+
+        assert!(matches!(
+            parse_command("stop_emulator").unwrap(),
+            UserCommand::StopEmulator,
+        ));
+    }
+
+    #[test]
+    fn rejects_emulator_command_arguments() {
+        assert_eq!(
+            parse_command("start_emulator extra").unwrap_err(),
+            "Unexpected argument: extra",
+        );
+
+        assert_eq!(
+            parse_command("stop_emulator extra").unwrap_err(),
+            "Unexpected argument: extra",
+        );
     }
 }

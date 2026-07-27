@@ -2,7 +2,10 @@ use crossbeam_channel::Receiver;
 
 use crate::{
     app_log::LogHandle,
-    components::controls_model::ControlsModel,
+    components::{
+        controls_model::ControlsModel, device_emulator_model::DeviceEmulatorModel,
+        serial_settings_model::SerialSettingsModel,
+    },
     data::{NewSeries, SeriesId},
     dsl::parse_command,
     user_command::UserCommand,
@@ -48,10 +51,15 @@ impl CommandModel {
         }
     }
 
-    pub fn submit(&mut self, controls: &mut ControlsModel) {
+    pub fn submit(
+        &mut self,
+        controls: &mut ControlsModel,
+        serial_settings: &SerialSettingsModel,
+        device_emulator: &mut DeviceEmulatorModel,
+    ) {
         match parse_command(&self.command_buffer) {
             Ok(command) => {
-                self.execute(command, controls);
+                self.execute(command, controls, serial_settings, device_emulator);
             }
 
             Err(error) => {
@@ -62,7 +70,13 @@ impl CommandModel {
         self.command_buffer.clear();
     }
 
-    pub fn execute(&self, command: UserCommand, controls: &mut ControlsModel) {
+    pub fn execute(
+        &self,
+        command: UserCommand,
+        controls: &mut ControlsModel,
+        serial_settings: &SerialSettingsModel,
+        device_emulator: &mut DeviceEmulatorModel,
+    ) {
         match command {
             UserCommand::Add(new_series) => {
                 self.add_series(new_series);
@@ -101,6 +115,14 @@ impl CommandModel {
 
             UserCommand::StopRecording => {
                 controls.stop_recording();
+            }
+
+            UserCommand::StartEmulator => {
+                device_emulator.start(serial_settings.settings(), serial_settings.selected_port());
+            }
+
+            UserCommand::StopEmulator => {
+                device_emulator.stop();
             }
         }
     }
