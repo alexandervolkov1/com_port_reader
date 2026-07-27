@@ -1,10 +1,10 @@
 use std::{
     fs::{self, File},
-    io::{BufWriter, Write},
+    io::{self, BufWriter, Write},
     path::Path,
 };
 
-use crate::data::SeriesSample;
+use crate::data::{SeriesMetadata, SeriesSample};
 
 use super::{SampleSink, SampleSinkError};
 
@@ -31,7 +31,7 @@ impl CsvSampleSink<BufWriter<File>> {
 
 impl<W: Write> CsvSampleSink<W> {
     pub fn new(mut writer: W) -> Result<Self, SampleSinkError> {
-        writeln!(writer, "timestamp,series_id,value")?;
+        writeln!(writer, "timestamp,series_id,series_name,value",)?;
 
         Ok(Self { writer })
     }
@@ -43,13 +43,33 @@ impl<W: Write> CsvSampleSink<W> {
 }
 
 impl<W: Write + Send> SampleSink for CsvSampleSink<W> {
-    fn write_batch(&mut self, samples: &[SeriesSample]) -> Result<(), SampleSinkError> {
+    fn write_batch(
+        &mut self,
+        samples: &[SeriesSample],
+        series: &[SeriesMetadata],
+    ) -> Result<(), SampleSinkError> {
         for series_sample in samples {
-            writeln!(
+            let Some(metadata) = series
+                .iter()
+                .find(|metadata| metadata.id == series_sample.series_id)
+            else {
+                return Err(format!(
+                    "Cannot write sample for unknown \
+                     series {}",
+                    series_sample.series_id,
+                )
+                .into());
+            };
+
+            write!(
                 self.writer,
-                "{},{},{}",
-                series_sample.sample.timestamp, series_sample.series_id, series_sample.sample.value,
+                "{},{},",
+                series_sample.sample.timestamp, series_sample.series_id,
             )?;
+
+            write_csv_field(&mut self.writer, &metadata.name)?;
+
+            writeln!(self.writer, ",{}", series_sample.sample.value,)?;
         }
 
         Ok(())
@@ -57,7 +77,20 @@ impl<W: Write + Send> SampleSink for CsvSampleSink<W> {
 
     fn flush(&mut self) -> Result<(), SampleSinkError> {
         self.writer.flush()?;
+
         Ok(())
+    }
+}
+
+fn write_csv_field(writer: &mut impl Write, value: &str) -> io::Result<()> {
+    let requires_quotes = value.contains([',', '"', '\r', '\n']);
+
+    if requires_quotes {
+        let escaped = value.replace('"', "\"\"");
+
+        write!(writer, "\"{escaped}\"")
+    } else {
+        writer.write_all(value.as_bytes())
     }
 }
 
@@ -66,24 +99,34 @@ mod tests {
     use super::CsvSampleSink;
 
     use crate::{
-        data::{Sample, SeriesId, SeriesSample},
+        data::{Sample, SeriesId, SeriesMetadata, SeriesSample, SeriesSource, Signal},
         sample_sink::SampleSink,
     };
 
     #[test]
-    fn writes_header_and_samples() {
+    fn writes_header_names_and_samples() {
         let mut sink = CsvSampleSink::new(Vec::new()).unwrap();
 
-        sink.write_batch(&[
-            SeriesSample {
-                series_id: SeriesId::new(7),
-                sample: Sample::new(12.5, -3.25),
-            },
-            SeriesSample {
-                series_id: SeriesId::new(8),
-                sample: Sample::new(13.0, 4.5),
-            },
-        ])
+        let series = [
+            metadata(SeriesId::new(7), "temperature"),
+            metadata(SeriesId::new(8), "light,sensor"),
+        ];
+
+        sink.write_batch(
+            &[
+                SeriesSample {
+                    series_id: SeriesId::new(7),
+
+                    sample: Sample::new(12.5, -3.25),
+                },
+                SeriesSample {
+                    series_id: SeriesId::new(8),
+
+                    sample: Sample::new(13.0, 4.5),
+                },
+            ],
+            &series,
+        )
         .unwrap();
 
         sink.flush().unwrap();
@@ -93,10 +136,41 @@ mod tests {
         assert_eq!(
             output,
             concat!(
-                "timestamp,series_id,value\n",
-                "12.5,7,-3.25\n",
-                "13,8,4.5\n",
+                "timestamp,series_id,",
+                "series_name,value\n",
+                "12.5,7,temperature,-3.25\n",
+                "13,8,\"light,sensor\",4.5\n",
             ),
         );
+    }
+
+    #[test]
+    fn rejects_sample_without_metadata() {
+        let mut sink = CsvSampleSink::new(Vec::new()).unwrap();
+
+        let result = sink.write_batch(
+            &[SeriesSample {
+                series_id: SeriesId::new(7),
+
+                sample: Sample::new(12.5, -3.25),
+            }],
+            &[],
+        );
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Cannot write sample for unknown series 7",
+        );
+    }
+
+    fn metadata(id: SeriesId, name: &str) -> SeriesMetadata {
+        SeriesMetadata {
+            id,
+            name: name.to_owned(),
+
+            source: SeriesSource::Generated(Signal::Constant { value: 0.0 }),
+
+            visible: true,
+        }
     }
 }

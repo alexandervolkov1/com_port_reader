@@ -1,6 +1,7 @@
 mod csv;
 
-use crate::data::SeriesSample;
+use crate::data::{SeriesMetadata, SeriesSample};
+
 pub use csv::CsvSampleSink;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,8 +31,18 @@ impl From<&str> for SampleSinkError {
     }
 }
 
+impl From<std::io::Error> for SampleSinkError {
+    fn from(error: std::io::Error) -> Self {
+        Self::from(error.to_string())
+    }
+}
+
 pub trait SampleSink: Send {
-    fn write_batch(&mut self, samples: &[SeriesSample]) -> Result<(), SampleSinkError>;
+    fn write_batch(
+        &mut self,
+        samples: &[SeriesSample],
+        series: &[SeriesMetadata],
+    ) -> Result<(), SampleSinkError>;
 
     fn flush(&mut self) -> Result<(), SampleSinkError> {
         Ok(())
@@ -48,13 +59,11 @@ impl NullSampleSink {
 }
 
 impl SampleSink for NullSampleSink {
-    fn write_batch(&mut self, _samples: &[SeriesSample]) -> Result<(), SampleSinkError> {
+    fn write_batch(
+        &mut self,
+        _samples: &[SeriesSample],
+        _series: &[SeriesMetadata],
+    ) -> Result<(), SampleSinkError> {
         Ok(())
-    }
-}
-
-impl From<std::io::Error> for SampleSinkError {
-    fn from(error: std::io::Error) -> Self {
-        Self::from(error.to_string())
     }
 }

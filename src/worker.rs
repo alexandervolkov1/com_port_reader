@@ -98,7 +98,7 @@ impl Worker {
                     };
 
                     match result {
-                        Ok(()) => match sink.write_batch(&sample_batch) {
+                        Ok(()) => match sink.write_batch(&sample_batch, &series_metadata) {
                             Ok(()) => {
                                 *next_poll += poll_interval;
 
