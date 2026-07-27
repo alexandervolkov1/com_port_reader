@@ -26,10 +26,7 @@ use std::time::Instant;
 enum AcquisitionState {
     Stopped,
 
-    Running {
-        started_at: Instant,
-        next_poll: Instant,
-    },
+    Running { next_poll: Instant },
 }
 
 pub struct Worker {
@@ -68,26 +65,16 @@ impl Worker {
                 let mut acquisition_error: Option<AcquisitionError> = None;
                 let mut sink_error: Option<SampleSinkError> = None;
 
-                if let AcquisitionState::Running {
-                    started_at,
-                    next_poll,
-                } = &mut state
+                if let AcquisitionState::Running { next_poll } = &mut state
                     && now >= *next_poll
                 {
-                    let elapsed_seconds = started_at.elapsed().as_secs_f64();
-
                     let timestamp = current_time_f64();
 
                     sample_batch.clear();
 
                     let series_metadata = series.metadata();
 
-                    let result = source.sample(
-                        &series_metadata,
-                        timestamp,
-                        elapsed_seconds,
-                        &mut sample_batch,
-                    );
+                    let result = source.sample(&series_metadata, timestamp, &mut sample_batch);
 
                     let result = match result {
                         Ok(()) => series.with_mut(|all_series| {
@@ -207,14 +194,12 @@ impl Worker {
                         if matches!(state, AcquisitionState::Stopped) {
                             match source.start() {
                                 Ok(()) => {
-                                    let started_at = Instant::now();
-
                                     state = AcquisitionState::Running {
-                                        started_at,
-                                        next_poll: started_at + poll_interval,
+                                        next_poll: Instant::now() + poll_interval,
                                     };
 
                                     thread_running.store(true, Ordering::Release);
+
                                     let _ = event_sender.send(WorkerEvent::AcquisitionStarted);
                                 }
 

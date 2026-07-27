@@ -16,7 +16,6 @@ impl AcquisitionSource for SignalGenerator {
         &mut self,
         series: &[SeriesMetadata],
         timestamp: f64,
-        elapsed_seconds: f64,
         output: &mut Vec<SeriesSample>,
     ) -> Result<(), AcquisitionError> {
         output.reserve(series.len());
@@ -26,7 +25,7 @@ impl AcquisitionSource for SignalGenerator {
                 continue;
             };
 
-            let value = signal.value_at(elapsed_seconds);
+            let value = signal.value_at(timestamp);
 
             output.push(SeriesSample::new(
                 signal_series.id,
@@ -65,9 +64,7 @@ mod tests {
 
         let mut output = Vec::new();
 
-        generator
-            .sample(&series, 1_000.0, 5.0, &mut output)
-            .unwrap();
+        generator.sample(&series, 1_000.0, &mut output).unwrap();
 
         assert_eq!(
             output,

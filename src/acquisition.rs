@@ -44,7 +44,6 @@ pub trait AcquisitionSource: Send {
         &mut self,
         series: &[SeriesMetadata],
         timestamp: f64,
-        elapsed_seconds: f64,
         output: &mut Vec<SeriesSample>,
     ) -> Result<(), AcquisitionError>;
 

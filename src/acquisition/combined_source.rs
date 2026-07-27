@@ -40,11 +40,10 @@ impl AcquisitionSource for CombinedSource {
         &mut self,
         series: &[SeriesMetadata],
         timestamp: f64,
-        elapsed_seconds: f64,
         output: &mut Vec<SeriesSample>,
     ) -> Result<(), AcquisitionError> {
         for source in &mut self.sources {
-            source.sample(series, timestamp, elapsed_seconds, output)?;
+            source.sample(series, timestamp, output)?;
         }
 
         Ok(())
@@ -98,7 +97,6 @@ mod tests {
             &mut self,
             _series: &[SeriesMetadata],
             timestamp: f64,
-            _elapsed_seconds: f64,
             output: &mut Vec<SeriesSample>,
         ) -> Result<(), crate::acquisition::AcquisitionError> {
             output.push(SeriesSample::new(
@@ -122,7 +120,7 @@ mod tests {
 
         let mut output = Vec::new();
 
-        source.sample(&[], 1_000.0, 5.0, &mut output).unwrap();
+        source.sample(&[], 1_000.0, &mut output).unwrap();
 
         assert_eq!(
             output,

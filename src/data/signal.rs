@@ -120,22 +120,26 @@ impl Signal {
         Ok(())
     }
 
-    pub fn value_at(&self, elapsed_seconds: f64) -> f64 {
+    pub fn value_at(&self, time_seconds: f64) -> f64 {
         match self {
             Signal::SineWave {
                 amplitude,
                 period,
                 phase,
-            } => amplitude * (TAU / period * elapsed_seconds + phase).sin(),
+            } => {
+                let time_in_period = time_seconds.rem_euclid(*period);
+
+                *amplitude * (TAU * time_in_period / *period + *phase).sin()
+            }
 
             Signal::SquareWave {
                 amplitude,
                 period,
                 duty_cycle,
             } => {
-                let time_in_period = elapsed_seconds % period;
+                let time_in_period = time_seconds.rem_euclid(*period);
 
-                if time_in_period < period * duty_cycle {
+                if time_in_period < *period * *duty_cycle {
                     *amplitude
                 } else {
                     -*amplitude
@@ -143,8 +147,8 @@ impl Signal {
             }
 
             Signal::TriangleWave { amplitude, period } => {
-                let time_in_period = elapsed_seconds % period;
-                let normalized_time = time_in_period / period;
+                let time_in_period = time_seconds.rem_euclid(*period);
+                let normalized_time = time_in_period / *period;
 
                 let normalized_value = if normalized_time < 0.5 {
                     4.0 * normalized_time - 1.0
@@ -152,14 +156,14 @@ impl Signal {
                     3.0 - 4.0 * normalized_time
                 };
 
-                amplitude * normalized_value
+                *amplitude * normalized_value
             }
 
             Signal::SawtoothWave { amplitude, period } => {
-                let time_in_period = elapsed_seconds % period;
-                let normalized_time = time_in_period / period;
+                let time_in_period = time_seconds.rem_euclid(*period);
+                let normalized_time = time_in_period / *period;
 
-                amplitude * (2.0 * normalized_time - 1.0)
+                *amplitude * (2.0 * normalized_time - 1.0)
             }
 
             Signal::Constant { value } => *value,
@@ -417,5 +421,16 @@ mod tests {
             assert_eq!(signal.kind(), expected_kind);
             assert_eq!(signal.kind_name(), expected_name);
         }
+    }
+
+    #[test]
+    fn preserves_phase_at_unix_timestamps() {
+        let signal = Signal::SineWave {
+            amplitude: 2.0,
+            period: 4.0,
+            phase: 0.0,
+        };
+
+        assert_approx_eq(signal.value_at(1_700_000_001.0), signal.value_at(1.0));
     }
 }

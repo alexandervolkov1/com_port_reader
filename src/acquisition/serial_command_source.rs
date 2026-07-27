@@ -59,7 +59,6 @@ impl AcquisitionSource for SerialCommandSource {
         &mut self,
         series: &[SeriesMetadata],
         timestamp: f64,
-        _elapsed_seconds: f64,
         output: &mut Vec<SeriesSample>,
     ) -> Result<(), AcquisitionError> {
         let has_serial_series = series
@@ -122,7 +121,7 @@ mod tests {
 
         let mut output = Vec::new();
 
-        source.sample(&series, 1_000.0, 5.0, &mut output).unwrap();
+        source.sample(&series, 1_000.0, &mut output).unwrap();
 
         assert!(output.is_empty());
     }
@@ -143,9 +142,7 @@ mod tests {
 
         let mut output = Vec::new();
 
-        let error = source
-            .sample(&series, 1_000.0, 5.0, &mut output)
-            .unwrap_err();
+        let error = source.sample(&series, 1_000.0, &mut output).unwrap_err();
 
         assert_eq!(
             error.to_string(),

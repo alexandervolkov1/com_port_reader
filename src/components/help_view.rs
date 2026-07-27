@@ -205,8 +205,9 @@ fn show_command_reference(ui: &mut egui::Ui) {
     reference(
         ui,
         "stop",
-        "Stops signal acquisition. Active CSV \
-         recording remains open and paused.",
+        "Stops sampling. Generated signals continue changing \
+         with real time. Active CSV recording remains open \
+         and paused.",
     );
 
     reference(ui, "clear", "Removes all signal series and their data.");
