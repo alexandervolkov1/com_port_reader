@@ -44,6 +44,7 @@ pub fn show_window(
     model: &mut SerialSettingsModel,
     emulator: &mut DeviceEmulatorModel,
     worker_handle: &WorkerHandle,
+    acquisition_running: bool,
     config: &mut AppConfig,
     log: &LogHandle,
 ) {
@@ -53,6 +54,8 @@ pub fn show_window(
     if !open {
         return;
     }
+
+    let serial_settings_locked = acquisition_running || emulator.is_running();
 
     egui::Window::new("Settings")
         .open(&mut open)
@@ -73,7 +76,15 @@ pub fn show_window(
 
             ui.heading("COM ports");
 
-            show_main_port_controls(ui, model, worker_handle);
+            if serial_settings_locked {
+                ui.colored_label(
+                    egui::Color32::from_rgb(190, 130, 0),
+                    "Stop acquisition and emulator to change \
+                     serial settings.",
+                );
+            }
+
+            show_main_port_controls(ui, model, worker_handle, !serial_settings_locked);
             emulator.synchronize_ports(model.ports(), model.selected_port());
 
             if let Some(error) = model.error() {
@@ -84,17 +95,22 @@ pub fn show_window(
 
             ui.heading("Serial line");
 
-            show_line_settings(ui, model);
+            ui.add_enabled_ui(!serial_settings_locked, |ui| {
+                show_line_settings(ui, model);
+            });
 
             ui.horizontal(|ui| {
-                if ui.button("Test walk").clicked() {
+                if ui
+                    .add_enabled(!serial_settings_locked, egui::Button::new("Test walk"))
+                    .clicked()
+                {
                     model.test_command(worker_handle, "walk");
                 }
             });
 
             ui.separator();
 
-            show_emulator_controls(ui, model, emulator);
+            show_emulator_controls(ui, model, emulator, acquisition_running);
 
             ui.separator();
 
@@ -147,36 +163,42 @@ fn show_main_port_controls(
     ui: &mut egui::Ui,
     model: &mut SerialSettingsModel,
     worker_handle: &WorkerHandle,
+    settings_enabled: bool,
 ) {
+    let mut selected_port = model.selected_port().map(str::to_owned);
+
+    let selected_text = selected_port
+        .clone()
+        .unwrap_or_else(|| "No port selected".to_owned());
+
     ui.horizontal(|ui| {
         ui.label("Application port:");
 
-        let mut selected_port = model.selected_port().map(str::to_owned);
-
-        let selected_text = selected_port
-            .clone()
-            .unwrap_or_else(|| "No port selected".to_owned());
-
-        egui::ComboBox::from_id_salt("serial_port_selector")
-            .selected_text(selected_text)
-            .show_ui(ui, |ui| {
-                for port in model.ports() {
-                    ui.selectable_value(&mut selected_port, Some(port.clone()), port);
-                }
-            });
-
-        if selected_port.as_deref() != model.selected_port() {
-            model.set_selected_port(selected_port);
-        }
+        ui.add_enabled_ui(settings_enabled, |ui| {
+            egui::ComboBox::from_id_salt("serial_port_selector")
+                .selected_text(selected_text)
+                .show_ui(ui, |ui| {
+                    for port in model.ports() {
+                        ui.selectable_value(&mut selected_port, Some(port.clone()), port);
+                    }
+                });
+        });
 
         if ui.button("Refresh").clicked() {
             model.refresh_ports();
         }
 
-        if ui.button("Test connection").clicked() {
+        if ui
+            .add_enabled(settings_enabled, egui::Button::new("Test connection"))
+            .clicked()
+        {
             model.test_connection(worker_handle);
         }
     });
+
+    if settings_enabled && selected_port.as_deref() != model.selected_port() {
+        model.set_selected_port(selected_port);
+    }
 }
 
 fn show_line_settings(ui: &mut egui::Ui, model: &mut SerialSettingsModel) {
@@ -279,10 +301,13 @@ fn show_emulator_controls(
     ui: &mut egui::Ui,
     serial: &SerialSettingsModel,
     emulator: &mut DeviceEmulatorModel,
+    acquisition_running: bool,
 ) {
     ui.heading("Device emulator");
 
     ui.horizontal(|ui| {
+        let port_selection_enabled = !acquisition_running && !emulator.is_running();
+
         ui.label("Emulator port:");
 
         let mut selected_port = emulator.selected_port().map(str::to_owned);
@@ -291,7 +316,7 @@ fn show_emulator_controls(
             .clone()
             .unwrap_or_else(|| "No port selected".to_owned());
 
-        ui.add_enabled_ui(!emulator.is_running(), |ui| {
+        ui.add_enabled_ui(port_selection_enabled, |ui| {
             egui::ComboBox::from_id_salt("device_emulator_port")
                 .selected_text(selected_text)
                 .show_ui(ui, |ui| {
@@ -311,7 +336,7 @@ fn show_emulator_controls(
     });
 
     ui.horizontal(|ui| {
-        let can_start = emulator.can_start(serial.selected_port());
+        let can_start = !acquisition_running && emulator.can_start(serial.selected_port());
 
         if ui
             .add_enabled(can_start, egui::Button::new("Start emulator"))

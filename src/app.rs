@@ -196,11 +196,14 @@ impl eframe::App for MyApp {
             series_editor_view::show(ui.ctx(), &mut self.series_editor, &mut self.command);
         });
 
+        let acquisition_running = self.controls.is_running();
+
         serial_settings_view::show_window(
             ui.ctx(),
             &mut self.serial_settings,
             &mut self.device_emulator,
             &self.worker_handle,
+            acquisition_running,
             &mut self.config,
             &self.log_handle,
         );
