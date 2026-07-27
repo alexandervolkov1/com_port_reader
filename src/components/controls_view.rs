@@ -1,7 +1,10 @@
 use eframe::egui;
 
 use crate::{
-    components::{command_model::CommandModel, controls_model::ControlsModel},
+    components::{
+        command_model::CommandModel,
+        controls_model::{ControlsModel, RecordingTransition},
+    },
     user_command::UserCommand,
 };
 
@@ -34,32 +37,52 @@ pub fn show(ui: &mut egui::Ui, controls: &mut ControlsModel, commands: &CommandM
     ui.horizontal(|ui| {
         let recording = controls.is_recording();
 
+        let transition = controls.recording_transition();
+
+        let transition_pending = transition.is_some();
+
         if ui
-            .add_enabled(!recording, egui::Button::new("Start recording"))
+            .add_enabled(
+                !recording && !transition_pending,
+                egui::Button::new("Start recording"),
+            )
             .clicked()
         {
             commands.execute(UserCommand::StartRecording, controls);
         }
 
         if ui
-            .add_enabled(recording, egui::Button::new("Stop recording"))
+            .add_enabled(
+                recording && !transition_pending,
+                egui::Button::new("Stop recording"),
+            )
             .clicked()
         {
             commands.execute(UserCommand::StopRecording, controls);
         }
 
-        match (recording, controls.is_running()) {
-            (true, true) => {
-                ui.colored_label(egui::Color32::from_rgb(190, 30, 30), "CSV: ● Writing");
+        match transition {
+            Some(RecordingTransition::Starting) => {
+                ui.colored_label(egui::Color32::from_rgb(190, 130, 0), "CSV: … Starting");
             }
 
-            (true, false) => {
-                ui.colored_label(egui::Color32::from_rgb(190, 130, 0), "CSV: ‖ Paused");
+            Some(RecordingTransition::Stopping) => {
+                ui.colored_label(egui::Color32::from_rgb(190, 130, 0), "CSV: … Stopping");
             }
 
-            (false, _) => {
-                ui.colored_label(egui::Color32::GRAY, "CSV: ■ Off");
-            }
+            None => match (recording, controls.is_running()) {
+                (true, true) => {
+                    ui.colored_label(egui::Color32::from_rgb(190, 30, 30), "CSV: ● Writing");
+                }
+
+                (true, false) => {
+                    ui.colored_label(egui::Color32::from_rgb(190, 130, 0), "CSV: ‖ Paused");
+                }
+
+                (false, _) => {
+                    ui.colored_label(egui::Color32::GRAY, "CSV: ■ Off");
+                }
+            },
         }
     });
 

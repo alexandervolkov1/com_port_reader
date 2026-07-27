@@ -105,7 +105,7 @@ impl MyApp {
 impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.device_emulator.poll();
-        self.command.poll_events();
+        self.command.poll_events(&mut self.controls);
         self.log.poll();
 
         egui::Panel::top("application_menu").show(ui, |ui| {

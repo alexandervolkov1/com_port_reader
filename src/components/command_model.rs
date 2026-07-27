@@ -34,8 +34,10 @@ impl CommandModel {
         &mut self.command_buffer
     }
 
-    pub fn poll_events(&mut self) {
+    pub fn poll_events(&mut self, controls: &mut ControlsModel) {
         while let Ok(event) = self.event_receiver.try_recv() {
+            controls.handle_worker_event(&event);
+
             let message = event.to_string();
 
             if worker_event_is_error(&event) {
