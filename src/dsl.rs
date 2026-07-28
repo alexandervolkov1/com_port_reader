@@ -17,6 +17,19 @@ const VALUE_OPTIONS: &[&str] = &["--value", "--val"];
 
 const STEP_OPTIONS: &[&str] = &["--step"];
 
+const DEVICE_OPTIONS: &[&str] = &["--device", "--dev"];
+
+const CHANNEL_OPTIONS: &[&str] = &["--channel", "--cha"];
+
+const REGISTER_OPTIONS: &[&str] = &["--register", "--reg"];
+
+const SCALE_OPTIONS: &[&str] = &["--scale"];
+
+const DEFAULT_METAKON_DEVICE: u8 = 1;
+const DEFAULT_METAKON_CHANNEL: u8 = 0;
+const DEFAULT_METAKON_REGISTER: u8 = 0x01;
+const DEFAULT_METAKON_SCALE: f64 = 1.0;
+
 pub fn parse_command(input: &str) -> Result<UserCommand, String> {
     let input = input.trim();
 
@@ -132,6 +145,7 @@ pub fn parse_series(input: &str) -> Result<NewSeries, String> {
         "saw" | "sawtooth" => parse_sawtooth(&mut tokens),
         "const" | "constant" => parse_constant(&mut tokens),
         "serial" | "com" => parse_serial(&mut tokens),
+        "metakon" => parse_metakon(&mut tokens),
 
         _ => Err(format!("Unknown signal type: {kind}",)),
     }
@@ -332,6 +346,88 @@ fn parse_serial(tokens: &mut SplitWhitespace<'_>) -> Result<NewSeries, String> {
     })
 }
 
+fn parse_metakon(tokens: &mut SplitWhitespace<'_>) -> Result<NewSeries, String> {
+    let mut name = None;
+
+    let mut device = ByteParameter::new("device", DEFAULT_METAKON_DEVICE);
+
+    let mut channel = ByteParameter::new("channel", DEFAULT_METAKON_CHANNEL);
+
+    let mut register = ByteParameter::new("register", DEFAULT_METAKON_REGISTER);
+
+    let mut scale = NumericParameter::new("scale", SCALE_OPTIONS, DEFAULT_METAKON_SCALE);
+
+    while let Some(argument) = tokens.next() {
+        match argument {
+            "--name" => {
+                parse_name(tokens, &mut name)?;
+            }
+
+            option if DEVICE_OPTIONS.contains(&option) => {
+                let value = next_option_value(tokens, option)?;
+
+                device.set(value)?;
+            }
+
+            option if CHANNEL_OPTIONS.contains(&option) => {
+                let value = next_option_value(tokens, option)?;
+
+                channel.set(value)?;
+            }
+
+            option if REGISTER_OPTIONS.contains(&option) => {
+                let value = next_option_value(tokens, option)?;
+
+                register.set(value)?;
+            }
+
+            option if SCALE_OPTIONS.contains(&option) => {
+                let value = next_option_value(tokens, option)?;
+
+                scale.set(value)?;
+            }
+
+            option if option.starts_with("--") => {
+                return Err(format!("Unknown option: {option}",));
+            }
+
+            argument => {
+                return Err(format!("Unexpected argument: {argument}",));
+            }
+        }
+    }
+
+    let scale = scale.value();
+
+    validate_metakon_scale(scale)?;
+
+    Ok(match name {
+        Some(name) => NewSeries::named_metakon(
+            device.value(),
+            channel.value(),
+            register.value(),
+            scale,
+            name,
+        ),
+
+        None => {
+            NewSeries::unnamed_metakon(device.value(), channel.value(), register.value(), scale)
+        }
+    })
+}
+
+fn validate_metakon_scale(scale: f64) -> Result<(), String> {
+    if !scale.is_finite() {
+        return Err("Scale must be finite".to_owned());
+    }
+
+    if scale <= 0.0 {
+        return Err("Scale must be greater than 0".to_owned());
+    }
+
+    Ok(())
+}
+
 fn validate_serial_step(step: f64) -> Result<(), String> {
     if !step.is_finite() {
         return Err("Step must be finite".to_owned());
@@ -379,6 +475,57 @@ impl NumericParameter {
 
         Ok(())
     }
+}
+
+struct ByteParameter {
+    name: &'static str,
+    value: Option<u8>,
+    default: u8,
+}
+
+impl ByteParameter {
+    const fn new(name: &'static str, default: u8) -> Self {
+        Self {
+            name,
+            value: None,
+            default,
+        }
+    }
+
+    fn value(&self) -> u8 {
+        self.value.unwrap_or(self.default)
+    }
+
+    fn set(&mut self, value: &str) -> Result<(), String> {
+        if self.value.is_some() {
+            return Err(format!(
+                "Parameter '{}' specified more than once",
+                self.name,
+            ));
+        }
+
+        self.value = Some(parse_byte(value, self.name)?);
+
+        Ok(())
+    }
+}
+
+fn parse_byte(value: &str, parameter: &str) -> Result<u8, String> {
+    let result = if let Some(hexadecimal) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        u8::from_str_radix(hexadecimal, 16)
+    } else {
+        value.parse::<u8>()
+    };
+
+    result.map_err(|error| {
+        format!(
+            "Failed to parse '{value}' as {parameter}: \
+             {error}",
+        )
+    })
 }
 
 fn parse_arguments(
@@ -968,6 +1115,74 @@ mod tests {
             parse_command("com send set power 50").unwrap_err(),
             "Command text for 'send' must be enclosed \
              in double quotes",
+        );
+    }
+
+    #[test]
+    fn parses_metakon_series() {
+        let command = parse_command(
+            "metakon --device 2 --channel 1 \
+             --register 0x01 --scale 0.1 \
+             --name furnace",
+        )
+        .unwrap();
+
+        let UserCommand::Add(new_series) = command else {
+            panic!("expected add command");
+        };
+
+        let (source, name) = new_series.into_source_parts();
+
+        assert_eq!(name.as_deref(), Some("furnace"));
+
+        assert_eq!(
+            source,
+            SeriesSource::Metakon {
+                device: 2,
+                channel: 1,
+                register: 0x01,
+                scale: 0.1,
+            },
+        );
+    }
+
+    #[test]
+    fn uses_default_metakon_parameters() {
+        let command = parse_command("add metakon").unwrap();
+
+        let UserCommand::Add(new_series) = command else {
+            panic!("expected add command");
+        };
+
+        let (source, name) = new_series.into_source_parts();
+
+        assert_eq!(name, None);
+
+        assert_eq!(
+            source,
+            SeriesSource::Metakon {
+                device: 1,
+                channel: 0,
+                register: 0x01,
+                scale: 1.0,
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_metakon_scale() {
+        let result = parse_series("metakon --scale 0");
+
+        assert_eq!(result.unwrap_err(), "Scale must be greater than 0",);
+    }
+
+    #[test]
+    fn rejects_out_of_range_metakon_device() {
+        let error = parse_series("metakon --device 256").unwrap_err();
+
+        assert!(
+            error.starts_with("Failed to parse '256' as device:",),
+            "unexpected error: {error}",
         );
     }
 }
