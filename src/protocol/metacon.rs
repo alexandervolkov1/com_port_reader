@@ -1,3 +1,39 @@
+const READ_COMMAND: u8 = 0x00;
+
+pub const READ_REQUEST_LENGTH: usize = 5;
+
+/// Request for reading one Metakon register.
+///
+/// Encoded packet:
+///
+/// `DEV CHA REG RD CRC`
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReadRegisterRequest {
+    device: u8,
+    channel: u8,
+    register: u8,
+}
+
+impl ReadRegisterRequest {
+    pub const fn new(device: u8, channel: u8, register: u8) -> Self {
+        Self {
+            device,
+            channel,
+            register,
+        }
+    }
+
+    pub fn encode(self) -> [u8; READ_REQUEST_LENGTH] {
+        let mut frame = [self.device, self.channel, self.register, READ_COMMAND, 0];
+
+        let crc = calculate_crc(&frame[..READ_REQUEST_LENGTH - 1]);
+
+        frame[READ_REQUEST_LENGTH - 1] = crc;
+
+        frame
+    }
+}
+
 /// Calculates the one-byte CRC used by the Metakon protocol.
 ///
 /// The CRC is initialized with `0xFF` and calculated from every
@@ -27,7 +63,7 @@ pub fn calculate_crc(bytes: &[u8]) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use super::calculate_crc;
+    use super::{ReadRegisterRequest, calculate_crc};
 
     #[test]
     fn matches_single_byte_reference_values() {
@@ -37,34 +73,62 @@ mod tests {
     }
 
     #[test]
-    fn matches_device_one_read_request() {
-        let request_without_crc = [
+    fn encodes_device_one_read_request() {
+        let request = ReadRegisterRequest::new(
             0x01, // DEV
             0x00, // CHA
             0x01, // REG
-            0x00, // RD
-        ];
+        );
 
-        assert_eq!(calculate_crc(&request_without_crc), 0xA0);
+        assert_eq!(
+            request.encode(),
+            [
+                0x01, // DEV
+                0x00, // CHA
+                0x01, // REG
+                0x00, // RD
+                0xA0, // CRC
+            ],
+        );
     }
 
     #[test]
-    fn matches_device_two_read_request() {
-        let request_without_crc = [
+    fn encodes_device_two_read_request() {
+        let request = ReadRegisterRequest::new(
             0x02, // DEV
             0x00, // CHA
             0x01, // REG
-            0x00, // RD
-        ];
+        );
 
-        assert_eq!(calculate_crc(&request_without_crc), 0x28);
+        assert_eq!(
+            request.encode(),
+            [
+                0x02, // DEV
+                0x00, // CHA
+                0x01, // REG
+                0x00, // RD
+                0x28, // CRC
+            ],
+        );
     }
 
     #[test]
-    fn changes_when_frame_data_changes() {
-        let first = calculate_crc(&[0x01, 0x00, 0x01, 0x00]);
-        let second = calculate_crc(&[0x01, 0x01, 0x01, 0x00]);
+    fn includes_channel_in_crc() {
+        let first_channel = ReadRegisterRequest::new(0x01, 0x00, 0x01).encode();
 
-        assert_ne!(first, second);
+        let second_channel = ReadRegisterRequest::new(0x01, 0x01, 0x01).encode();
+
+        assert_ne!(first_channel, second_channel);
+        assert_ne!(first_channel[4], second_channel[4]);
+    }
+
+    #[test]
+    fn includes_register_in_crc() {
+        let first_register = ReadRegisterRequest::new(0x01, 0x00, 0x01).encode();
+
+        let second_register = ReadRegisterRequest::new(0x01, 0x00, 0x02).encode();
+
+        assert_ne!(first_register, second_register);
+        assert_ne!(first_register[4], second_register[4]);
     }
 }
