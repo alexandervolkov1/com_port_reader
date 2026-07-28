@@ -90,7 +90,6 @@ pub struct SerialConnection {
 }
 
 impl SerialConnection {
-    #[allow(dead_code)]
     pub fn exchange_exact(
         &mut self,
         request: &[u8],

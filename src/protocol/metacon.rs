@@ -1,3 +1,5 @@
+use crate::serial_connection::{SerialConnection, SerialConnectionError};
+
 const READ_COMMAND: u8 = 0x00;
 
 const READ_REQUEST_LENGTH: usize = 5;
@@ -7,6 +9,9 @@ const MAX_FRAME_LENGTH: usize = 38;
 const TYPE_MASK: u8 = 0x0F;
 const READABLE_MASK: u8 = 0x40;
 const WRITABLE_MASK: u8 = 0x80;
+
+const READ_ATTEMPTS: usize = 3;
+const INT_READ_RESPONSE_LENGTH: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReadRegisterRequest {
@@ -96,6 +101,64 @@ impl ReadRegisterRequest {
             writable: type_byte & WRITABLE_MASK != 0,
             value,
         })
+    }
+}
+
+pub fn read_int_register(
+    connection: &mut SerialConnection,
+    request: ReadRegisterRequest,
+) -> Result<i16, ReadIntRegisterError> {
+    let mut last_error = match read_int_register_once(connection, request) {
+        Ok(value) => return Ok(value),
+        Err(error) => error,
+    };
+
+    for _ in 1..READ_ATTEMPTS {
+        match read_int_register_once(connection, request) {
+            Ok(value) => return Ok(value),
+            Err(error) => last_error = error,
+        }
+    }
+
+    Err(ReadIntRegisterError {
+        attempts: READ_ATTEMPTS,
+        last_error,
+    })
+}
+
+fn read_int_register_once(
+    connection: &mut SerialConnection,
+    request: ReadRegisterRequest,
+) -> Result<i16, ReadIntRegisterAttemptError> {
+    let request_bytes = request.encode();
+
+    let mut response_bytes = [0_u8; INT_READ_RESPONSE_LENGTH];
+
+    connection.exchange_exact(&request_bytes, &mut response_bytes)?;
+
+    let response = request.decode_response(&response_bytes)?;
+
+    match response.value() {
+        RegisterValue::Int(value) => Ok(*value),
+
+        value => Err(ReadIntRegisterAttemptError::UnexpectedValueType {
+            actual: register_value_type_name(value),
+        }),
+    }
+}
+
+fn register_value_type_name(value: &RegisterValue) -> &'static str {
+    match value {
+        RegisterValue::Bool(_) => "Bool",
+        RegisterValue::Ubyte(_) => "Ubyte",
+        RegisterValue::Byte(_) => "Byte",
+        RegisterValue::Uint(_) => "Uint",
+        RegisterValue::Int(_) => "Int",
+        RegisterValue::Ulong(_) => "Ulong",
+        RegisterValue::Long(_) => "Long",
+        RegisterValue::Float(_) => "Float",
+        RegisterValue::Double(_) => "Double",
+        RegisterValue::Ascii(_) => "ASCIIZ",
     }
 }
 
@@ -422,6 +485,75 @@ pub fn calculate_crc(bytes: &[u8]) -> u8 {
     }
 
     crc
+}
+
+#[derive(Debug)]
+pub struct ReadIntRegisterError {
+    attempts: usize,
+    last_error: ReadIntRegisterAttemptError,
+}
+
+impl std::fmt::Display for ReadIntRegisterError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Metakon register read failed after {} attempts: {}",
+            self.attempts, self.last_error,
+        )
+    }
+}
+
+impl std::error::Error for ReadIntRegisterError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.last_error)
+    }
+}
+
+#[derive(Debug)]
+enum ReadIntRegisterAttemptError {
+    Serial(SerialConnectionError),
+
+    InvalidResponse(ReadResponseError),
+
+    UnexpectedValueType { actual: &'static str },
+}
+
+impl std::fmt::Display for ReadIntRegisterAttemptError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Serial(error) => error.fmt(formatter),
+
+            Self::InvalidResponse(error) => error.fmt(formatter),
+
+            Self::UnexpectedValueType { actual } => {
+                write!(formatter, "Expected Metakon Int response, got {actual}",)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ReadIntRegisterAttemptError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Serial(error) => Some(error),
+
+            Self::InvalidResponse(error) => Some(error),
+
+            Self::UnexpectedValueType { .. } => None,
+        }
+    }
+}
+
+impl From<SerialConnectionError> for ReadIntRegisterAttemptError {
+    fn from(error: SerialConnectionError) -> Self {
+        Self::Serial(error)
+    }
+}
+
+impl From<ReadResponseError> for ReadIntRegisterAttemptError {
+    fn from(error: ReadResponseError) -> Self {
+        Self::InvalidResponse(error)
+    }
 }
 
 #[cfg(test)]
