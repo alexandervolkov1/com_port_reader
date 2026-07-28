@@ -9,6 +9,7 @@ mod data;
 mod device_emulator;
 mod device_emulator_handle;
 mod dsl;
+pub mod protocol;
 mod sample_sink;
 mod script;
 mod serial_connection;
