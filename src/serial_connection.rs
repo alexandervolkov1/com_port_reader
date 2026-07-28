@@ -90,6 +90,34 @@ pub struct SerialConnection {
 }
 
 impl SerialConnection {
+    #[allow(dead_code)]
+    pub fn exchange_exact(
+        &mut self,
+        request: &[u8],
+        response: &mut [u8],
+    ) -> Result<(), SerialConnectionError> {
+        if request.is_empty() {
+            return Err(SerialConnectionError::from(
+                "Binary serial request cannot be empty",
+            ));
+        }
+
+        if response.is_empty() {
+            return Err(SerialConnectionError::from(
+                "Binary serial response buffer cannot be empty",
+            ));
+        }
+
+        self.port.clear(ClearBuffer::Input)?;
+
+        self.port.write_all(request)?;
+        self.port.flush()?;
+
+        self.port.read_exact(response)?;
+
+        Ok(())
+    }
+
     pub fn request_text(&mut self, command: &str) -> Result<String, SerialConnectionError> {
         if command.trim().is_empty() {
             return Err(SerialConnectionError::from(
