@@ -20,6 +20,7 @@ pub enum AddSeriesError {
     EmptySerialCommand,
     SerialCommandContainsLineBreak,
     InvalidSerialStep,
+    InvalidMetakonScale,
 }
 
 impl std::fmt::Display for AddSeriesError {
@@ -38,6 +39,10 @@ impl std::fmt::Display for AddSeriesError {
             Self::InvalidSerialStep => {
                 formatter.write_str("Serial step must be finite and greater than zero")
             }
+
+            Self::InvalidMetakonScale => {
+                formatter.write_str("Metakon scale must be finite and greater than zero")
+            }
         }
     }
 }
@@ -47,9 +52,11 @@ impl std::error::Error for AddSeriesError {
         match self {
             Self::InvalidSignal(error) => Some(error),
             Self::InvalidName(error) => Some(error),
+
             Self::EmptySerialCommand
             | Self::SerialCommandContainsLineBreak
-            | Self::InvalidSerialStep => None,
+            | Self::InvalidSerialStep
+            | Self::InvalidMetakonScale => None,
         }
     }
 }
@@ -267,6 +274,24 @@ fn normalize_series_source(source: SeriesSource) -> Result<SeriesSource, AddSeri
             Ok(SeriesSource::SerialCommand {
                 command: command.to_owned(),
                 step,
+            })
+        }
+
+        SeriesSource::Metakon {
+            device,
+            channel,
+            register,
+            scale,
+        } => {
+            if !scale.is_finite() || scale <= 0.0 {
+                return Err(AddSeriesError::InvalidMetakonScale);
+            }
+
+            Ok(SeriesSource::Metakon {
+                device,
+                channel,
+                register,
+                scale,
             })
         }
     }
@@ -683,5 +708,40 @@ mod tests {
                 step: 1.0,
             },
         );
+    }
+
+    #[test]
+    fn stores_metakon_series() {
+        let store = SeriesStore::new();
+
+        store
+            .add_series(NewSeries::named_metakon(1, 0, 0x01, 0.1, "temperature"))
+            .unwrap();
+
+        let metadata = store.metadata();
+
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0].name, "temperature");
+
+        assert_eq!(
+            metadata[0].source,
+            SeriesSource::Metakon {
+                device: 1,
+                channel: 0,
+                register: 0x01,
+                scale: 0.1,
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_metakon_scale() {
+        let store = SeriesStore::new();
+
+        for scale in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let result = store.add_series(NewSeries::unnamed_metakon(1, 0, 0x01, scale));
+
+            assert_eq!(result, Err(AddSeriesError::InvalidMetakonScale),);
+        }
     }
 }

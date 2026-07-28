@@ -1,5 +1,6 @@
 use crate::{
     data::{Sample, SeriesId, SeriesMetadata, SeriesSample, SeriesSource},
+    protocol::metakon::{ReadRegisterRequest, read_int_register},
     serial_connection::{SerialConfigStore, SerialConnection},
 };
 
@@ -59,11 +60,14 @@ impl AcquisitionSource for SerialCommandSource {
         timestamp: f64,
         output: &mut Vec<SeriesSample>,
     ) -> Result<(), AcquisitionError> {
-        let has_serial_series = series
-            .iter()
-            .any(|series| matches!(&series.source, SeriesSource::SerialCommand { .. }));
+        let has_com_series = series.iter().any(|series| {
+            matches!(
+                &series.source,
+                SeriesSource::SerialCommand { .. } | SeriesSource::Metakon { .. }
+            )
+        });
 
-        if !has_serial_series {
+        if !has_com_series {
             return Ok(());
         }
 
@@ -72,19 +76,51 @@ impl AcquisitionSource for SerialCommandSource {
         })?;
 
         for series in series {
-            let SeriesSource::SerialCommand { command, step } = &series.source else {
-                continue;
+            let value = match &series.source {
+                SeriesSource::Generated(_) => {
+                    continue;
+                }
+
+                SeriesSource::SerialCommand { command, step } => {
+                    let request = serial_request(series.id, command, *step);
+
+                    connection.request_f64(&request).map_err(|error| {
+                        AcquisitionError::from(format!(
+                            "COM series '{}': request \
+                                 '{}' failed: {error}",
+                            series.name, request,
+                        ))
+                    })?
+                }
+
+                SeriesSource::Metakon {
+                    device,
+                    channel,
+                    register,
+                    scale,
+                } => {
+                    let request = ReadRegisterRequest::new(*device, *channel, *register);
+
+                    let raw_value = read_int_register(connection, request).map_err(|error| {
+                        AcquisitionError::from(format!(
+                            "Metakon series '{}': device {}, \
+                                     channel {}, register 0x{:02X} \
+                                     failed: {error}",
+                            series.name, device, channel, register,
+                        ))
+                    })?;
+
+                    if raw_value == i16::MIN {
+                        return Err(AcquisitionError::from(format!(
+                            "Metakon series '{}': instrument \
+                                 reported alarm value -32768",
+                            series.name,
+                        )));
+                    }
+
+                    f64::from(raw_value) * *scale
+                }
             };
-
-            let request = serial_request(series.id, command, *step);
-
-            let value = connection.request_f64(&request).map_err(|error| {
-                AcquisitionError::from(format!(
-                    "COM series '{}': request \
-                         '{}' failed: {error}",
-                    series.name, request,
-                ))
-            })?;
 
             output.push(SeriesSample::new(series.id, Sample::new(timestamp, value)));
         }
@@ -187,5 +223,36 @@ mod tests {
         let request = serial_request(SeriesId::new(42), "status", 5.0);
 
         assert_eq!(request, "status");
+    }
+
+    #[test]
+    fn reports_missing_config_for_metakon_series() {
+        let mut source = SerialCommandSource::new(SerialConfigStore::new());
+
+        let series = vec![SeriesMetadata {
+            id: SeriesId::new(1),
+            name: "temperature".to_owned(),
+
+            source: SeriesSource::Metakon {
+                device: 1,
+                channel: 0,
+                register: 0x01,
+                scale: 0.1,
+            },
+
+            visible: true,
+        }];
+
+        let mut output = Vec::new();
+
+        let error = source.sample(&series, 1_000.0, &mut output).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Cannot acquire serial series: \
+             COM port is not selected",
+        );
+
+        assert!(output.is_empty());
     }
 }

@@ -20,14 +20,26 @@ impl std::fmt::Display for SeriesId {
 #[derive(Clone, Debug, PartialEq)]
 pub enum SeriesSource {
     Generated(Signal),
-    SerialCommand { command: String, step: f64 },
+
+    SerialCommand {
+        command: String,
+        step: f64,
+    },
+
+    Metakon {
+        device: u8,
+        channel: u8,
+        register: u8,
+        scale: f64,
+    },
 }
 
 impl SeriesSource {
     pub fn generated_signal(&self) -> Option<&Signal> {
         match self {
             Self::Generated(signal) => Some(signal),
-            Self::SerialCommand { .. } => None,
+
+            Self::SerialCommand { .. } | Self::Metakon { .. } => None,
         }
     }
 
@@ -35,6 +47,7 @@ impl SeriesSource {
         match self {
             Self::Generated(signal) => signal.kind_name(),
             Self::SerialCommand { .. } => "serial",
+            Self::Metakon { .. } => "metakon",
         }
     }
 }
@@ -46,6 +59,19 @@ impl std::fmt::Display for SeriesSource {
 
             Self::SerialCommand { command, step } => {
                 write!(formatter, "COM command: {command}, step: {step}",)
+            }
+
+            Self::Metakon {
+                device,
+                channel,
+                register,
+                scale,
+            } => {
+                write!(
+                    formatter,
+                    "Metakon: device {device}, channel {channel}, \
+                     register 0x{register:02X}, scale {scale}",
+                )
             }
         }
     }
@@ -96,6 +122,36 @@ impl NewSeries {
         }
     }
 
+    pub fn unnamed_metakon(device: u8, channel: u8, register: u8, scale: f64) -> Self {
+        Self {
+            source: SeriesSource::Metakon {
+                device,
+                channel,
+                register,
+                scale,
+            },
+            name: None,
+        }
+    }
+
+    pub fn named_metakon(
+        device: u8,
+        channel: u8,
+        register: u8,
+        scale: f64,
+        name: impl Into<String>,
+    ) -> Self {
+        Self {
+            source: SeriesSource::Metakon {
+                device,
+                channel,
+                register,
+                scale,
+            },
+            name: Some(name.into()),
+        }
+    }
+
     pub(crate) fn into_source_parts(self) -> (SeriesSource, Option<String>) {
         (self.source, self.name)
     }
@@ -107,10 +163,10 @@ impl NewSeries {
         match source {
             SeriesSource::Generated(signal) => (signal, name),
 
-            SeriesSource::SerialCommand { .. } => {
+            SeriesSource::SerialCommand { .. } | SeriesSource::Metakon { .. } => {
                 panic!(
                     "expected generated series, \
-                     found serial series",
+                     found external series",
                 )
             }
         }
