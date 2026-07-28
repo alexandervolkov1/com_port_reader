@@ -90,10 +90,8 @@ pub struct SerialConnection {
 }
 
 impl SerialConnection {
-    pub fn request_f64(&mut self, command: &str) -> Result<f64, SerialConnectionError> {
-        let command = command.trim();
-
-        if command.is_empty() {
+    pub fn request_text(&mut self, command: &str) -> Result<String, SerialConnectionError> {
+        if command.trim().is_empty() {
             return Err(SerialConnectionError::from(
                 "Serial command cannot be empty",
             ));
@@ -120,6 +118,7 @@ impl SerialConnection {
 
             match byte[0] {
                 b'\n' => break,
+
                 b'\r' => {}
 
                 value => {
@@ -132,11 +131,17 @@ impl SerialConnection {
             }
         }
 
+        parse_text_response(&response)
+    }
+
+    pub fn request_f64(&mut self, command: &str) -> Result<f64, SerialConnectionError> {
+        let response = self.request_text(command.trim())?;
+
         parse_f64_response(&response)
     }
 }
 
-fn parse_f64_response(response: &[u8]) -> Result<f64, SerialConnectionError> {
+fn parse_text_response(response: &[u8]) -> Result<String, SerialConnectionError> {
     let response = std::str::from_utf8(response)
         .map_err(|error| {
             SerialConnectionError::from(format!("Serial response is not UTF-8: {error}",))
@@ -147,6 +152,10 @@ fn parse_f64_response(response: &[u8]) -> Result<f64, SerialConnectionError> {
         return Err(SerialConnectionError::from("Serial response is empty"));
     }
 
+    Ok(response.to_owned())
+}
+
+fn parse_f64_response(response: &str) -> Result<f64, SerialConnectionError> {
     let value = response.parse::<f64>().map_err(|error| {
         SerialConnectionError::from(format!("Invalid f64 response '{response}': {error}",))
     })?;
@@ -205,24 +214,46 @@ impl From<&str> for SerialConnectionError {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_f64_response;
+    use super::{parse_f64_response, parse_text_response};
 
     #[test]
     fn parses_f64_response() {
-        assert_eq!(parse_f64_response(b"  -12.5\r\n"), Ok(-12.5),);
+        assert_eq!(parse_f64_response("-12.5"), Ok(-12.5),);
     }
 
     #[test]
     fn rejects_invalid_f64_response() {
-        let error = parse_f64_response(b"not-a-number").unwrap_err();
+        let error = parse_f64_response("not-a-number").unwrap_err();
 
         assert!(error.to_string().contains("Invalid f64 response"),);
     }
 
     #[test]
     fn rejects_non_finite_response() {
-        let error = parse_f64_response(b"NaN").unwrap_err();
+        let error = parse_f64_response("NaN").unwrap_err();
 
-        assert!(error.to_string().contains("not finite"),);
+        assert!(error.to_string().contains("not finite"));
+    }
+
+    #[test]
+    fn parses_text_response() {
+        assert_eq!(
+            parse_text_response(b"  heater ready  \r"),
+            Ok("heater ready".to_owned()),
+        );
+    }
+
+    #[test]
+    fn rejects_empty_text_response() {
+        let error = parse_text_response(b"   ").unwrap_err();
+
+        assert_eq!(error.to_string(), "Serial response is empty",);
+    }
+
+    #[test]
+    fn rejects_non_utf8_text_response() {
+        let error = parse_text_response(&[0xff, 0xfe]).unwrap_err();
+
+        assert!(error.to_string().contains("Serial response is not UTF-8"),);
     }
 }
