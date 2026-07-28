@@ -9,6 +9,7 @@ pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
 
 use crate::sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError};
+use crate::serial_connection::SerialConnectionError;
 use crate::utils::current_time_f64;
 use crate::{
     acquisition::{AcquisitionError, AcquisitionSource},
@@ -57,6 +58,7 @@ impl Worker {
 
             let mut state = AcquisitionState::Stopped;
             let mut sample_batch: Vec<SeriesSample> = Vec::new();
+            let mut pending_command: Option<WorkerCommand> = None;
             loop {
                 let now = Instant::now();
 
@@ -166,16 +168,36 @@ impl Worker {
                     continue;
                 }
 
-                let command_result = match &state {
-                    AcquisitionState::Stopped => command_receiver
-                        .recv()
-                        .map_err(|_| RecvTimeoutError::Disconnected),
+                let command_result = if let Some(command) = pending_command.take() {
+                    Ok(command)
+                } else {
+                    match &state {
+                        AcquisitionState::Stopped => command_receiver
+                            .recv()
+                            .map_err(|_| RecvTimeoutError::Disconnected),
 
-                    AcquisitionState::Running { next_poll, .. } => {
-                        let timeout = next_poll.saturating_duration_since(now);
+                        AcquisitionState::Running { next_poll } => {
+                            let timeout = next_poll.saturating_duration_since(now);
 
-                        command_receiver.recv_timeout(timeout)
+                            command_receiver.recv_timeout(timeout)
+                        }
                     }
+                };
+
+                let poll_is_due = match &state {
+                    AcquisitionState::Stopped => false,
+
+                    AcquisitionState::Running { next_poll } => Instant::now() >= *next_poll,
+                };
+
+                let command_result = match command_result {
+                    Ok(command) if poll_is_due => {
+                        pending_command = Some(command);
+
+                        continue;
+                    }
+
+                    result => result,
                 };
 
                 match command_result {
@@ -385,6 +407,34 @@ impl Worker {
                         let _ = event_sender.send(event);
                     }
 
+                    Ok(WorkerCommand::SendSerialText { config, command }) => {
+                        let port_name = config.port_name().to_owned();
+
+                        let result = if matches!(state, AcquisitionState::Running { .. }) {
+                            request_text_from_active_source(source.as_mut(), &command)
+                        } else {
+                            config
+                                .open()
+                                .and_then(|mut connection| connection.request_text(&command))
+                        };
+
+                        let event = match result {
+                            Ok(response) => WorkerEvent::SerialTextCommandSucceeded {
+                                port_name,
+                                command,
+                                response,
+                            },
+
+                            Err(error) => WorkerEvent::SerialTextCommandFailed {
+                                port_name,
+                                command,
+                                error,
+                            },
+                        };
+
+                        let _ = event_sender.send(event);
+                    }
+
                     Err(RecvTimeoutError::Timeout) => {}
 
                     Err(RecvTimeoutError::Disconnected) => {
@@ -472,4 +522,19 @@ fn append_series_samples(
     }
 
     Ok(())
+}
+
+fn request_text_from_active_source(
+    source: &mut dyn AcquisitionSource,
+    command: &str,
+) -> Result<String, SerialConnectionError> {
+    source
+        .request_text(command)
+        .map_err(|error| SerialConnectionError::from(error.to_string()))?
+        .ok_or_else(|| {
+            SerialConnectionError::from(
+                "No acquisition source supports \
+                 text COM commands",
+            )
+        })
 }

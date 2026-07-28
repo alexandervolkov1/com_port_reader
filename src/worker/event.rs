@@ -43,6 +43,17 @@ pub enum WorkerEvent {
         command: String,
         error: SerialConnectionError,
     },
+    SerialTextCommandSucceeded {
+        port_name: String,
+        command: String,
+        response: String,
+    },
+
+    SerialTextCommandFailed {
+        port_name: String,
+        command: String,
+        error: SerialConnectionError,
+    },
 }
 
 impl std::fmt::Display for WorkerEvent {
@@ -132,6 +143,30 @@ impl std::fmt::Display for WorkerEvent {
                     formatter,
                     "COM port '{port_name}': \
                      command '{command}' failed: {error}",
+                )
+            }
+
+            Self::SerialTextCommandSucceeded {
+                port_name,
+                command,
+                response,
+            } => {
+                write!(
+                    formatter,
+                    "COM port '{port_name}': command \
+                     '{command}' returned: {response}",
+                )
+            }
+
+            Self::SerialTextCommandFailed {
+                port_name,
+                command,
+                error,
+            } => {
+                write!(
+                    formatter,
+                    "COM port '{port_name}': command \
+                     '{command}' failed: {error}",
                 )
             }
         }

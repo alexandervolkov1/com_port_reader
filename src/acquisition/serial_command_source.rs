@@ -20,12 +20,10 @@ impl SerialCommandSource {
 
     fn connection(&mut self) -> Result<&mut SerialConnection, AcquisitionError> {
         if self.connection.is_none() {
-            let config = self.config_store.snapshot().ok_or_else(|| {
-                AcquisitionError::from(
-                    "Cannot acquire serial series: \
-                         COM port is not selected",
-                )
-            })?;
+            let config = self
+                .config_store
+                .snapshot()
+                .ok_or_else(|| AcquisitionError::from("COM port is not selected"))?;
 
             let port_name = config.port_name().to_owned();
 
@@ -69,7 +67,9 @@ impl AcquisitionSource for SerialCommandSource {
             return Ok(());
         }
 
-        let connection = self.connection()?;
+        let connection = self.connection().map_err(|error| {
+            AcquisitionError::from(format!("Cannot acquire serial series: {error}",))
+        })?;
 
         for series in series {
             let SeriesSource::SerialCommand { command, step } = &series.source else {
@@ -90,6 +90,21 @@ impl AcquisitionSource for SerialCommandSource {
         }
 
         Ok(())
+    }
+
+    fn request_text(&mut self, command: &str) -> Result<Option<String>, AcquisitionError> {
+        let connection = self.connection().map_err(|error| {
+            AcquisitionError::from(format!(
+                "Cannot send COM command \
+                     '{command}': {error}",
+            ))
+        })?;
+
+        let response = connection.request_text(command).map_err(|error| {
+            AcquisitionError::from(format!("COM command '{command}' failed: {error}",))
+        })?;
+
+        Ok(Some(response))
     }
 
     fn stop(&mut self) -> Result<(), AcquisitionError> {

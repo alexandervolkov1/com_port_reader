@@ -27,4 +27,8 @@ pub enum WorkerCommand {
         config: SerialPortConfig,
         command: String,
     },
+    SendSerialText {
+        config: SerialPortConfig,
+        command: String,
+    },
 }

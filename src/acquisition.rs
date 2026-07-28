@@ -47,6 +47,10 @@ pub trait AcquisitionSource: Send {
         output: &mut Vec<SeriesSample>,
     ) -> Result<(), AcquisitionError>;
 
+    fn request_text(&mut self, _command: &str) -> Result<Option<String>, AcquisitionError> {
+        Ok(None)
+    }
+
     fn stop(&mut self) -> Result<(), AcquisitionError> {
         Ok(())
     }

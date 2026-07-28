@@ -49,6 +49,16 @@ impl AcquisitionSource for CombinedSource {
         Ok(())
     }
 
+    fn request_text(&mut self, command: &str) -> Result<Option<String>, AcquisitionError> {
+        for source in &mut self.sources {
+            if let Some(response) = source.request_text(command)? {
+                return Ok(Some(response));
+            }
+        }
+
+        Ok(None)
+    }
+
     fn stop(&mut self) -> Result<(), AcquisitionError> {
         let mut combined_error = None;
 
@@ -108,6 +118,26 @@ mod tests {
         }
     }
 
+    struct TextSource;
+
+    impl AcquisitionSource for TextSource {
+        fn sample(
+            &mut self,
+            _series: &[SeriesMetadata],
+            _timestamp: f64,
+            _output: &mut Vec<SeriesSample>,
+        ) -> Result<(), crate::acquisition::AcquisitionError> {
+            Ok(())
+        }
+
+        fn request_text(
+            &mut self,
+            command: &str,
+        ) -> Result<Option<String>, crate::acquisition::AcquisitionError> {
+            Ok(Some(format!("response to '{command}'")))
+        }
+    }
+
     #[test]
     fn collects_samples_from_all_sources() {
         let first_id = SeriesId::new(1);
@@ -129,5 +159,17 @@ mod tests {
                 SeriesSample::new(second_id, Sample::new(1_000.0, 20.0),),
             ],
         );
+    }
+
+    #[test]
+    fn routes_text_request_to_supporting_source() {
+        let mut source = CombinedSource::new(vec![
+            Box::new(FixedSource::new(SeriesId::new(1), 10.0)),
+            Box::new(TextSource),
+        ]);
+
+        let response = source.request_text("status").unwrap();
+
+        assert_eq!(response.as_deref(), Some("response to 'status'"),);
     }
 }

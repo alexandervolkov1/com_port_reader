@@ -70,6 +70,16 @@ pub fn parse_command(input: &str) -> Result<UserCommand, String> {
         return parse_without_arguments(arguments, UserCommand::StopEmulator);
     }
 
+    if first_token.eq_ignore_ascii_case("com") || first_token.eq_ignore_ascii_case("serial") {
+        if let Some(action) = arguments.split_whitespace().next() {
+            if action.eq_ignore_ascii_case("send") {
+                let send_arguments = arguments[action.len()..].trim();
+
+                return parse_serial_send(send_arguments);
+            }
+        }
+    }
+
     parse_series(input).map(UserCommand::Add)
 }
 
@@ -219,6 +229,61 @@ fn finish(signal: Signal, name: Option<String>) -> Result<NewSeries, String> {
         Some(name) => NewSeries::named(signal, name),
         None => NewSeries::unnamed(signal),
     })
+}
+
+fn parse_serial_send(arguments: &str) -> Result<UserCommand, String> {
+    if arguments.is_empty() {
+        return Err("Missing command text for 'send'".to_owned());
+    }
+
+    let Some(contents) = arguments.strip_prefix('"') else {
+        return Err("Command text for 'send' must be enclosed \
+             in double quotes"
+            .to_owned());
+    };
+
+    let mut command = String::new();
+    let mut characters = contents.chars();
+
+    while let Some(character) = characters.next() {
+        match character {
+            '"' => {
+                let trailing = characters.as_str().trim();
+
+                if let Some(argument) = trailing.split_whitespace().next() {
+                    return Err(format!("Unexpected argument: {argument}",));
+                }
+
+                if command.trim().is_empty() {
+                    return Err("Serial command cannot be empty".to_owned());
+                }
+
+                return Ok(UserCommand::SendSerial { command });
+            }
+
+            '\\' => match characters.next() {
+                Some('"') => command.push('"'),
+                Some('\\') => command.push('\\'),
+
+                Some(character) => {
+                    command.push('\\');
+                    command.push(character);
+                }
+
+                None => {
+                    return Err("Unterminated escape sequence \
+                         in command 'send'"
+                        .to_owned());
+                }
+            },
+
+            character => {
+                command.push(character);
+            }
+        }
+    }
+
+    Err("Missing closing quote for command 'send'".to_owned())
 }
 
 fn parse_serial(tokens: &mut SplitWhitespace<'_>) -> Result<NewSeries, String> {
@@ -861,6 +926,48 @@ mod tests {
         assert_eq!(
             parse_command("stop_emulator extra").unwrap_err(),
             "Unexpected argument: extra",
+        );
+    }
+
+    #[test]
+    fn parses_serial_send_command() {
+        let command = parse_command(r#"com send "set power 50""#).unwrap();
+
+        let UserCommand::SendSerial { command } = command else {
+            panic!("expected serial send command");
+        };
+
+        assert_eq!(command, "set power 50");
+    }
+
+    #[test]
+    fn parses_serial_send_alias() {
+        let command = parse_command(r#"serial send "walk""#).unwrap();
+
+        let UserCommand::SendSerial { command } = command else {
+            panic!("expected serial send command");
+        };
+
+        assert_eq!(command, "walk");
+    }
+
+    #[test]
+    fn parses_quotes_in_serial_command() {
+        let command = parse_command(r#"com send "set name \"heater\"""#).unwrap();
+
+        let UserCommand::SendSerial { command } = command else {
+            panic!("expected serial send command");
+        };
+
+        assert_eq!(command, r#"set name "heater""#);
+    }
+
+    #[test]
+    fn rejects_unquoted_serial_send_command() {
+        assert_eq!(
+            parse_command("com send set power 50").unwrap_err(),
+            "Command text for 'send' must be enclosed \
+             in double quotes",
         );
     }
 }

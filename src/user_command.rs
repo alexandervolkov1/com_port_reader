@@ -22,4 +22,8 @@ pub enum UserCommand {
 
     StartEmulator,
     StopEmulator,
+
+    SendSerial {
+        command: String,
+    },
 }

@@ -199,7 +199,7 @@ impl SerialSettingsModel {
         self.config_store.set(self.serial_config());
     }
 
-    fn serial_config(&self) -> Option<SerialPortConfig> {
+    pub fn serial_config(&self) -> Option<SerialPortConfig> {
         let port_name = self.selected_port.clone()?;
         let settings = self.settings;
 

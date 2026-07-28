@@ -157,6 +157,20 @@ fn show_command_reference(ui: &mut egui::Ui) {
         "Renames an existing series without changing its data.",
     );
 
+    reference(
+        ui,
+        "com send \"text\"",
+        "Sends one text command to the selected COM \
+         port, waits for one line of response and \
+         writes it to the application log.",
+    );
+
+    reference(
+        ui,
+        "serial send \"text\"",
+        "'serial' is an alias for 'com'.",
+    );
+
     ui.separator();
     ui.heading("Script files");
 

@@ -86,6 +86,14 @@ impl WorkerHandle {
     pub fn set_poll_interval(&self, poll_interval: Duration) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::SetPollInterval(poll_interval))
     }
+
+    pub fn send_serial_text(
+        &self,
+        config: SerialPortConfig,
+        command: String,
+    ) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::SendSerialText { config, command })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

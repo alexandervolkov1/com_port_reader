@@ -124,6 +124,21 @@ impl CommandModel {
             UserCommand::StopEmulator => {
                 device_emulator.stop();
             }
+
+            UserCommand::SendSerial { command } => {
+                let Some(config) = serial_settings.serial_config() else {
+                    self.log.error(
+                        "Cannot send COM command: select a \
+                         COM port in Settings.",
+                    );
+
+                    return;
+                };
+
+                if let Err(error) = self.worker_handle.send_serial_text(config, command) {
+                    self.set_worker_error(error);
+                }
+            }
         }
     }
 
@@ -162,5 +177,6 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
             | WorkerEvent::SampleSinkFailed(_)
             | WorkerEvent::SerialPortTestFailed { .. }
             | WorkerEvent::SerialCommandFailed { .. }
+            | WorkerEvent::SerialTextCommandFailed { .. }
     )
 }
