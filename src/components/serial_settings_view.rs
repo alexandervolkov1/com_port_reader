@@ -336,8 +336,7 @@ fn show_emulator_controls(
     });
 
     ui.horizontal(|ui| {
-        let can_start = !acquisition_running && emulator.can_start(serial.selected_port());
-
+        let can_start = emulator.can_start(serial.selected_port());
         if ui
             .add_enabled(can_start, egui::Button::new("Start emulator"))
             .clicked()

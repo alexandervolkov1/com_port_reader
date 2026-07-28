@@ -129,11 +129,24 @@ impl DeviceEmulatorModel {
             return;
         };
 
+        let port_name = self.selected_port.clone();
+
         match handle.stop() {
             Ok(()) => {
                 self.error = None;
 
-                self.log.info("Device emulator stopped.");
+                match port_name {
+                    Some(port_name) => {
+                        self.log.info(format!(
+                            "Device emulator stopped on \
+                             {port_name}.",
+                        ));
+                    }
+
+                    None => {
+                        self.log.info("Device emulator stopped.");
+                    }
+                }
             }
 
             Err(error) => {
@@ -156,15 +169,30 @@ impl DeviceEmulatorModel {
             return;
         };
 
+        let port_name = self.selected_port.clone();
+
         match handle.stop() {
-            Ok(()) => {
-                self.log.info("Device emulator stopped.");
-            }
+            Ok(()) => match port_name {
+                Some(port_name) => {
+                    self.log.info(format!(
+                        "Device emulator stopped on \
+                             {port_name}.",
+                    ));
+                }
+
+                None => {
+                    self.log.info("Device emulator stopped.");
+                }
+            },
 
             Err(error) => {
+                let location = port_name
+                    .as_deref()
+                    .map_or(String::new(), |port| format!(" on {port}"));
+
                 self.report_error(format!(
-                    "Device emulator stopped with an \
-                     error: {error}",
+                    "Device emulator{location} stopped \
+                     with an error: {error}",
                 ));
             }
         }
