@@ -49,6 +49,10 @@ pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<(
 
     register_add_serial(lua, &app, command_sender.clone())?;
 
+    register_delete_series(lua, &app, command_sender.clone())?;
+
+    register_rename_series(lua, &app, command_sender.clone())?;
+
     register_send_serial(lua, &app, command_sender)?;
 
     lua.globals().set("app", app)
@@ -84,6 +88,36 @@ fn register_add_serial(
     })?;
 
     app.set("add_serial", function)
+}
+
+fn register_delete_series(
+    lua: &Lua,
+    app: &Table,
+    command_sender: Sender<UserCommand>,
+) -> mlua::Result<()> {
+    let function = lua.create_function(move |_, name: String| {
+        send_application_command(&command_sender, UserCommand::Delete { name })
+    })?;
+
+    app.set("delete", function)
+}
+
+fn register_rename_series(
+    lua: &Lua,
+    app: &Table,
+    command_sender: Sender<UserCommand>,
+) -> mlua::Result<()> {
+    let function = lua.create_function(move |_, (current_name, new_name): (String, String)| {
+        send_application_command(
+            &command_sender,
+            UserCommand::Rename {
+                current_name,
+                new_name,
+            },
+        )
+    })?;
+
+    app.set("rename", function)
 }
 
 fn register_send_serial(

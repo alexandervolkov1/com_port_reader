@@ -275,4 +275,45 @@ mod tests {
 
         assert!(command_receiver.try_recv().is_err());
     }
+
+    #[test]
+    fn exposes_series_management_commands() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                app.delete("temperature")
+
+                app.rename(
+                    "pressure",
+                    "reactor_pressure"
+                )
+                "#,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::Delete { name }
+                if name == "temperature",
+        ));
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::Rename {
+                current_name,
+                new_name,
+            }
+                if current_name == "pressure"
+                    && new_name
+                        == "reactor_pressure",
+        ));
+
+        assert!(command_receiver.try_recv().is_err());
+    }
 }

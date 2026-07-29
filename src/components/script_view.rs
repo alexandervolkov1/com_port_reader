@@ -18,7 +18,7 @@ pub fn show(
     device_emulator: &mut DeviceEmulatorModel,
     log: &LogHandle,
 ) {
-    if ui.button("Run script...").clicked() {
+    if ui.button("Run DSL script...").clicked() {
         let selected_file = FileDialog::new()
             .set_title("Run signal script")
             .set_directory("signal_scripts")

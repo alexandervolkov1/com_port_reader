@@ -1,3 +1,8 @@
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
 use crossbeam_channel::{Receiver, TryRecvError};
 
 use crate::{
@@ -5,11 +10,16 @@ use crate::{
     lua_worker::{LuaEvent, LuaWorkerHandle},
 };
 
+enum PendingExecution {
+    Console,
+    File(PathBuf),
+}
+
 pub struct LuaConsoleModel {
     worker: LuaWorkerHandle,
     event_receiver: Receiver<LuaEvent>,
     command_buffer: String,
-    pending: bool,
+    pending: Option<PendingExecution>,
     disconnected: bool,
     focus_requested: bool,
     log: LogHandle,
@@ -25,7 +35,7 @@ impl LuaConsoleModel {
             worker,
             event_receiver,
             command_buffer: String::new(),
-            pending: false,
+            pending: None,
             disconnected: false,
             focus_requested: false,
             log,
@@ -37,11 +47,11 @@ impl LuaConsoleModel {
     }
 
     pub fn is_pending(&self) -> bool {
-        self.pending
+        self.pending.is_some()
     }
 
     pub fn is_available(&self) -> bool {
-        !self.pending && !self.disconnected
+        self.pending.is_none() && !self.disconnected
     }
 
     pub fn take_focus_request(&mut self) -> bool {
@@ -53,21 +63,29 @@ impl LuaConsoleModel {
             return;
         }
 
-        match self.worker.execute(self.command_buffer.clone()) {
-            Ok(()) => {
-                self.pending = true;
-            }
+        self.submit_source(self.command_buffer.clone(), PendingExecution::Console);
+    }
+
+    pub fn run_file(&mut self, path: &Path) {
+        if !self.is_available() {
+            return;
+        }
+
+        let source = match fs::read_to_string(path) {
+            Ok(source) => source,
 
             Err(error) => {
-                self.disconnected = true;
-                self.focus_requested = true;
-
                 self.log.error(format!(
-                    "Failed to submit Lua command: \
+                    "Failed to read Lua script '{}': \
                      {error}",
+                    path.display(),
                 ));
+
+                return;
             }
-        }
+        };
+
+        self.submit_source(source, PendingExecution::File(path.to_path_buf()));
     }
 
     pub fn poll_events(&mut self) {
@@ -83,9 +101,11 @@ impl LuaConsoleModel {
 
                 Err(TryRecvError::Disconnected) => {
                     if !self.disconnected {
+                        let pending = self.pending.take();
+
                         self.disconnected = true;
-                        self.pending = false;
-                        self.focus_requested = true;
+
+                        self.focus_requested = matches!(&pending, Some(PendingExecution::Console),);
 
                         self.log.error(
                             "Lua worker event channel \
@@ -99,29 +119,87 @@ impl LuaConsoleModel {
         }
     }
 
+    fn submit_source(&mut self, source: String, origin: PendingExecution) {
+        let focus_on_error = matches!(&origin, PendingExecution::Console,);
+
+        match self.worker.execute(source) {
+            Ok(()) => {
+                self.pending = Some(origin);
+            }
+
+            Err(error) => {
+                self.disconnected = true;
+                self.focus_requested = focus_on_error;
+
+                match origin {
+                    PendingExecution::Console => {
+                        self.log.error(format!(
+                            "Failed to submit Lua \
+                             command: {error}",
+                        ));
+                    }
+
+                    PendingExecution::File(path) => {
+                        self.log.error(format!(
+                            "Failed to submit Lua \
+                             script '{}': {error}",
+                            path.display(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     fn handle_event(&mut self, event: LuaEvent) {
-        self.pending = false;
-        self.focus_requested = true;
+        let pending = self.pending.take();
+
+        self.focus_requested = matches!(&pending, Some(PendingExecution::Console),);
 
         match event {
             LuaEvent::ExecutionSucceeded(output) => {
-                self.command_buffer.clear();
+                match pending {
+                    Some(PendingExecution::Console) => {
+                        self.command_buffer.clear();
+                    }
+
+                    Some(PendingExecution::File(path)) => {
+                        self.log.info(format!(
+                            "Lua script '{}' \
+                             executed successfully.",
+                            path.display(),
+                        ));
+                    }
+
+                    None => {}
+                }
 
                 if !output.is_empty() {
                     self.log.info(format!("Lua result: {}", output.join("\t"),));
                 }
             }
 
-            LuaEvent::ExecutionFailed(error) => {
-                self.log.error(format!("Lua error: {error}",));
-            }
+            LuaEvent::ExecutionFailed(error) => match pending {
+                Some(PendingExecution::File(path)) => {
+                    self.log.error(format!(
+                        "Lua script '{}' failed: \
+                             {error}",
+                        path.display(),
+                    ));
+                }
+
+                Some(PendingExecution::Console) | None => {
+                    self.log.error(format!("Lua error: {error}",));
+                }
+            },
 
             LuaEvent::InitializationFailed(error) => {
                 self.disconnected = true;
+                self.focus_requested = true;
 
                 self.log.error(format!(
-                    "Failed to initialize Lua runtime: \
-                     {error}",
+                    "Failed to initialize Lua \
+                     runtime: {error}",
                 ));
             }
         }
