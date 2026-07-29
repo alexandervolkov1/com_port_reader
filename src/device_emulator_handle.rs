@@ -1,6 +1,7 @@
 use std::{
     fs,
     io::{Read, Write},
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -13,8 +14,7 @@ use std::{
 use serialport::{ClearBuffer, DataBits, FlowControl, Parity, SerialPort, StopBits};
 
 use crate::{
-    device_emulator::DeviceEmulator,
-    device_model::{DeviceModel, DeviceModelError, DeviceModelSource},
+    device_model::{DeviceModel, DeviceModelError},
     lua_device_model::LuaDeviceModel,
 };
 
@@ -40,7 +40,7 @@ pub struct DeviceEmulatorHandle {
 impl DeviceEmulatorHandle {
     pub fn start(
         config: DeviceEmulatorPortConfig,
-        model_source: DeviceModelSource,
+        script_path: PathBuf,
     ) -> Result<Self, DeviceEmulatorHandleError> {
         if config.port_name.trim().is_empty() {
             return Err(DeviceEmulatorHandleError::from(
@@ -75,7 +75,7 @@ impl DeviceEmulatorHandle {
         let (startup_sender, startup_receiver) = mpsc::sync_channel(1);
 
         let thread = thread::Builder::new().name(thread_name).spawn(move || {
-            run_emulator(port, thread_stop_requested, model_source, startup_sender)
+            run_emulator(port, thread_stop_requested, script_path, startup_sender)
         })?;
 
         match startup_receiver.recv() {
@@ -142,10 +142,10 @@ impl Drop for DeviceEmulatorHandle {
 fn run_emulator(
     mut port: Box<dyn SerialPort>,
     stop_requested: Arc<AtomicBool>,
-    model_source: DeviceModelSource,
+    script_path: PathBuf,
     startup_sender: SyncSender<Result<(), DeviceEmulatorHandleError>>,
 ) -> Result<(), DeviceEmulatorHandleError> {
-    let mut model = match create_device_model(model_source) {
+    let mut model = match create_device_model(script_path) {
         Ok(model) => model,
 
         Err(error) => {
@@ -216,33 +216,24 @@ fn run_emulator(
     Ok(())
 }
 
-fn create_device_model(
-    source: DeviceModelSource,
-) -> Result<Box<dyn DeviceModel>, DeviceEmulatorHandleError> {
-    match source {
-        DeviceModelSource::BuiltIn => Ok(Box::new(DeviceEmulator::new())),
+fn create_device_model(path: PathBuf) -> Result<Box<dyn DeviceModel>, DeviceEmulatorHandleError> {
+    let script = fs::read_to_string(&path).map_err(|error| {
+        DeviceEmulatorHandleError::from(format!(
+            "Failed to read Lua device script \
+                 '{}': {error}",
+            path.display(),
+        ))
+    })?;
 
-        DeviceModelSource::LuaScript(path) => {
-            let script = fs::read_to_string(&path).map_err(|error| {
-                DeviceEmulatorHandleError::from(format!(
-                    "Failed to read Lua device \
-                         script '{}': {error}",
-                    path.display(),
-                ))
-            })?;
+    let model = LuaDeviceModel::from_source(&script).map_err(|error| {
+        DeviceEmulatorHandleError::from(format!(
+            "Failed to initialize Lua device \
+                     script '{}': {error}",
+            path.display(),
+        ))
+    })?;
 
-            let model = LuaDeviceModel::from_source(&script).map_err(|error| {
-                DeviceEmulatorHandleError::from(format!(
-                    "Failed to initialize Lua \
-                             device script '{}': \
-                             {error}",
-                    path.display(),
-                ))
-            })?;
-
-            Ok(Box::new(model))
-        }
-    }
+    Ok(Box::new(model))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

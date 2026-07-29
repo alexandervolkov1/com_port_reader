@@ -16,7 +16,7 @@ const DEFAULT_TIMEOUT_MS: u64 = 250;
 const MIN_PLOT_POINTS_PER_SERIES: usize = 4;
 const MAX_PLOT_POINTS_PER_SERIES: usize = 100_000;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AppConfig {
     pub application: ApplicationSettings,
@@ -96,16 +96,6 @@ impl AppConfig {
                 path.display(),
             )
         })
-    }
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            application: ApplicationSettings::default(),
-            serial: SerialPortSettings::default(),
-            emulator: EmulatorSettings::default(),
-        }
     }
 }
 
@@ -197,7 +187,7 @@ impl SerialPortSettings {
             return Err("serial.baud_rate must be greater than zero".to_owned());
         }
 
-        if !matches!(self.data_bits, 5 | 6 | 7 | 8) {
+        if !matches!(self.data_bits, 5..=8) {
             return Err("serial.data_bits must be 5, 6, 7 or 8".to_owned());
         }
 

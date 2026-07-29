@@ -1,14 +1,10 @@
-use chrono::Local;
-use crossbeam_channel::{Receiver, Sender};
-
 use std::path::{Path, PathBuf};
 
+use chrono::Local;
+
 use crate::{
-    acquisition::AcquisitionSource,
     app_log::LogHandle,
-    data::SeriesStore,
-    sample_sink::SampleSink,
-    worker::{Worker, WorkerCommand, WorkerConfig, WorkerEvent, WorkerHandle, WorkerHandleError},
+    worker::{Worker, WorkerEvent, WorkerHandleError},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,26 +22,7 @@ pub struct ControlsModel {
 }
 
 impl ControlsModel {
-    pub fn new(
-        series: SeriesStore,
-        worker_handle: WorkerHandle,
-        command_receiver: Receiver<WorkerCommand>,
-        event_sender: Sender<WorkerEvent>,
-        source: Box<dyn AcquisitionSource>,
-        sink: Box<dyn SampleSink>,
-        config: WorkerConfig,
-        log: LogHandle,
-    ) -> Self {
-        let worker = Worker::spawn(
-            worker_handle,
-            command_receiver,
-            event_sender,
-            series,
-            source,
-            sink,
-            config,
-        );
-
+    pub fn new(worker: Worker, log: LogHandle) -> Self {
         Self {
             worker,
             recording_file: None,

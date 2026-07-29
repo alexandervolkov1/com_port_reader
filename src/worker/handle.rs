@@ -75,14 +75,6 @@ impl WorkerHandle {
         self.send(WorkerCommand::TestSerialPort(config))
     }
 
-    pub fn test_serial_command(
-        &self,
-        config: SerialPortConfig,
-        command: String,
-    ) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::TestSerialCommand { config, command })
-    }
-
     pub fn set_poll_interval(&self, poll_interval: Duration) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::SetPollInterval(poll_interval))
     }

@@ -4,7 +4,6 @@ use crate::{
     app_log::LogHandle,
     components::serial_settings_model::SerialSettings,
     device_emulator_handle::{DeviceEmulatorHandle, DeviceEmulatorPortConfig},
-    device_model::DeviceModelSource,
 };
 
 pub struct DeviceEmulatorModel {
@@ -12,17 +11,11 @@ pub struct DeviceEmulatorModel {
     handle: Option<DeviceEmulatorHandle>,
     error: Option<String>,
     log: LogHandle,
-    model_source: DeviceModelSource,
+    script_path: Option<PathBuf>,
 }
 
 impl DeviceEmulatorModel {
     pub fn new(configured_port: &str, configured_script_path: &str, log: LogHandle) -> Self {
-        let model_source = if configured_script_path.is_empty() {
-            DeviceModelSource::BuiltIn
-        } else {
-            DeviceModelSource::LuaScript(PathBuf::from(configured_script_path))
-        };
-
         Self {
             selected_port: if configured_port.is_empty() {
                 None
@@ -30,7 +23,12 @@ impl DeviceEmulatorModel {
                 Some(configured_port.to_owned())
             },
 
-            model_source,
+            script_path: if configured_script_path.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(configured_script_path))
+            },
+
             handle: None,
             error: None,
             log,
@@ -75,6 +73,7 @@ impl DeviceEmulatorModel {
 
     pub fn can_start(&self, client_port: Option<&str>) -> bool {
         !self.is_running()
+            && self.script_path.is_some()
             && self
                 .selected_port()
                 .is_some_and(|port| Some(port) != client_port)
@@ -97,6 +96,12 @@ impl DeviceEmulatorModel {
             return;
         };
 
+        let Some(script_path) = self.script_path.clone() else {
+            self.report_error("Select a Lua device model first.");
+
+            return;
+        };
+
         if Some(port_name.as_str()) == client_port {
             self.report_error(
                 "The application and emulator must use \
@@ -115,17 +120,9 @@ impl DeviceEmulatorModel {
             flow_control: settings.flow_control,
         };
 
-        let model_source = self.model_source.clone();
+        let model_description = format!("Lua model '{}'", script_path.display(),);
 
-        let model_description = match &model_source {
-            DeviceModelSource::BuiltIn => "built-in model".to_owned(),
-
-            DeviceModelSource::LuaScript(path) => {
-                format!("Lua model '{}'", path.display())
-            }
-        };
-
-        match DeviceEmulatorHandle::start(config, model_source) {
+        match DeviceEmulatorHandle::start(config, script_path) {
             Ok(handle) => {
                 self.handle = Some(handle);
                 self.error = None;
@@ -227,11 +224,7 @@ impl DeviceEmulatorModel {
     }
 
     pub fn script_path(&self) -> Option<&Path> {
-        match &self.model_source {
-            DeviceModelSource::BuiltIn => None,
-
-            DeviceModelSource::LuaScript(path) => Some(path),
-        }
+        self.script_path.as_deref()
     }
 
     pub fn set_script_path(&mut self, path: PathBuf) {
@@ -239,17 +232,7 @@ impl DeviceEmulatorModel {
             return;
         }
 
-        self.model_source = DeviceModelSource::LuaScript(path);
-
-        self.error = None;
-    }
-
-    pub fn use_built_in_model(&mut self) {
-        if self.is_running() {
-            return;
-        }
-
-        self.model_source = DeviceModelSource::BuiltIn;
+        self.script_path = Some(path);
         self.error = None;
     }
 }

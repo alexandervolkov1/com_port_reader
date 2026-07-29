@@ -1,10 +1,4 @@
-use std::{path::PathBuf, time::Duration};
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DeviceModelSource {
-    BuiltIn,
-    LuaScript(PathBuf),
-}
+use std::time::Duration;
 
 pub trait DeviceModel {
     fn handle_command(

@@ -151,7 +151,6 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
             | WorkerEvent::SeriesRenameFailed(_)
             | WorkerEvent::SampleSinkFailed(_)
             | WorkerEvent::SerialPortTestFailed { .. }
-            | WorkerEvent::SerialCommandFailed { .. }
             | WorkerEvent::SerialTextCommandFailed { .. }
     )
 }

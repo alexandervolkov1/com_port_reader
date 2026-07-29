@@ -14,7 +14,7 @@ use crate::lua_worker::LuaWorker;
 use crate::sample_sink::NullSampleSink;
 use crate::serial_connection::SerialConfigStore;
 use crate::user_command::UserCommand;
-use crate::worker::{WorkerConfig, WorkerHandle};
+use crate::worker::{Worker, WorkerConfig, WorkerHandle};
 use crate::{
     app_log::{LogHandle, LogModel},
     components::log_view,
@@ -83,16 +83,17 @@ impl MyApp {
             serial_config_store,
         ))]);
 
-        let controls = ControlsModel::new(
-            series.clone(),
+        let worker = Worker::spawn(
             worker_handle.clone(),
             command_receiver,
             event_sender,
+            series.clone(),
             Box::new(source),
             Box::new(NullSampleSink::new()),
             worker_config,
-            log_handle.clone(),
         );
+
+        let controls = ControlsModel::new(worker, log_handle.clone());
 
         let command = CommandModel::new(worker_handle.clone(), event_receiver, log_handle.clone());
 

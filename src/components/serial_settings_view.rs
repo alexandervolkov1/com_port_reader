@@ -100,15 +100,6 @@ pub fn show_window(
                 show_line_settings(ui, model);
             });
 
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(!serial_settings_locked, egui::Button::new("Test walk"))
-                    .clicked()
-                {
-                    model.test_command(worker_handle, "walk");
-                }
-            });
-
             ui.separator();
 
             show_emulator_controls(ui, model, emulator, acquisition_running);
@@ -343,18 +334,16 @@ fn show_emulator_controls(
 
     let model_selection_enabled = !emulator.is_running();
 
-    let using_lua_model = emulator.script_path().is_some();
-
     let model_name = emulator
         .script_path()
         .and_then(|path| path.file_name())
         .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "Built-in random walk".to_owned());
+        .unwrap_or_else(|| "No Lua model selected".to_owned());
 
     let model_tooltip = emulator
         .script_path()
         .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "Built-in Rust random-walk model".to_owned());
+        .unwrap_or_else(|| "Choose a Lua device model".to_owned());
 
     ui.horizontal(|ui| {
         ui.label("Device model:");
@@ -371,16 +360,6 @@ fn show_emulator_controls(
                 .pick_file()
         {
             emulator.set_script_path(path);
-        }
-
-        if ui
-            .add_enabled(
-                model_selection_enabled && using_lua_model,
-                egui::Button::new("Use built-in"),
-            )
-            .clicked()
-        {
-            emulator.use_built_in_model();
         }
     });
 

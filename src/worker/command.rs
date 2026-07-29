@@ -23,10 +23,6 @@ pub enum WorkerCommand {
     StartCsvRecording(PathBuf),
     StopRecording,
     TestSerialPort(SerialPortConfig),
-    TestSerialCommand {
-        config: SerialPortConfig,
-        command: String,
-    },
     SendSerialText {
         config: SerialPortConfig,
         command: String,

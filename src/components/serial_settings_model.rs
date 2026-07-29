@@ -177,24 +177,6 @@ impl SerialSettingsModel {
         }
     }
 
-    pub fn test_command(&mut self, worker_handle: &WorkerHandle, command: &str) {
-        let Some(config) = self.serial_config() else {
-            self.error = Some("Select a COM port first.".to_owned());
-
-            return;
-        };
-
-        match worker_handle.test_serial_command(config, command.to_owned()) {
-            Ok(()) => {
-                self.error = None;
-            }
-
-            Err(error) => {
-                self.error = Some(error.to_string());
-            }
-        }
-    }
-
     pub fn publish_config(&self) {
         self.config_store.set(self.serial_config());
     }

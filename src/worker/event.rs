@@ -32,17 +32,7 @@ pub enum WorkerEvent {
         port_name: String,
         error: SerialConnectionError,
     },
-    SerialCommandSucceeded {
-        port_name: String,
-        command: String,
-        value: f64,
-    },
 
-    SerialCommandFailed {
-        port_name: String,
-        command: String,
-        error: SerialConnectionError,
-    },
     SerialTextCommandSucceeded {
         port_name: String,
         command: String,
@@ -119,30 +109,6 @@ impl std::fmt::Display for WorkerEvent {
                     formatter,
                     "Failed to open COM port '{port_name}': \
                      {error}",
-                )
-            }
-
-            Self::SerialCommandSucceeded {
-                port_name,
-                command,
-                value,
-            } => {
-                write!(
-                    formatter,
-                    "COM port '{port_name}': \
-                     '{command}' returned {value}.",
-                )
-            }
-
-            Self::SerialCommandFailed {
-                port_name,
-                command,
-                error,
-            } => {
-                write!(
-                    formatter,
-                    "COM port '{port_name}': \
-                     command '{command}' failed: {error}",
                 )
             }
 

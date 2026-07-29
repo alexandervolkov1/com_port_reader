@@ -7,9 +7,6 @@ mod lua_device_model;
 #[path = "../lua_execution.rs"]
 mod lua_execution;
 
-#[path = "../device_emulator.rs"]
-mod device_emulator;
-
 #[path = "../device_emulator_handle.rs"]
 mod device_emulator_handle;
 
@@ -25,11 +22,10 @@ use std::{
 
 use device_emulator_handle::{DeviceEmulatorHandle, DeviceEmulatorPortConfig};
 
-use device_model::DeviceModelSource;
-
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 const DEFAULT_BAUD_RATE: u32 = 9_600;
+
 const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 fn main() {
@@ -47,8 +43,17 @@ fn run() -> Result<(), Box<dyn Error>> {
         io::Error::new(
             io::ErrorKind::InvalidInput,
             "missing COM port; usage: \
-             device_emulator <PORT> [BAUD] \
-             [LUA_SCRIPT]",
+             device_emulator <PORT> \
+             <LUA_SCRIPT> [BAUD]",
+        )
+    })?;
+
+    let script_path = arguments.next().map(PathBuf::from).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "missing Lua script; usage: \
+                 device_emulator <PORT> \
+                 <LUA_SCRIPT> [BAUD]",
         )
     })?;
 
@@ -66,14 +71,12 @@ fn run() -> Result<(), Box<dyn Error>> {
         None => DEFAULT_BAUD_RATE,
     };
 
-    let script_path = arguments.next().map(PathBuf::from);
-
     if arguments.next().is_some() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "too many arguments; usage: \
-             device_emulator <PORT> [BAUD] \
-             [LUA_SCRIPT]",
+             device_emulator <PORT> \
+             <LUA_SCRIPT> [BAUD]",
         )
         .into());
     }
@@ -87,35 +90,14 @@ fn run() -> Result<(), Box<dyn Error>> {
         flow_control: FlowControl::None,
     };
 
-    let model_source = match script_path {
-        Some(path) => DeviceModelSource::LuaScript(path),
-
-        None => DeviceModelSource::BuiltIn,
-    };
-
-    let built_in = matches!(&model_source, DeviceModelSource::BuiltIn,);
-
-    let model_description = match &model_source {
-        DeviceModelSource::BuiltIn => "built-in random walk".to_owned(),
-
-        DeviceModelSource::LuaScript(path) => {
-            format!("Lua script '{}'", path.display(),)
-        }
-    };
-
-    let mut emulator = DeviceEmulatorHandle::start(config, model_source)?;
+    let mut emulator = DeviceEmulatorHandle::start(config, script_path.clone())?;
 
     println!(
-        "Device emulator ({model_description}) \
+        "Device emulator using Lua model '{}' \
          is running on {port_name} at \
          {baud_rate} baud.",
+        script_path.display(),
     );
-
-    if built_in {
-        println!("Commands:");
-        println!("  walk");
-        println!("  walk <walk-id> [step]");
-    }
 
     println!("Press Enter to stop.");
 

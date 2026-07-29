@@ -27,7 +27,7 @@ pub fn show(ui: &mut egui::Ui, model: &mut LuaConsoleModel) {
             model.run_file(&path);
         }
 
-        let editor_width = ui.available_width().min(MAX_CONSOLE_WIDTH).max(120.0);
+        let editor_width = ui.available_width().clamp(120.0, MAX_CONSOLE_WIDTH);
 
         let response = ui.add_enabled(
             enabled,

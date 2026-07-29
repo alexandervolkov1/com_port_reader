@@ -6,7 +6,6 @@ mod app_config;
 mod app_log;
 mod components;
 mod data;
-mod device_emulator;
 mod device_emulator_handle;
 pub mod device_model;
 mod lua_api;
