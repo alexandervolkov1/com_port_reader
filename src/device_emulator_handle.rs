@@ -5,12 +5,15 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serialport::{ClearBuffer, DataBits, FlowControl, Parity, SerialPort, StopBits};
 
-use crate::device_emulator::DeviceEmulator;
+use crate::{
+    device_emulator::DeviceEmulator,
+    device_model::{DeviceModel, DeviceModelError},
+};
 
 const READ_TIMEOUT: Duration = Duration::from_millis(100);
 const MAX_COMMAND_LENGTH: usize = 256;
@@ -104,7 +107,7 @@ fn run_emulator(
     stop_requested: Arc<AtomicBool>,
 ) -> Result<(), DeviceEmulatorHandleError> {
     let mut emulator = DeviceEmulator::new();
-
+    let started_at = Instant::now();
     let mut command_buffer = Vec::new();
     let mut read_buffer = [0_u8; 64];
 
@@ -121,7 +124,11 @@ fn run_emulator(
 
                             command_buffer.clear();
 
-                            let response = emulator.handle_command(&command);
+                            let response = DeviceModel::handle_command(
+                                &mut emulator,
+                                &command,
+                                started_at.elapsed(),
+                            )?;
 
                             writeln!(port, "{response}")?;
                             port.flush()?;
@@ -167,6 +174,14 @@ impl std::fmt::Display for DeviceEmulatorHandleError {
 }
 
 impl std::error::Error for DeviceEmulatorHandleError {}
+
+impl From<DeviceModelError> for DeviceEmulatorHandleError {
+    fn from(error: DeviceModelError) -> Self {
+        Self {
+            message: error.to_string(),
+        }
+    }
+}
 
 impl From<serialport::Error> for DeviceEmulatorHandleError {
     fn from(error: serialport::Error) -> Self {

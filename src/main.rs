@@ -8,6 +8,7 @@ mod components;
 mod data;
 mod device_emulator;
 mod device_emulator_handle;
+mod device_model;
 mod dsl;
 mod lua_api;
 pub mod lua_runtime;

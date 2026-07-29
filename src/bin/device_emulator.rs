@@ -1,3 +1,6 @@
+#[path = "../device_model.rs"]
+mod device_model;
+
 #[path = "../device_emulator.rs"]
 mod device_emulator;
 

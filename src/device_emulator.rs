@@ -1,7 +1,9 @@
 use std::{
     collections::HashMap,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+use crate::device_model::{DeviceModel, DeviceModelError};
 
 const DEFAULT_WALK_ID: &str = "default";
 const DEFAULT_STEP: f64 = 1.0;
@@ -23,7 +25,7 @@ impl DeviceEmulator {
         }
     }
 
-    pub fn handle_command(&mut self, command: &str) -> String {
+    fn response_for_command(&mut self, command: &str) -> String {
         let command = command.trim();
 
         if command.is_empty() {
@@ -75,6 +77,16 @@ impl DeviceEmulator {
             walks: HashMap::new(),
             base_seed: base_seed.max(1),
         }
+    }
+}
+
+impl DeviceModel for DeviceEmulator {
+    fn handle_command(
+        &mut self,
+        command: &str,
+        _elapsed: Duration,
+    ) -> Result<String, DeviceModelError> {
+        Ok(self.response_for_command(command))
     }
 }
 
@@ -141,10 +153,17 @@ fn seed_for_walk(base_seed: u64, walk_id: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::DeviceEmulator;
+    use crate::device_model::DeviceModel;
+
+    fn response_text(emulator: &mut DeviceEmulator, command: &str) -> String {
+        DeviceModel::handle_command(emulator, command, Duration::ZERO).unwrap()
+    }
 
     fn response_value(emulator: &mut DeviceEmulator, command: &str) -> f64 {
-        emulator.handle_command(command).parse::<f64>().unwrap()
+        response_text(emulator, command).parse::<f64>().unwrap()
     }
 
     #[test]
@@ -202,13 +221,9 @@ mod tests {
     fn rejects_invalid_step() {
         let mut emulator = DeviceEmulator::with_seed(1);
 
-        assert!(emulator.handle_command("walk test 0").starts_with("error"));
+        assert!(response_text(&mut emulator, "walk test 0",).starts_with("error"),);
 
-        assert!(
-            emulator
-                .handle_command("walk test NaN")
-                .starts_with("error")
-        );
+        assert!(response_text(&mut emulator, "walk test NaN",).starts_with("error"),);
     }
 
     #[test]
@@ -216,7 +231,7 @@ mod tests {
         let mut emulator = DeviceEmulator::with_seed(1);
 
         assert_eq!(
-            emulator.handle_command("walk test 1 extra",),
+            response_text(&mut emulator, "walk test 1 extra",),
             "error unexpected argument: extra",
         );
     }
@@ -226,7 +241,7 @@ mod tests {
         let mut emulator = DeviceEmulator::with_seed(1);
 
         assert_eq!(
-            emulator.handle_command("unknown"),
+            response_text(&mut emulator, "unknown",),
             "error unknown command: unknown",
         );
     }
@@ -235,6 +250,6 @@ mod tests {
     fn rejects_empty_command() {
         let mut emulator = DeviceEmulator::with_seed(1);
 
-        assert_eq!(emulator.handle_command("   "), "error empty command",);
+        assert_eq!(response_text(&mut emulator, "   "), "error empty command",);
     }
 }
