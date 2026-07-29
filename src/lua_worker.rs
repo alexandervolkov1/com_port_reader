@@ -16,7 +16,7 @@ enum LuaCommand {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LuaEvent {
-    ExecutionSucceeded,
+    ExecutionSucceeded(Vec<String>),
     ExecutionFailed(String),
 }
 
@@ -95,8 +95,8 @@ fn run_lua_worker(command_receiver: Receiver<LuaCommand>, event_sender: Sender<L
 
     while let Ok(command) = command_receiver.recv() {
         let event = match command {
-            LuaCommand::Execute(source) => match runtime.execute(&source) {
-                Ok(()) => LuaEvent::ExecutionSucceeded,
+            LuaCommand::Execute(source) => match runtime.evaluate_for_repl(&source) {
+                Ok(output) => LuaEvent::ExecutionSucceeded(output),
 
                 Err(error) => LuaEvent::ExecutionFailed(error.to_string()),
             },
@@ -130,7 +130,7 @@ mod tests {
 
         let event = event_receiver.recv_timeout(TEST_TIMEOUT).unwrap();
 
-        assert_eq!(event, LuaEvent::ExecutionSucceeded,);
+        assert_eq!(event, LuaEvent::ExecutionSucceeded(Vec::new(),),);
     }
 
     #[test]
@@ -145,19 +145,32 @@ mod tests {
 
         assert_eq!(
             event_receiver.recv_timeout(TEST_TIMEOUT).unwrap(),
-            LuaEvent::ExecutionSucceeded,
+            LuaEvent::ExecutionSucceeded(Vec::new(),),
         );
 
-        handle
-            .execute(
-                "counter = counter + 2; \
-                 assert(counter == 42)",
-            )
-            .unwrap();
+        handle.execute("counter + 2").unwrap();
 
         assert_eq!(
             event_receiver.recv_timeout(TEST_TIMEOUT).unwrap(),
-            LuaEvent::ExecutionSucceeded,
+            LuaEvent::ExecutionSucceeded(vec!["42".to_owned(),]),
+        );
+    }
+
+    #[test]
+    fn returns_multiple_values() {
+        let (event_sender, event_receiver) = unbounded();
+
+        let worker = LuaWorker::spawn(event_sender).unwrap();
+
+        worker.handle().execute("return 42, true, 'hello'").unwrap();
+
+        assert_eq!(
+            event_receiver.recv_timeout(TEST_TIMEOUT).unwrap(),
+            LuaEvent::ExecutionSucceeded(vec![
+                "42".to_owned(),
+                "true".to_owned(),
+                "hello".to_owned(),
+            ]),
         );
     }
 

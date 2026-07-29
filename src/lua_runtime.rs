@@ -1,4 +1,4 @@
-use mlua::{FromLua, Lua};
+use mlua::{FromLua, Function, Lua, MultiValue};
 
 pub struct LuaRuntime {
     lua: Lua,
@@ -18,6 +18,18 @@ impl LuaRuntime {
         T: FromLua,
     {
         self.lua.load(source).eval()
+    }
+
+    pub fn evaluate_for_repl(&self, source: &str) -> mlua::Result<Vec<String>> {
+        let values: MultiValue = self.lua.load(source).eval()?;
+
+        let tostring: Function = self.lua.globals().get("tostring")?;
+
+        values
+            .iter()
+            .cloned()
+            .map(|value| tostring.call::<String>(value))
+            .collect()
     }
 }
 
@@ -60,5 +72,38 @@ mod tests {
         let result = runtime.execute("this is not valid lua");
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn evaluates_repl_expression() {
+        let runtime = LuaRuntime::new();
+
+        let output = runtime.evaluate_for_repl("20 + 22").unwrap();
+
+        assert_eq!(output, vec!["42"]);
+    }
+
+    #[test]
+    fn executes_repl_statement() {
+        let runtime = LuaRuntime::new();
+
+        let output = runtime.evaluate_for_repl("answer = 42").unwrap();
+
+        assert!(output.is_empty());
+
+        let output = runtime.evaluate_for_repl("answer").unwrap();
+
+        assert_eq!(output, vec!["42"]);
+    }
+
+    #[test]
+    fn returns_multiple_repl_values() {
+        let runtime = LuaRuntime::new();
+
+        let output = runtime
+            .evaluate_for_repl("return 42, true, 'hello'")
+            .unwrap();
+
+        assert_eq!(output, vec!["42", "true", "hello"],);
     }
 }
