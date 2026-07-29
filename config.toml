@@ -14,4 +14,4 @@ flow_control = "none"
 timeout_ms = 250
 
 [emulator]
-script_path = 'D:\rust_projects\com_port_reader\emulator_scripts\sine.lua'
+script_path = 'D:\rust_projects\com_port_reader\emulator_scripts\three_phase.lua'
