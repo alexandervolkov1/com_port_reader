@@ -56,7 +56,7 @@ mod tests {
     use crossbeam_channel::unbounded;
 
     use super::LuaRuntime;
-    use crate::user_command::UserCommand;
+    use crate::{data::SeriesSource, user_command::UserCommand};
 
     #[test]
     fn evaluates_lua_code() {
@@ -206,5 +206,73 @@ mod tests {
         let error = runtime.execute("while true do end").unwrap_err();
 
         assert!(error.to_string().contains("Lua execution exceeded"),);
+    }
+
+    #[test]
+    fn exposes_serial_application_commands() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                app.add_serial(
+                    "read sine",
+                    "sine"
+                )
+
+                app.add_serial(
+                    "read pressure"
+                )
+
+                app.send_serial(
+                    "set amplitude 25"
+                )
+                "#,
+            )
+            .unwrap();
+
+        let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+            panic!("expected Add command");
+        };
+
+        let (source, name) = new_series.into_source_parts();
+
+        assert_eq!(name.as_deref(), Some("sine"));
+
+        assert_eq!(
+            source,
+            SeriesSource::SerialCommand {
+                command: "read sine".to_owned(),
+                step: 1.0,
+            },
+        );
+
+        let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+            panic!("expected Add command");
+        };
+
+        let (source, name) = new_series.into_source_parts();
+
+        assert_eq!(name, None);
+
+        assert_eq!(
+            source,
+            SeriesSource::SerialCommand {
+                command: "read pressure".to_owned(),
+                step: 1.0,
+            },
+        );
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::SendSerial { command }
+                if command == "set amplitude 25",
+        ));
+
+        assert!(command_receiver.try_recv().is_err());
     }
 }
