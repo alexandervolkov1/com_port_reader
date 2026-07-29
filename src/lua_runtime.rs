@@ -1,4 +1,7 @@
+use crossbeam_channel::Sender;
 use mlua::{FromLua, Function, Lua, MultiValue};
+
+use crate::user_command::UserCommand;
 
 pub struct LuaRuntime {
     lua: Lua,
@@ -7,6 +10,10 @@ pub struct LuaRuntime {
 impl LuaRuntime {
     pub fn new() -> Self {
         Self { lua: Lua::new() }
+    }
+
+    pub fn install_application_api(&self, command_sender: Sender<UserCommand>) -> mlua::Result<()> {
+        crate::lua_api::install(&self.lua, command_sender)
     }
 
     pub fn execute(&self, source: &str) -> mlua::Result<()> {
@@ -41,7 +48,10 @@ impl Default for LuaRuntime {
 
 #[cfg(test)]
 mod tests {
+    use crossbeam_channel::unbounded;
+
     use super::LuaRuntime;
+    use crate::user_command::UserCommand;
 
     #[test]
     fn evaluates_lua_code() {
@@ -105,5 +115,82 @@ mod tests {
             .unwrap();
 
         assert_eq!(output, vec!["42", "true", "hello"],);
+    }
+
+    #[test]
+    fn exposes_application_commands() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                app.start()
+                app.stop()
+                app.clear()
+                app.start_recording()
+                app.stop_recording()
+                app.start_emulator()
+                app.stop_emulator()
+                "#,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::Start,
+        ));
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::Stop,
+        ));
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::Clear,
+        ));
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::StartRecording,
+        ));
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::StopRecording,
+        ));
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::StartEmulator,
+        ));
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::StopEmulator,
+        ));
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn reports_disconnected_application_channel() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        drop(command_receiver);
+
+        let result = runtime.execute("app.start()");
+
+        let error = result.unwrap_err().to_string();
+
+        assert!(error.contains("application command channel is disconnected",));
     }
 }
