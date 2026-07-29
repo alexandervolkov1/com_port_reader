@@ -1,4 +1,4 @@
-use super::{Sample, Signal};
+use super::Sample;
 
 pub const DEFAULT_SERIAL_STEP: f64 = 1.0;
 pub const DEFAULT_METAKON_DEVICE: u8 = 1;
@@ -23,8 +23,6 @@ impl std::fmt::Display for SeriesId {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SeriesSource {
-    Generated(Signal),
-
     SerialCommand {
         command: String,
         step: f64,
@@ -39,17 +37,8 @@ pub enum SeriesSource {
 }
 
 impl SeriesSource {
-    pub fn generated_signal(&self) -> Option<&Signal> {
-        match self {
-            Self::Generated(signal) => Some(signal),
-
-            Self::SerialCommand { .. } | Self::Metakon { .. } => None,
-        }
-    }
-
     pub(crate) fn default_name_prefix(&self) -> &str {
         match self {
-            Self::Generated(signal) => signal.kind_name(),
             Self::SerialCommand { .. } => "serial",
             Self::Metakon { .. } => "metakon",
         }
@@ -59,8 +48,6 @@ impl SeriesSource {
 impl std::fmt::Display for SeriesSource {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Generated(signal) => signal.fmt(formatter),
-
             Self::SerialCommand { command, step } => {
                 write!(formatter, "COM command: {command}, step: {step}",)
             }
@@ -88,20 +75,6 @@ pub struct NewSeries {
 }
 
 impl NewSeries {
-    pub fn unnamed(signal: Signal) -> Self {
-        Self {
-            source: SeriesSource::Generated(signal),
-            name: None,
-        }
-    }
-
-    pub fn named(signal: Signal, name: impl Into<String>) -> Self {
-        Self {
-            source: SeriesSource::Generated(signal),
-            name: Some(name.into()),
-        }
-    }
-
     pub fn unnamed_serial_command(command: impl Into<String>, step: f64) -> Self {
         Self {
             source: SeriesSource::SerialCommand {
@@ -158,22 +131,6 @@ impl NewSeries {
 
     pub(crate) fn into_source_parts(self) -> (SeriesSource, Option<String>) {
         (self.source, self.name)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn into_parts(self) -> (Signal, Option<String>) {
-        let (source, name) = self.into_source_parts();
-
-        match source {
-            SeriesSource::Generated(signal) => (signal, name),
-
-            SeriesSource::SerialCommand { .. } | SeriesSource::Metakon { .. } => {
-                panic!(
-                    "expected generated series, \
-                     found external series",
-                )
-            }
-        }
     }
 }
 

@@ -31,7 +31,7 @@ impl SerialCommandSource {
             let connection = config.open().map_err(|error| {
                 AcquisitionError::from(format!(
                     "Failed to open COM port \
-                         '{port_name}': {error}",
+                     '{port_name}': {error}",
                 ))
             })?;
 
@@ -60,14 +60,7 @@ impl AcquisitionSource for SerialCommandSource {
         timestamp: f64,
         output: &mut Vec<SeriesSample>,
     ) -> Result<(), AcquisitionError> {
-        let has_com_series = series.iter().any(|series| {
-            matches!(
-                &series.source,
-                SeriesSource::SerialCommand { .. } | SeriesSource::Metakon { .. }
-            )
-        });
-
-        if !has_com_series {
+        if series.is_empty() {
             return Ok(());
         }
 
@@ -77,10 +70,6 @@ impl AcquisitionSource for SerialCommandSource {
 
         for series in series {
             let value = match &series.source {
-                SeriesSource::Generated(_) => {
-                    continue;
-                }
-
                 SeriesSource::SerialCommand { command, step } => {
                     let request = serial_request(series.id, command, *step);
 
@@ -104,16 +93,17 @@ impl AcquisitionSource for SerialCommandSource {
                     let raw_value = read_int_register(connection, request).map_err(|error| {
                         AcquisitionError::from(format!(
                             "Metakon series '{}': device {}, \
-                                     channel {}, register 0x{:02X} \
-                                     failed: {error}",
+                             channel {}, register 0x{:02X} \
+                             failed: {error}",
                             series.name, device, channel, register,
                         ))
                     })?;
 
                     if raw_value == i16::MIN {
                         return Err(AcquisitionError::from(format!(
-                            "Metakon series '{}': instrument \
-                                 reported alarm value -32768",
+                            "Metakon series '{}': \
+                                 instrument reported alarm \
+                                 value -32768",
                             series.name,
                         )));
                     }
@@ -137,7 +127,10 @@ impl AcquisitionSource for SerialCommandSource {
         })?;
 
         let response = connection.request_text(command).map_err(|error| {
-            AcquisitionError::from(format!("COM command '{command}' failed: {error}",))
+            AcquisitionError::from(format!(
+                "COM command '{command}' failed: \
+                     {error}",
+            ))
         })?;
 
         Ok(Some(response))
@@ -155,24 +148,17 @@ mod tests {
     use super::{AcquisitionSource, SerialCommandSource, serial_request};
 
     use crate::{
-        data::{SeriesId, SeriesMetadata, SeriesSource, Signal},
+        data::{SeriesId, SeriesMetadata, SeriesSource},
         serial_connection::SerialConfigStore,
     };
 
     #[test]
-    fn ignores_generated_series_without_config() {
+    fn accepts_empty_series_without_config() {
         let mut source = SerialCommandSource::new(SerialConfigStore::new());
-
-        let series = vec![SeriesMetadata {
-            id: SeriesId::new(1),
-            name: "generated".to_owned(),
-            source: SeriesSource::Generated(Signal::Constant { value: 10.0 }),
-            visible: true,
-        }];
 
         let mut output = Vec::new();
 
-        source.sample(&series, 1_000.0, &mut output).unwrap();
+        source.sample(&[], 1_000.0, &mut output).unwrap();
 
         assert!(output.is_empty());
     }
@@ -184,10 +170,12 @@ mod tests {
         let series = vec![SeriesMetadata {
             id: SeriesId::new(1),
             name: "random_walk".to_owned(),
+
             source: SeriesSource::SerialCommand {
                 command: "walk".to_owned(),
                 step: 1.0,
             },
+
             visible: true,
         }];
 

@@ -1,14 +1,13 @@
 use eframe::egui;
 use egui_extras::{Size, StripBuilder};
 
-use crate::acquisition::{CombinedSource, SerialCommandSource, SignalGenerator};
+use crate::acquisition::{CombinedSource, SerialCommandSource};
 use crate::app_config::{AppConfig, CONFIG_PATH};
 use crate::components::{
     command_model::CommandModel, controls_model::ControlsModel, controls_view,
     device_emulator_model::DeviceEmulatorModel, help_model::HelpModel, help_view,
     lua_console_model::LuaConsoleModel, lua_console_view, plot_model::PlotModel, plot_view,
-    serial_settings_model::SerialSettingsModel, serial_settings_view,
-    series_editor_model::SeriesEditorModel, series_editor_view, series_view,
+    serial_settings_model::SerialSettingsModel, serial_settings_view, series_view,
 };
 use crate::data::SeriesStore;
 use crate::lua_worker::LuaWorker;
@@ -31,7 +30,6 @@ pub struct MyApp {
     series: SeriesStore,
     worker_handle: WorkerHandle,
     series_panel_open: bool,
-    series_editor: SeriesEditorModel,
     serial_settings: SerialSettingsModel,
     log: LogModel,
     log_handle: LogHandle,
@@ -81,10 +79,9 @@ impl MyApp {
 
         let worker_config = WorkerConfig::new(config.application.poll_interval());
 
-        let source = CombinedSource::new(vec![
-            Box::new(SignalGenerator::new()),
-            Box::new(SerialCommandSource::new(serial_config_store)),
-        ]);
+        let source = CombinedSource::new(vec![Box::new(SerialCommandSource::new(
+            serial_config_store,
+        ))]);
 
         let controls = ControlsModel::new(
             series.clone(),
@@ -107,7 +104,6 @@ impl MyApp {
             series,
             worker_handle,
             series_panel_open: false,
-            series_editor: SeriesEditorModel::default(),
             serial_settings,
             log,
             log_handle,
@@ -193,13 +189,7 @@ impl eframe::App for MyApp {
                         });
 
                         strip.cell(|ui| {
-                            series_view::show(
-                                ui,
-                                &self.series,
-                                &self.command,
-                                &mut self.plot,
-                                &mut self.series_editor,
-                            );
+                            series_view::show(ui, &self.series, &self.command, &mut self.plot);
                         });
                     });
             } else {
@@ -223,7 +213,6 @@ impl eframe::App for MyApp {
                         });
                     });
             }
-            series_editor_view::show(ui.ctx(), &mut self.series_editor, &mut self.command);
         });
 
         let acquisition_running = self.controls.is_running();

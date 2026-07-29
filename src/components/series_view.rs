@@ -1,9 +1,7 @@
 use eframe::egui::{self, ScrollArea};
 
 use crate::{
-    components::{
-        command_model::CommandModel, plot_model::PlotModel, series_editor_model::SeriesEditorModel,
-    },
+    components::{command_model::CommandModel, plot_model::PlotModel},
     data::{SeriesId, SeriesStore},
 };
 
@@ -12,12 +10,7 @@ pub fn show(
     series_store: &SeriesStore,
     commands: &CommandModel,
     plot: &mut PlotModel,
-    editor: &mut SeriesEditorModel,
 ) {
-    if ui.button("Add new").clicked() {
-        editor.open();
-    }
-
     ui.separator();
 
     ScrollArea::vertical().show(ui, |ui| {

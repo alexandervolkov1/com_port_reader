@@ -12,6 +12,4 @@ pub mod plot_model;
 pub mod plot_view;
 pub mod serial_settings_model;
 pub mod serial_settings_view;
-pub mod series_editor_model;
-pub mod series_editor_view;
 pub mod series_view;

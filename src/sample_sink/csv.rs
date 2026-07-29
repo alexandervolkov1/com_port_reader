@@ -103,7 +103,7 @@ mod tests {
     use super::CsvSampleSink;
 
     use crate::{
-        data::{Sample, SeriesId, SeriesMetadata, SeriesSample, SeriesSource, Signal},
+        data::{Sample, SeriesId, SeriesMetadata, SeriesSample, SeriesSource},
         sample_sink::SampleSink,
     };
 
@@ -120,12 +120,10 @@ mod tests {
             &[
                 SeriesSample {
                     series_id: SeriesId::new(7),
-
                     sample: Sample::new(12.5, -3.25),
                 },
                 SeriesSample {
                     series_id: SeriesId::new(8),
-
                     sample: Sample::new(13.0, 4.5),
                 },
             ],
@@ -153,7 +151,6 @@ mod tests {
         let result = sink.write_batch(
             &[SeriesSample {
                 series_id: SeriesId::new(7),
-
                 sample: Sample::new(12.5, -3.25),
             }],
             &[],
@@ -170,7 +167,10 @@ mod tests {
             id,
             name: name.to_owned(),
 
-            source: SeriesSource::Generated(Signal::Constant { value: 0.0 }),
+            source: SeriesSource::SerialCommand {
+                command: "test".to_owned(),
+                step: 1.0,
+            },
 
             visible: true,
         }
