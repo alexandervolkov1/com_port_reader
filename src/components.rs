@@ -1,5 +1,4 @@
 pub mod command_model;
-pub mod command_view;
 pub mod controls_model;
 pub mod controls_view;
 pub mod device_emulator_model;
@@ -11,8 +10,6 @@ pub mod lua_console_view;
 mod plot_downsampling;
 pub mod plot_model;
 pub mod plot_view;
-pub mod script_model;
-pub mod script_view;
 pub mod serial_settings_model;
 pub mod serial_settings_view;
 pub mod series_editor_model;

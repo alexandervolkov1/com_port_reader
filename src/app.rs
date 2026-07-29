@@ -4,11 +4,11 @@ use egui_extras::{Size, StripBuilder};
 use crate::acquisition::{CombinedSource, SerialCommandSource, SignalGenerator};
 use crate::app_config::{AppConfig, CONFIG_PATH};
 use crate::components::{
-    command_model::CommandModel, command_view, controls_model::ControlsModel, controls_view,
+    command_model::CommandModel, controls_model::ControlsModel, controls_view,
     device_emulator_model::DeviceEmulatorModel, help_model::HelpModel, help_view,
     lua_console_model::LuaConsoleModel, lua_console_view, plot_model::PlotModel, plot_view,
-    script_model::ScriptModel, script_view, serial_settings_model::SerialSettingsModel,
-    serial_settings_view, series_editor_model::SeriesEditorModel, series_editor_view, series_view,
+    serial_settings_model::SerialSettingsModel, serial_settings_view,
+    series_editor_model::SeriesEditorModel, series_editor_view, series_view,
 };
 use crate::data::SeriesStore;
 use crate::lua_worker::LuaWorker;
@@ -33,7 +33,6 @@ pub struct MyApp {
     series_panel_open: bool,
     series_editor: SeriesEditorModel,
     serial_settings: SerialSettingsModel,
-    script: ScriptModel,
     log: LogModel,
     log_handle: LogHandle,
     device_emulator: DeviceEmulatorModel,
@@ -110,7 +109,6 @@ impl MyApp {
             series_panel_open: false,
             series_editor: SeriesEditorModel::default(),
             serial_settings,
-            script: ScriptModel::new(),
             log,
             log_handle,
             device_emulator,
@@ -169,25 +167,7 @@ impl eframe::App for MyApp {
             );
             ui.separator();
 
-            command_view::show(
-                ui,
-                &mut self.command,
-                &mut self.controls,
-                &self.serial_settings,
-                &mut self.device_emulator,
-            );
-
             lua_console_view::show(ui, &mut self.lua_console);
-
-            script_view::show(
-                ui,
-                &mut self.script,
-                &self.command,
-                &mut self.controls,
-                &self.serial_settings,
-                &mut self.device_emulator,
-                &self.log_handle,
-            );
 
             ui.separator();
 

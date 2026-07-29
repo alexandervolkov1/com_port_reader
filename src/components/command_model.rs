@@ -7,7 +7,6 @@ use crate::{
         serial_settings_model::SerialSettingsModel,
     },
     data::{NewSeries, SeriesId},
-    dsl::parse_command,
     user_command::UserCommand,
     worker::{WorkerEvent, WorkerHandle, WorkerHandleError},
 };
@@ -15,7 +14,6 @@ use crate::{
 pub struct CommandModel {
     worker_handle: WorkerHandle,
     event_receiver: Receiver<WorkerEvent>,
-    command_buffer: String,
     log: LogHandle,
 }
 
@@ -28,13 +26,8 @@ impl CommandModel {
         Self {
             worker_handle,
             event_receiver,
-            command_buffer: String::new(),
             log,
         }
-    }
-
-    pub fn command_buffer_mut(&mut self) -> &mut String {
-        &mut self.command_buffer
     }
 
     pub fn poll_events(&mut self, controls: &mut ControlsModel) {
@@ -49,25 +42,6 @@ impl CommandModel {
                 self.log.info(message);
             }
         }
-    }
-
-    pub fn submit(
-        &mut self,
-        controls: &mut ControlsModel,
-        serial_settings: &SerialSettingsModel,
-        device_emulator: &mut DeviceEmulatorModel,
-    ) {
-        match parse_command(&self.command_buffer) {
-            Ok(command) => {
-                self.execute(command, controls, serial_settings, device_emulator);
-            }
-
-            Err(error) => {
-                self.log.error(error);
-            }
-        }
-
-        self.command_buffer.clear();
     }
 
     pub fn execute(
@@ -128,8 +102,9 @@ impl CommandModel {
             UserCommand::SendSerial { command } => {
                 let Some(config) = serial_settings.serial_config() else {
                     self.log.error(
-                        "Cannot send COM command: select a \
-                         COM port in Settings.",
+                        "Cannot send COM command: \
+                         select a COM port in \
+                         Settings.",
                     );
 
                     return;
@@ -154,14 +129,14 @@ impl CommandModel {
         }
     }
 
-    fn set_worker_error(&self, error: WorkerHandleError) {
-        self.log.error(format!("Failed to send command: {error}",));
-    }
-
     pub fn add_series(&self, new_series: NewSeries) {
         if let Err(error) = self.worker_handle.add_series(new_series) {
             self.set_worker_error(error);
         }
+    }
+
+    fn set_worker_error(&self, error: WorkerHandleError) {
+        self.log.error(format!("Failed to send command: {error}",));
     }
 }
 
