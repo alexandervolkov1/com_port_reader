@@ -2,6 +2,7 @@ use crate::{
     app_log::LogHandle,
     components::serial_settings_model::SerialSettings,
     device_emulator_handle::{DeviceEmulatorHandle, DeviceEmulatorPortConfig},
+    device_model::DeviceModelSource,
 };
 
 pub struct DeviceEmulatorModel {
@@ -104,7 +105,7 @@ impl DeviceEmulatorModel {
             flow_control: settings.flow_control,
         };
 
-        match DeviceEmulatorHandle::start(config) {
+        match DeviceEmulatorHandle::start(config, DeviceModelSource::BuiltIn) {
             Ok(handle) => {
                 self.handle = Some(handle);
                 self.error = None;

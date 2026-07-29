@@ -1,6 +1,9 @@
 #[path = "../device_model.rs"]
 mod device_model;
 
+#[path = "../lua_device_model.rs"]
+mod lua_device_model;
+
 #[path = "../device_emulator.rs"]
 mod device_emulator;
 
@@ -11,12 +14,15 @@ use std::{
     env,
     error::Error,
     io,
+    path::PathBuf,
     sync::mpsc::{self, RecvTimeoutError},
     thread,
     time::Duration,
 };
 
 use device_emulator_handle::{DeviceEmulatorHandle, DeviceEmulatorPortConfig};
+
+use device_model::DeviceModelSource;
 
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 
@@ -38,7 +44,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         io::Error::new(
             io::ErrorKind::InvalidInput,
             "missing COM port; usage: \
-             device_emulator <PORT> [BAUD]",
+             device_emulator <PORT> [BAUD] \
+             [LUA_SCRIPT]",
         )
     })?;
 
@@ -56,11 +63,14 @@ fn run() -> Result<(), Box<dyn Error>> {
         None => DEFAULT_BAUD_RATE,
     };
 
+    let script_path = arguments.next().map(PathBuf::from);
+
     if arguments.next().is_some() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "too many arguments; usage: \
-             device_emulator <PORT> [BAUD]",
+             device_emulator <PORT> [BAUD] \
+             [LUA_SCRIPT]",
         )
         .into());
     }
@@ -74,16 +84,36 @@ fn run() -> Result<(), Box<dyn Error>> {
         flow_control: FlowControl::None,
     };
 
-    let mut emulator = DeviceEmulatorHandle::start(config)?;
+    let model_source = match script_path {
+        Some(path) => DeviceModelSource::LuaScript(path),
+
+        None => DeviceModelSource::BuiltIn,
+    };
+
+    let built_in = matches!(&model_source, DeviceModelSource::BuiltIn,);
+
+    let model_description = match &model_source {
+        DeviceModelSource::BuiltIn => "built-in random walk".to_owned(),
+
+        DeviceModelSource::LuaScript(path) => {
+            format!("Lua script '{}'", path.display(),)
+        }
+    };
+
+    let mut emulator = DeviceEmulatorHandle::start(config, model_source)?;
 
     println!(
-        "Random walk emulator is running on \
-         {port_name} at {baud_rate} baud.",
+        "Device emulator ({model_description}) \
+         is running on {port_name} at \
+         {baud_rate} baud.",
     );
 
-    println!("Commands:");
-    println!("  walk");
-    println!("  walk <walk-id> [step]");
+    if built_in {
+        println!("Commands:");
+        println!("  walk");
+        println!("  walk <walk-id> [step]");
+    }
+
     println!("Press Enter to stop.");
 
     let (stop_sender, stop_receiver) = mpsc::channel();

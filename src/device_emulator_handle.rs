@@ -1,8 +1,10 @@
 use std::{
+    fs,
     io::{Read, Write},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
+        mpsc::{self, SyncSender},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -12,10 +14,12 @@ use serialport::{ClearBuffer, DataBits, FlowControl, Parity, SerialPort, StopBit
 
 use crate::{
     device_emulator::DeviceEmulator,
-    device_model::{DeviceModel, DeviceModelError},
+    device_model::{DeviceModel, DeviceModelError, DeviceModelSource},
+    lua_device_model::LuaDeviceModel,
 };
 
 const READ_TIMEOUT: Duration = Duration::from_millis(100);
+
 const MAX_COMMAND_LENGTH: usize = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,16 +38,21 @@ pub struct DeviceEmulatorHandle {
 }
 
 impl DeviceEmulatorHandle {
-    pub fn start(config: DeviceEmulatorPortConfig) -> Result<Self, DeviceEmulatorHandleError> {
+    pub fn start(
+        config: DeviceEmulatorPortConfig,
+        model_source: DeviceModelSource,
+    ) -> Result<Self, DeviceEmulatorHandleError> {
         if config.port_name.trim().is_empty() {
             return Err(DeviceEmulatorHandleError::from(
-                "Emulator COM port cannot be empty",
+                "Emulator COM port cannot \
+                     be empty",
             ));
         }
 
         if config.baud_rate == 0 {
             return Err(DeviceEmulatorHandleError::from(
-                "Emulator baud rate must be greater than zero",
+                "Emulator baud rate must be \
+                     greater than zero",
             ));
         }
 
@@ -61,16 +70,44 @@ impl DeviceEmulatorHandle {
 
         let thread_stop_requested = Arc::clone(&stop_requested);
 
-        let thread_name = format!("device-emulator-{}", config.port_name);
+        let thread_name = format!("device-emulator-{}", config.port_name,);
 
-        let thread = thread::Builder::new()
-            .name(thread_name)
-            .spawn(move || run_emulator(port, thread_stop_requested))?;
+        let (startup_sender, startup_receiver) = mpsc::sync_channel(1);
 
-        Ok(Self {
-            stop_requested,
-            thread: Some(thread),
-        })
+        let thread = thread::Builder::new().name(thread_name).spawn(move || {
+            run_emulator(port, thread_stop_requested, model_source, startup_sender)
+        })?;
+
+        match startup_receiver.recv() {
+            Ok(Ok(())) => Ok(Self {
+                stop_requested,
+                thread: Some(thread),
+            }),
+
+            Ok(Err(error)) => {
+                let _ = thread.join();
+
+                Err(error)
+            }
+
+            Err(_) => {
+                let error = match thread.join() {
+                    Ok(Err(error)) => error,
+
+                    Ok(Ok(())) => DeviceEmulatorHandleError::from(
+                        "Device emulator stopped \
+                             during startup",
+                    ),
+
+                    Err(_) => DeviceEmulatorHandleError::from(
+                        "Device emulator thread \
+                             panicked during startup",
+                    ),
+                };
+
+                Err(error)
+            }
+        }
     }
 
     pub fn is_running(&self) -> bool {
@@ -105,9 +142,25 @@ impl Drop for DeviceEmulatorHandle {
 fn run_emulator(
     mut port: Box<dyn SerialPort>,
     stop_requested: Arc<AtomicBool>,
+    model_source: DeviceModelSource,
+    startup_sender: SyncSender<Result<(), DeviceEmulatorHandleError>>,
 ) -> Result<(), DeviceEmulatorHandleError> {
-    let mut emulator = DeviceEmulator::new();
+    let mut model = match create_device_model(model_source) {
+        Ok(model) => model,
+
+        Err(error) => {
+            let _ = startup_sender.send(Err(error.clone()));
+
+            return Err(error);
+        }
+    };
+
     let started_at = Instant::now();
+
+    if startup_sender.send(Ok(())).is_err() {
+        return Ok(());
+    }
+
     let mut command_buffer = Vec::new();
     let mut read_buffer = [0_u8; 64];
 
@@ -124,13 +177,10 @@ fn run_emulator(
 
                             command_buffer.clear();
 
-                            let response = DeviceModel::handle_command(
-                                &mut emulator,
-                                &command,
-                                started_at.elapsed(),
-                            )?;
+                            let response = model.handle_command(&command, started_at.elapsed())?;
 
-                            writeln!(port, "{response}")?;
+                            writeln!(port, "{response}",)?;
+
                             port.flush()?;
                         }
 
@@ -140,7 +190,11 @@ fn run_emulator(
                             if command_buffer.len() >= MAX_COMMAND_LENGTH {
                                 command_buffer.clear();
 
-                                writeln!(port, "error command is too long",)?;
+                                writeln!(
+                                    port,
+                                    "error command is \
+                                     too long",
+                                )?;
 
                                 port.flush()?;
                             } else {
@@ -160,6 +214,35 @@ fn run_emulator(
     }
 
     Ok(())
+}
+
+fn create_device_model(
+    source: DeviceModelSource,
+) -> Result<Box<dyn DeviceModel>, DeviceEmulatorHandleError> {
+    match source {
+        DeviceModelSource::BuiltIn => Ok(Box::new(DeviceEmulator::new())),
+
+        DeviceModelSource::LuaScript(path) => {
+            let script = fs::read_to_string(&path).map_err(|error| {
+                DeviceEmulatorHandleError::from(format!(
+                    "Failed to read Lua device \
+                         script '{}': {error}",
+                    path.display(),
+                ))
+            })?;
+
+            let model = LuaDeviceModel::from_source(&script).map_err(|error| {
+                DeviceEmulatorHandleError::from(format!(
+                    "Failed to initialize Lua \
+                             device script '{}': \
+                             {error}",
+                    path.display(),
+                ))
+            })?;
+
+            Ok(Box::new(model))
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
