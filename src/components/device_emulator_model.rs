@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use crate::{
     app_log::LogHandle,
     components::serial_settings_model::SerialSettings,
@@ -10,6 +12,7 @@ pub struct DeviceEmulatorModel {
     handle: Option<DeviceEmulatorHandle>,
     error: Option<String>,
     log: LogHandle,
+    model_source: DeviceModelSource,
 }
 
 impl DeviceEmulatorModel {
@@ -24,6 +27,7 @@ impl DeviceEmulatorModel {
             handle: None,
             error: None,
             log,
+            model_source: DeviceModelSource::BuiltIn,
         }
     }
 
@@ -105,14 +109,24 @@ impl DeviceEmulatorModel {
             flow_control: settings.flow_control,
         };
 
-        match DeviceEmulatorHandle::start(config, DeviceModelSource::BuiltIn) {
+        let model_source = self.model_source.clone();
+
+        let model_description = match &model_source {
+            DeviceModelSource::BuiltIn => "built-in model".to_owned(),
+
+            DeviceModelSource::LuaScript(path) => {
+                format!("Lua model '{}'", path.display())
+            }
+        };
+
+        match DeviceEmulatorHandle::start(config, model_source) {
             Ok(handle) => {
                 self.handle = Some(handle);
                 self.error = None;
 
                 self.log.info(format!(
-                    "Device emulator started on \
-                     {port_name}.",
+                    "Device emulator started on {port_name} \
+                     using {model_description}.",
                 ));
             }
 
@@ -204,5 +218,32 @@ impl DeviceEmulatorModel {
 
         self.log.error(message.clone());
         self.error = Some(message);
+    }
+
+    pub fn script_path(&self) -> Option<&Path> {
+        match &self.model_source {
+            DeviceModelSource::BuiltIn => None,
+
+            DeviceModelSource::LuaScript(path) => Some(path),
+        }
+    }
+
+    pub fn set_script_path(&mut self, path: PathBuf) {
+        if self.is_running() {
+            return;
+        }
+
+        self.model_source = DeviceModelSource::LuaScript(path);
+
+        self.error = None;
+    }
+
+    pub fn use_built_in_model(&mut self) {
+        if self.is_running() {
+            return;
+        }
+
+        self.model_source = DeviceModelSource::BuiltIn;
+        self.error = None;
     }
 }

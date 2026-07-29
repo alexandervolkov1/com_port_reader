@@ -1,4 +1,5 @@
 use eframe::egui;
+use rfd::FileDialog;
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 use super::{
@@ -332,6 +333,49 @@ fn show_emulator_controls(
 
         if selected_port.as_deref() != emulator.selected_port() {
             emulator.set_selected_port(selected_port);
+        }
+    });
+
+    let model_selection_enabled = !emulator.is_running();
+
+    let using_lua_model = emulator.script_path().is_some();
+
+    let model_name = emulator
+        .script_path()
+        .and_then(|path| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Built-in random walk".to_owned());
+
+    let model_tooltip = emulator
+        .script_path()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "Built-in Rust random-walk model".to_owned());
+
+    ui.horizontal(|ui| {
+        ui.label("Device model:");
+
+        ui.label(model_name).on_hover_text(model_tooltip);
+
+        if ui
+            .add_enabled(model_selection_enabled, egui::Button::new("Choose Lua..."))
+            .clicked()
+            && let Some(path) = FileDialog::new()
+                .set_title("Select emulator Lua model")
+                .set_directory("emulator_scripts")
+                .add_filter("Lua scripts", &["lua"])
+                .pick_file()
+        {
+            emulator.set_script_path(path);
+        }
+
+        if ui
+            .add_enabled(
+                model_selection_enabled && using_lua_model,
+                egui::Button::new("Use built-in"),
+            )
+            .clicked()
+        {
+            emulator.use_built_in_model();
         }
     });
 
