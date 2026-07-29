@@ -13,7 +13,7 @@ use crate::serial_connection::SerialConnectionError;
 use crate::utils::current_time_f64;
 use crate::{
     acquisition::{AcquisitionError, AcquisitionSource},
-    data::{SeriesSample, SeriesStore, SignalSeries},
+    data::{Series, SeriesSample, SeriesStore},
 };
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 
@@ -495,7 +495,7 @@ impl Drop for Worker {
 }
 
 fn append_series_samples(
-    series: &mut [SignalSeries],
+    series: &mut [Series],
     samples: &[SeriesSample],
 ) -> Result<(), AcquisitionError> {
     for series_sample in samples {

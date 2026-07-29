@@ -4,12 +4,12 @@ use std::sync::{
 };
 
 use super::{
-    NewSeries, SeriesId, SeriesMetadata, SeriesNameError, SeriesSource, SignalSeries,
+    NewSeries, Series, SeriesId, SeriesMetadata, SeriesNameError, SeriesSource,
     series_name::normalize_series_name,
 };
 
 struct SeriesStoreInner {
-    series: Mutex<Vec<SignalSeries>>,
+    series: Mutex<Vec<Series>>,
     next_id: AtomicU64,
 }
 
@@ -106,7 +106,7 @@ impl SeriesStore {
         Self::default()
     }
 
-    pub fn with<R>(&self, operation: impl FnOnce(&[SignalSeries]) -> R) -> R {
+    pub fn with<R>(&self, operation: impl FnOnce(&[Series]) -> R) -> R {
         let series = self
             .inner
             .series
@@ -116,7 +116,7 @@ impl SeriesStore {
         operation(&series)
     }
 
-    pub fn with_mut<R>(&self, operation: impl FnOnce(&mut Vec<SignalSeries>) -> R) -> R {
+    pub fn with_mut<R>(&self, operation: impl FnOnce(&mut Vec<Series>) -> R) -> R {
         let mut series = self
             .inner
             .series
@@ -151,7 +151,7 @@ impl SeriesStore {
             let name = custom_name
                 .unwrap_or_else(|| generate_default_name(series, source.default_name_prefix(), id));
 
-            series.push(SignalSeries::new(id, name, source));
+            series.push(Series::new(id, name, source));
 
             Ok(id)
         })
@@ -281,11 +281,11 @@ fn normalize_series_source(source: SeriesSource) -> Result<SeriesSource, AddSeri
     }
 }
 
-fn contains_name(series: &[SignalSeries], name: &str) -> bool {
+fn contains_name(series: &[Series], name: &str) -> bool {
     series.iter().any(|series| series.name == name)
 }
 
-fn generate_default_name(series: &[SignalSeries], prefix: &str, id: SeriesId) -> String {
+fn generate_default_name(series: &[Series], prefix: &str, id: SeriesId) -> String {
     let base_name = format!("{prefix}{id}");
 
     if !contains_name(series, &base_name) {

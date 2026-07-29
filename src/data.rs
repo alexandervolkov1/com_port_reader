@@ -7,8 +7,8 @@ pub mod series_store;
 pub use sample::Sample;
 pub use series::{
     DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_REGISTER,
-    DEFAULT_METAKON_SCALE, DEFAULT_SERIAL_STEP, NewSeries, SeriesId, SeriesMetadata, SeriesSource,
-    SignalSeries,
+    DEFAULT_METAKON_SCALE, DEFAULT_SERIAL_STEP, NewSeries, Series, SeriesId, SeriesMetadata,
+    SeriesSource,
 };
 pub use series_name::SeriesNameError;
 pub use series_sample::SeriesSample;

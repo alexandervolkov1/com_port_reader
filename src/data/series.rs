@@ -135,7 +135,7 @@ impl NewSeries {
 }
 
 #[derive(Clone)]
-pub struct SignalSeries {
+pub struct Series {
     pub id: SeriesId,
     pub name: String,
     pub source: SeriesSource,
@@ -143,7 +143,7 @@ pub struct SignalSeries {
     pub visible: bool,
 }
 
-impl SignalSeries {
+impl Series {
     pub(crate) fn new(id: SeriesId, name: String, source: SeriesSource) -> Self {
         Self {
             id,
@@ -163,8 +163,8 @@ pub struct SeriesMetadata {
     pub visible: bool,
 }
 
-impl From<&SignalSeries> for SeriesMetadata {
-    fn from(series: &SignalSeries) -> Self {
+impl From<&Series> for SeriesMetadata {
+    fn from(series: &Series) -> Self {
         Self {
             id: series.id,
             name: series.name.clone(),
