@@ -2,7 +2,10 @@ use std::time::Duration;
 
 use mlua::{Function, Lua};
 
-use crate::device_model::{DeviceModel, DeviceModelError};
+use crate::{
+    device_model::{DeviceModel, DeviceModelError},
+    lua_execution::run_with_limit,
+};
 
 pub struct LuaDeviceModel {
     lua: Lua,
@@ -12,11 +15,8 @@ impl LuaDeviceModel {
     pub fn from_source(source: &str) -> Result<Self, DeviceModelError> {
         let lua = Lua::new();
 
-        lua.load(source).exec().map_err(|error| {
-            DeviceModelError::from(format!(
-                "Failed to load Lua device model: \
-                 {error}",
-            ))
+        run_with_limit(&lua, || lua.load(source).exec()).map_err(|error| {
+            DeviceModelError::from(format!("Failed to load Lua device model: {error}",))
         })?;
 
         let handle: mlua::Result<Function> = lua.globals().get("handle");
@@ -38,21 +38,12 @@ impl DeviceModel for LuaDeviceModel {
         command: &str,
         elapsed: Duration,
     ) -> Result<String, DeviceModelError> {
-        let handle: Function = self.lua.globals().get("handle").map_err(|error| {
-            DeviceModelError::from(format!(
-                "Failed to access Lua device \
-                     handler: {error}",
-            ))
-        })?;
+        run_with_limit(&self.lua, || {
+            let handle: Function = self.lua.globals().get("handle")?;
 
-        handle
-            .call::<String>((command, elapsed.as_secs_f64()))
-            .map_err(|error| {
-                DeviceModelError::from(format!(
-                    "Lua device handler failed: \
-                     {error}",
-                ))
-            })
+            handle.call::<String>((command, elapsed.as_secs_f64()))
+        })
+        .map_err(|error| DeviceModelError::from(format!("Lua device handler failed: {error}",)))
     }
 }
 
@@ -174,5 +165,24 @@ mod tests {
         assert!(error.contains("Lua device handler failed",));
 
         assert!(error.contains("simulated failure",));
+    }
+
+    #[test]
+    fn interrupts_endless_handler() {
+        let mut model = LuaDeviceModel::from_source(
+            r#"
+            function handle(command, time)
+                while true do
+                end
+            end
+            "#,
+        )
+        .unwrap();
+
+        let error = model
+            .handle_command("read", Duration::from_secs(1))
+            .unwrap_err();
+
+        assert!(error.to_string().contains("Lua execution exceeded"),);
     }
 }

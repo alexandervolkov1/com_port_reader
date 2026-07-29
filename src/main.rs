@@ -12,6 +12,7 @@ pub mod device_model;
 mod dsl;
 mod lua_api;
 pub mod lua_device_model;
+mod lua_execution;
 pub mod lua_runtime;
 pub mod lua_worker;
 pub mod protocol;

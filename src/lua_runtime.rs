@@ -1,7 +1,7 @@
 use crossbeam_channel::Sender;
 use mlua::{FromLua, Function, Lua, MultiValue};
 
-use crate::user_command::UserCommand;
+use crate::{lua_execution::run_with_limit, user_command::UserCommand};
 
 pub struct LuaRuntime {
     lua: Lua,
@@ -20,26 +20,28 @@ impl LuaRuntime {
     }
 
     pub fn execute(&self, source: &str) -> mlua::Result<()> {
-        self.lua.load(source).exec()
+        run_with_limit(&self.lua, || self.lua.load(source).exec())
     }
 
     pub fn evaluate<T>(&self, source: &str) -> mlua::Result<T>
     where
         T: FromLua,
     {
-        self.lua.load(source).eval()
+        run_with_limit(&self.lua, || self.lua.load(source).eval())
     }
 
     pub fn evaluate_for_repl(&self, source: &str) -> mlua::Result<Vec<String>> {
-        let values: MultiValue = self.lua.load(source).eval()?;
+        run_with_limit(&self.lua, || {
+            let values: MultiValue = self.lua.load(source).eval()?;
 
-        let tostring: Function = self.lua.globals().get("tostring")?;
+            let tostring: Function = self.lua.globals().get("tostring")?;
 
-        values
-            .iter()
-            .cloned()
-            .map(|value| tostring.call::<String>(value))
-            .collect()
+            values
+                .iter()
+                .cloned()
+                .map(|value| tostring.call::<String>(value))
+                .collect()
+        })
     }
 }
 
@@ -195,5 +197,14 @@ mod tests {
         let error = result.unwrap_err().to_string();
 
         assert!(error.contains("application command channel is disconnected",));
+    }
+
+    #[test]
+    fn interrupts_endless_execution() {
+        let runtime = LuaRuntime::new();
+
+        let error = runtime.execute("while true do end").unwrap_err();
+
+        assert!(error.to_string().contains("Lua execution exceeded"),);
     }
 }

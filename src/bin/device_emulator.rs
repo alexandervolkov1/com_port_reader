@@ -4,6 +4,9 @@ mod device_model;
 #[path = "../lua_device_model.rs"]
 mod lua_device_model;
 
+#[path = "../lua_execution.rs"]
+mod lua_execution;
+
 #[path = "../device_emulator.rs"]
 mod device_emulator;
 
