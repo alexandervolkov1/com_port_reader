@@ -128,6 +128,11 @@ pub fn show_window(
 
         config.serial.emulator_port = emulator.selected_port().unwrap_or_default().to_owned();
 
+        config.emulator.script_path = emulator
+            .script_path()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
         let apply_result = worker_handle.set_poll_interval(config.application.poll_interval());
 
         let save_result = config.save(CONFIG_PATH);

@@ -21,6 +21,7 @@ const MAX_PLOT_POINTS_PER_SERIES: usize = 100_000;
 pub struct AppConfig {
     pub application: ApplicationSettings,
     pub serial: SerialPortSettings,
+    pub emulator: EmulatorSettings,
 }
 
 impl AppConfig {
@@ -103,6 +104,7 @@ impl Default for AppConfig {
         Self {
             application: ApplicationSettings::default(),
             serial: SerialPortSettings::default(),
+            emulator: EmulatorSettings::default(),
         }
     }
 }
@@ -158,6 +160,12 @@ impl Default for ApplicationSettings {
             max_plot_points_per_series: DEFAULT_MAX_PLOT_POINTS_PER_SERIES,
         }
     }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EmulatorSettings {
+    pub script_path: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -262,6 +270,7 @@ mod tests {
         assert_eq!(config.serial.data_bits, 8);
         assert_eq!(config.serial.parity, SerialParity::None,);
         assert_eq!(config.serial.flow_control, SerialFlowControl::None,);
+        assert!(config.emulator.script_path.is_empty());
     }
 
     #[test]
@@ -380,5 +389,18 @@ main_port = \" COM3\"
 
         assert_eq!(config, AppConfig::default());
         assert_eq!(warning, None);
+    }
+
+    #[test]
+    fn parses_emulator_settings() {
+        let config = AppConfig::parse(
+            "\
+    [emulator]
+    script_path = \"emulator_scripts/sine.lua\"
+    ",
+        )
+        .unwrap();
+
+        assert_eq!(config.emulator.script_path, "emulator_scripts/sine.lua",);
     }
 }

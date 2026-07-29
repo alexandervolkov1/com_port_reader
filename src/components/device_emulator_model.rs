@@ -16,7 +16,13 @@ pub struct DeviceEmulatorModel {
 }
 
 impl DeviceEmulatorModel {
-    pub fn new(configured_port: &str, log: LogHandle) -> Self {
+    pub fn new(configured_port: &str, configured_script_path: &str, log: LogHandle) -> Self {
+        let model_source = if configured_script_path.is_empty() {
+            DeviceModelSource::BuiltIn
+        } else {
+            DeviceModelSource::LuaScript(PathBuf::from(configured_script_path))
+        };
+
         Self {
             selected_port: if configured_port.is_empty() {
                 None
@@ -24,10 +30,10 @@ impl DeviceEmulatorModel {
                 Some(configured_port.to_owned())
             },
 
+            model_source,
             handle: None,
             error: None,
             log,
-            model_source: DeviceModelSource::BuiltIn,
         }
     }
 

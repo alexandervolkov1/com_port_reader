@@ -62,8 +62,12 @@ impl MyApp {
             log_handle.error(warning);
         }
 
-        let device_emulator =
-            DeviceEmulatorModel::new(&config.serial.emulator_port, log_handle.clone());
+        let device_emulator = DeviceEmulatorModel::new(
+            &config.serial.emulator_port,
+            &config.emulator.script_path,
+            log_handle.clone(),
+        );
+
         let series = SeriesStore::new();
 
         let (command_sender, command_receiver) = crossbeam_channel::bounded(32);
