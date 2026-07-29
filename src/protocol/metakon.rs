@@ -11,7 +11,7 @@ const READABLE_MASK: u8 = 0x40;
 const WRITABLE_MASK: u8 = 0x80;
 
 const READ_ATTEMPTS: usize = 3;
-const INT_READ_RESPONSE_LENGTH: usize = 8;
+const READ_RESPONSE_OVERHEAD: usize = 6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReadRegisterRequest {
@@ -104,47 +104,125 @@ impl ReadRegisterRequest {
     }
 }
 
-pub fn read_int_register(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegisterDataType {
+    Bool,
+    Ubyte,
+    Byte,
+    Uint,
+    Int,
+    Ulong,
+    Long,
+    Float,
+    Double,
+}
+
+impl RegisterDataType {
+    const fn data_length(self) -> usize {
+        match self {
+            Self::Bool | Self::Ubyte | Self::Byte => 1,
+
+            Self::Uint | Self::Int => 2,
+
+            Self::Ulong | Self::Long | Self::Float => 4,
+
+            Self::Double => 8,
+        }
+    }
+
+    const fn response_length(self) -> usize {
+        READ_RESPONSE_OVERHEAD + self.data_length()
+    }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Bool => "Bool",
+            Self::Ubyte => "Ubyte",
+            Self::Byte => "Byte",
+            Self::Uint => "Uint",
+            Self::Int => "Int",
+            Self::Ulong => "Ulong",
+            Self::Long => "Long",
+            Self::Float => "Float",
+            Self::Double => "Double",
+        }
+    }
+
+    const fn matches_value(self, value: &RegisterValue) -> bool {
+        matches!(
+            (self, value),
+            (Self::Bool, RegisterValue::Bool(_))
+                | (Self::Ubyte, RegisterValue::Ubyte(_))
+                | (Self::Byte, RegisterValue::Byte(_))
+                | (Self::Uint, RegisterValue::Uint(_))
+                | (Self::Int, RegisterValue::Int(_))
+                | (Self::Ulong, RegisterValue::Ulong(_))
+                | (Self::Long, RegisterValue::Long(_))
+                | (Self::Float, RegisterValue::Float(_))
+                | (Self::Double, RegisterValue::Double(_))
+        )
+    }
+}
+
+pub fn read_register(
     connection: &mut SerialConnection,
     request: ReadRegisterRequest,
-) -> Result<i16, ReadIntRegisterError> {
-    let mut last_error = match read_int_register_once(connection, request) {
+    expected_type: RegisterDataType,
+) -> Result<RegisterValue, ReadRegisterError> {
+    let mut last_error = match read_register_once(connection, request, expected_type) {
         Ok(value) => return Ok(value),
         Err(error) => error,
     };
 
     for _ in 1..READ_ATTEMPTS {
-        match read_int_register_once(connection, request) {
+        match read_register_once(connection, request, expected_type) {
             Ok(value) => return Ok(value),
             Err(error) => last_error = error,
         }
     }
 
-    Err(ReadIntRegisterError {
+    Err(ReadRegisterError {
         attempts: READ_ATTEMPTS,
         last_error,
     })
 }
 
-fn read_int_register_once(
+pub fn read_int_register(
     connection: &mut SerialConnection,
     request: ReadRegisterRequest,
-) -> Result<i16, ReadIntRegisterAttemptError> {
+) -> Result<i16, ReadIntRegisterError> {
+    let value = read_register(connection, request, RegisterDataType::Int)?;
+
+    let RegisterValue::Int(value) = value else {
+        unreachable!("read_register returned a value with an unexpected type");
+    };
+
+    Ok(value)
+}
+
+fn read_register_once(
+    connection: &mut SerialConnection,
+    request: ReadRegisterRequest,
+    expected_type: RegisterDataType,
+) -> Result<RegisterValue, ReadRegisterAttemptError> {
     let request_bytes = request.encode();
 
-    let mut response_bytes = [0_u8; INT_READ_RESPONSE_LENGTH];
+    let mut response_bytes = vec![0_u8; expected_type.response_length()];
 
     connection.exchange_exact(&request_bytes, &mut response_bytes)?;
 
     let response = request.decode_response(&response_bytes)?;
 
-    match response.value() {
-        RegisterValue::Int(value) => Ok(*value),
+    let value = response.into_value();
 
-        value => Err(ReadIntRegisterAttemptError::UnexpectedValueType {
-            actual: register_value_type_name(value),
-        }),
+    if !expected_type.matches_value(&value) {
+        return Err(ReadRegisterAttemptError::UnexpectedValueType {
+            expected: expected_type,
+            actual: register_value_type_name(&value),
+        });
     }
+
+    Ok(value)
 }
 
 fn register_value_type_name(value: &RegisterValue) -> &'static str {
@@ -487,13 +565,15 @@ pub fn calculate_crc(bytes: &[u8]) -> u8 {
     crc
 }
 
+pub type ReadIntRegisterError = ReadRegisterError;
+
 #[derive(Debug)]
-pub struct ReadIntRegisterError {
+pub struct ReadRegisterError {
     attempts: usize,
-    last_error: ReadIntRegisterAttemptError,
+    last_error: ReadRegisterAttemptError,
 }
 
-impl std::fmt::Display for ReadIntRegisterError {
+impl std::fmt::Display for ReadRegisterError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
@@ -503,36 +583,43 @@ impl std::fmt::Display for ReadIntRegisterError {
     }
 }
 
-impl std::error::Error for ReadIntRegisterError {
+impl std::error::Error for ReadRegisterError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.last_error)
     }
 }
 
 #[derive(Debug)]
-enum ReadIntRegisterAttemptError {
+enum ReadRegisterAttemptError {
     Serial(SerialConnectionError),
 
     InvalidResponse(ReadResponseError),
 
-    UnexpectedValueType { actual: &'static str },
+    UnexpectedValueType {
+        expected: RegisterDataType,
+        actual: &'static str,
+    },
 }
 
-impl std::fmt::Display for ReadIntRegisterAttemptError {
+impl std::fmt::Display for ReadRegisterAttemptError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Serial(error) => error.fmt(formatter),
 
             Self::InvalidResponse(error) => error.fmt(formatter),
 
-            Self::UnexpectedValueType { actual } => {
-                write!(formatter, "Expected Metakon Int response, got {actual}",)
+            Self::UnexpectedValueType { expected, actual } => {
+                write!(
+                    formatter,
+                    "Expected Metakon {} response, got {actual}",
+                    expected.name(),
+                )
             }
         }
     }
 }
 
-impl std::error::Error for ReadIntRegisterAttemptError {
+impl std::error::Error for ReadRegisterAttemptError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Serial(error) => Some(error),
@@ -544,13 +631,13 @@ impl std::error::Error for ReadIntRegisterAttemptError {
     }
 }
 
-impl From<SerialConnectionError> for ReadIntRegisterAttemptError {
+impl From<SerialConnectionError> for ReadRegisterAttemptError {
     fn from(error: SerialConnectionError) -> Self {
         Self::Serial(error)
     }
 }
 
-impl From<ReadResponseError> for ReadIntRegisterAttemptError {
+impl From<ReadResponseError> for ReadRegisterAttemptError {
     fn from(error: ReadResponseError) -> Self {
         Self::InvalidResponse(error)
     }
@@ -558,7 +645,9 @@ impl From<ReadResponseError> for ReadIntRegisterAttemptError {
 
 #[cfg(test)]
 mod tests {
-    use super::{ReadRegisterRequest, ReadResponseError, RegisterValue, calculate_crc};
+    use super::{
+        ReadRegisterRequest, ReadResponseError, RegisterDataType, RegisterValue, calculate_crc,
+    };
 
     #[test]
     fn matches_single_byte_reference_values() {
@@ -671,6 +760,36 @@ mod tests {
                 actual: 1,
             },
         );
+    }
+
+    #[test]
+    fn calculates_fixed_response_lengths() {
+        assert_eq!(RegisterDataType::Byte.response_length(), 7,);
+
+        assert_eq!(RegisterDataType::Int.response_length(), 8,);
+
+        assert_eq!(RegisterDataType::Double.response_length(), 14,);
+    }
+
+    #[test]
+    fn parses_negative_byte_response() {
+        let request = ReadRegisterRequest::new(0x0F, 0x00, 0x06);
+
+        let frame = with_crc(&[
+            0x0F, // DEV
+            0x00, // CHA
+            0x06, // output power register
+            0x00, // read command
+            0xC2, // readable + writable Byte
+            0xE7, // -25 as i8
+        ]);
+
+        let response = request.decode_response(&frame).unwrap();
+
+        assert!(response.readable());
+        assert!(response.writable());
+
+        assert_eq!(response.value(), &RegisterValue::Byte(-25),);
     }
 
     fn with_crc(bytes: &[u8]) -> Vec<u8> {
