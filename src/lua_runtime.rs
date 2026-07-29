@@ -316,4 +316,94 @@ mod tests {
 
         assert!(command_receiver.try_recv().is_err());
     }
+
+    #[test]
+    fn exposes_metakon_series_command() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                app.add_metakon({
+                    device = 15,
+                    channel = 2,
+                    register = 0x03,
+                    scale = 0.1,
+                    name = "temperature"
+                })
+
+                app.add_metakon()
+                "#,
+            )
+            .unwrap();
+
+        let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+            panic!("expected Add command");
+        };
+
+        let (source, name) = new_series.into_source_parts();
+
+        assert_eq!(name.as_deref(), Some("temperature"),);
+
+        assert_eq!(
+            source,
+            SeriesSource::Metakon {
+                device: 15,
+                channel: 2,
+                register: 0x03,
+                scale: 0.1,
+            },
+        );
+
+        let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+            panic!("expected Add command");
+        };
+
+        let (source, name) = new_series.into_source_parts();
+
+        assert_eq!(name, None);
+
+        assert_eq!(
+            source,
+            SeriesSource::Metakon {
+                device: 1,
+                channel: 0,
+                register: 0x01,
+                scale: 1.0,
+            },
+        );
+
+        assert!(command_receiver.try_recv().is_err(),);
+    }
+
+    #[test]
+    fn rejects_unknown_metakon_option() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        let error = runtime
+            .execute(
+                r#"
+                app.add_metakon({
+                    devcie = 15
+                })
+                "#,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains(
+            "unknown app.add_metakon \
+                 option 'devcie'",
+        ),);
+
+        assert!(command_receiver.try_recv().is_err(),);
+    }
 }

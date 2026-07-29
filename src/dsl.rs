@@ -1,7 +1,10 @@
 use std::str::SplitWhitespace;
 
 use crate::{
-    data::{DEFAULT_SERIAL_STEP, NewSeries, Signal},
+    data::{
+        DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_REGISTER,
+        DEFAULT_METAKON_SCALE, DEFAULT_SERIAL_STEP, NewSeries, Signal,
+    },
     user_command::UserCommand,
 };
 
@@ -24,11 +27,6 @@ const CHANNEL_OPTIONS: &[&str] = &["--channel", "--cha"];
 const REGISTER_OPTIONS: &[&str] = &["--register", "--reg"];
 
 const SCALE_OPTIONS: &[&str] = &["--scale"];
-
-const DEFAULT_METAKON_DEVICE: u8 = 1;
-const DEFAULT_METAKON_CHANNEL: u8 = 0;
-const DEFAULT_METAKON_REGISTER: u8 = 0x01;
-const DEFAULT_METAKON_SCALE: f64 = 1.0;
 
 pub fn parse_command(input: &str) -> Result<UserCommand, String> {
     let input = input.trim();

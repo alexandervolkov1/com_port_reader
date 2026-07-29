@@ -2,7 +2,10 @@ use crossbeam_channel::Sender;
 use mlua::{Lua, Table};
 
 use crate::{
-    data::{DEFAULT_SERIAL_STEP, NewSeries},
+    data::{
+        DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_REGISTER,
+        DEFAULT_METAKON_SCALE, DEFAULT_SERIAL_STEP, NewSeries,
+    },
     user_command::UserCommand,
 };
 
@@ -49,6 +52,8 @@ pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<(
 
     register_add_serial(lua, &app, command_sender.clone())?;
 
+    register_add_metakon(lua, &app, command_sender.clone())?;
+
     register_delete_series(lua, &app, command_sender.clone())?;
 
     register_rename_series(lua, &app, command_sender.clone())?;
@@ -88,6 +93,67 @@ fn register_add_serial(
     })?;
 
     app.set("add_serial", function)
+}
+
+fn register_add_metakon(
+    lua: &Lua,
+    app: &Table,
+    command_sender: Sender<UserCommand>,
+) -> mlua::Result<()> {
+    let function = lua.create_function(move |lua, options: Option<Table>| {
+        let options = match options {
+            Some(options) => options,
+            None => lua.create_table()?,
+        };
+
+        validate_metakon_options(&options)?;
+
+        let device = options
+            .get::<Option<u8>>("device")?
+            .unwrap_or(DEFAULT_METAKON_DEVICE);
+
+        let channel = options
+            .get::<Option<u8>>("channel")?
+            .unwrap_or(DEFAULT_METAKON_CHANNEL);
+
+        let register = options
+            .get::<Option<u8>>("register")?
+            .unwrap_or(DEFAULT_METAKON_REGISTER);
+
+        let scale = options
+            .get::<Option<f64>>("scale")?
+            .unwrap_or(DEFAULT_METAKON_SCALE);
+
+        let name = options.get::<Option<String>>("name")?;
+
+        let new_series = match name {
+            Some(name) => NewSeries::named_metakon(device, channel, register, scale, name),
+
+            None => NewSeries::unnamed_metakon(device, channel, register, scale),
+        };
+
+        send_application_command(&command_sender, UserCommand::Add(new_series))
+    })?;
+
+    app.set("add_metakon", function)
+}
+
+fn validate_metakon_options(options: &Table) -> mlua::Result<()> {
+    for pair in options.pairs::<String, mlua::Value>() {
+        let (key, _) = pair?;
+
+        if !matches!(
+            key.as_str(),
+            "device" | "channel" | "register" | "scale" | "name"
+        ) {
+            return Err(mlua::Error::RuntimeError(format!(
+                "unknown app.add_metakon \
+                         option '{key}'",
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 fn register_delete_series(
