@@ -15,7 +15,7 @@ pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<(
     register_command(
         lua,
         &app,
-        "start_recording",
+        "start_rec",
         command_sender.clone(),
         start_recording_command,
     )?;
@@ -23,7 +23,7 @@ pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<(
     register_command(
         lua,
         &app,
-        "stop_recording",
+        "stop_rec",
         command_sender.clone(),
         stop_recording_command,
     )?;
@@ -31,18 +31,12 @@ pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<(
     register_command(
         lua,
         &app,
-        "start_emulator",
+        "start_emu",
         command_sender.clone(),
         start_emulator_command,
     )?;
 
-    register_command(
-        lua,
-        &app,
-        "stop_emulator",
-        command_sender,
-        stop_emulator_command,
-    )?;
+    register_command(lua, &app, "stop_emu", command_sender, stop_emulator_command)?;
 
     lua.globals().set("app", app)
 }

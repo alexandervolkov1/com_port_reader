@@ -5,7 +5,7 @@ use std::{
 
 use crossbeam_channel::{Receiver, Sender, bounded};
 
-use crate::lua_runtime::LuaRuntime;
+use crate::{lua_runtime::LuaRuntime, user_command::UserCommand};
 
 const COMMAND_CHANNEL_CAPACITY: usize = 32;
 
@@ -18,6 +18,7 @@ enum LuaCommand {
 pub enum LuaEvent {
     ExecutionSucceeded(Vec<String>),
     ExecutionFailed(String),
+    InitializationFailed(String),
 }
 
 #[derive(Clone)]
@@ -56,7 +57,10 @@ pub struct LuaWorker {
 }
 
 impl LuaWorker {
-    pub fn spawn(event_sender: Sender<LuaEvent>) -> std::io::Result<Self> {
+    pub(crate) fn spawn(
+        event_sender: Sender<LuaEvent>,
+        application_command_sender: Sender<UserCommand>,
+    ) -> std::io::Result<Self> {
         let (command_sender, command_receiver) = bounded(COMMAND_CHANNEL_CAPACITY);
 
         let commands = LuaWorkerHandle {
@@ -66,7 +70,7 @@ impl LuaWorker {
         let thread = thread::Builder::new()
             .name("lua-runtime".to_owned())
             .spawn(move || {
-                run_lua_worker(command_receiver, event_sender);
+                run_lua_worker(command_receiver, event_sender, application_command_sender);
             })?;
 
         Ok(Self {
@@ -90,8 +94,18 @@ impl Drop for LuaWorker {
     }
 }
 
-fn run_lua_worker(command_receiver: Receiver<LuaCommand>, event_sender: Sender<LuaEvent>) {
+fn run_lua_worker(
+    command_receiver: Receiver<LuaCommand>,
+    event_sender: Sender<LuaEvent>,
+    application_command_sender: Sender<UserCommand>,
+) {
     let runtime = LuaRuntime::new();
+
+    if let Err(error) = runtime.install_application_api(application_command_sender) {
+        let _ = event_sender.send(LuaEvent::InitializationFailed(error.to_string()));
+
+        return;
+    }
 
     while let Ok(command) = command_receiver.recv() {
         let event = match command {
@@ -114,44 +128,56 @@ fn run_lua_worker(command_receiver: Receiver<LuaCommand>, event_sender: Sender<L
 mod tests {
     use std::time::Duration;
 
-    use crossbeam_channel::unbounded;
+    use crossbeam_channel::{Receiver, Sender, unbounded};
 
     use super::{LuaEvent, LuaWorker};
+    use crate::user_command::UserCommand;
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(2);
+
+    fn spawn_worker(event_sender: Sender<LuaEvent>) -> LuaWorker {
+        let (application_command_sender, _application_command_receiver) = unbounded();
+
+        LuaWorker::spawn(event_sender, application_command_sender).unwrap()
+    }
+
+    fn receive_event(receiver: &Receiver<LuaEvent>) -> LuaEvent {
+        receiver.recv_timeout(TEST_TIMEOUT).unwrap()
+    }
 
     #[test]
     fn executes_code_on_worker_thread() {
         let (event_sender, event_receiver) = unbounded();
 
-        let worker = LuaWorker::spawn(event_sender).unwrap();
+        let worker = spawn_worker(event_sender);
 
         worker.handle().execute("value = 42").unwrap();
 
-        let event = event_receiver.recv_timeout(TEST_TIMEOUT).unwrap();
-
-        assert_eq!(event, LuaEvent::ExecutionSucceeded(Vec::new(),),);
+        assert_eq!(
+            receive_event(&event_receiver),
+            LuaEvent::ExecutionSucceeded(Vec::new(),),
+        );
     }
 
     #[test]
     fn preserves_state_between_commands() {
         let (event_sender, event_receiver) = unbounded();
 
-        let worker = LuaWorker::spawn(event_sender).unwrap();
+        let worker = spawn_worker(event_sender);
 
         let handle = worker.handle();
 
         handle.execute("counter = 40").unwrap();
 
         assert_eq!(
-            event_receiver.recv_timeout(TEST_TIMEOUT).unwrap(),
+            receive_event(&event_receiver),
             LuaEvent::ExecutionSucceeded(Vec::new(),),
         );
 
         handle.execute("counter + 2").unwrap();
 
         assert_eq!(
-            event_receiver.recv_timeout(TEST_TIMEOUT).unwrap(),
+            receive_event(&event_receiver),
             LuaEvent::ExecutionSucceeded(vec!["42".to_owned(),]),
         );
     }
@@ -160,12 +186,12 @@ mod tests {
     fn returns_multiple_values() {
         let (event_sender, event_receiver) = unbounded();
 
-        let worker = LuaWorker::spawn(event_sender).unwrap();
+        let worker = spawn_worker(event_sender);
 
         worker.handle().execute("return 42, true, 'hello'").unwrap();
 
         assert_eq!(
-            event_receiver.recv_timeout(TEST_TIMEOUT).unwrap(),
+            receive_event(&event_receiver),
             LuaEvent::ExecutionSucceeded(vec![
                 "42".to_owned(),
                 "true".to_owned(),
@@ -178,16 +204,39 @@ mod tests {
     fn reports_execution_error() {
         let (event_sender, event_receiver) = unbounded();
 
-        let worker = LuaWorker::spawn(event_sender).unwrap();
+        let worker = spawn_worker(event_sender);
 
         worker.handle().execute("error('test failure')").unwrap();
 
-        let event = event_receiver.recv_timeout(TEST_TIMEOUT).unwrap();
+        let event = receive_event(&event_receiver);
 
         let LuaEvent::ExecutionFailed(error) = event else {
             panic!("expected Lua execution failure");
         };
 
         assert!(error.contains("test failure"));
+    }
+
+    #[test]
+    fn forwards_application_command() {
+        let (event_sender, event_receiver) = unbounded();
+
+        let (application_command_sender, application_command_receiver) = unbounded();
+
+        let worker = LuaWorker::spawn(event_sender, application_command_sender).unwrap();
+
+        worker.handle().execute("app.start()").unwrap();
+
+        assert!(matches!(
+            application_command_receiver
+                .recv_timeout(TEST_TIMEOUT)
+                .unwrap(),
+            UserCommand::Start,
+        ));
+
+        assert_eq!(
+            receive_event(&event_receiver),
+            LuaEvent::ExecutionSucceeded(Vec::new(),),
+        );
     }
 }

@@ -107,15 +107,22 @@ impl LuaConsoleModel {
             LuaEvent::ExecutionSucceeded(output) => {
                 self.command_buffer.clear();
 
-                if output.is_empty() {
-                    self.log.info("Lua command executed.");
-                } else {
+                if !output.is_empty() {
                     self.log.info(format!("Lua result: {}", output.join("\t"),));
                 }
             }
 
             LuaEvent::ExecutionFailed(error) => {
                 self.log.error(format!("Lua error: {error}",));
+            }
+
+            LuaEvent::InitializationFailed(error) => {
+                self.disconnected = true;
+
+                self.log.error(format!(
+                    "Failed to initialize Lua runtime: \
+                     {error}",
+                ));
             }
         }
     }

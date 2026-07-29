@@ -12,7 +12,10 @@ impl LuaRuntime {
         Self { lua: Lua::new() }
     }
 
-    pub fn install_application_api(&self, command_sender: Sender<UserCommand>) -> mlua::Result<()> {
+    pub(crate) fn install_application_api(
+        &self,
+        command_sender: Sender<UserCommand>,
+    ) -> mlua::Result<()> {
         crate::lua_api::install(&self.lua, command_sender)
     }
 
@@ -131,10 +134,10 @@ mod tests {
                 app.start()
                 app.stop()
                 app.clear()
-                app.start_recording()
-                app.stop_recording()
-                app.start_emulator()
-                app.stop_emulator()
+                app.start_rec()
+                app.stop_rec()
+                app.start_emu()
+                app.stop_emu()
                 "#,
             )
             .unwrap();
