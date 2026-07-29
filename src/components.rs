@@ -6,6 +6,8 @@ pub mod device_emulator_model;
 pub mod help_model;
 pub mod help_view;
 pub mod log_view;
+pub mod lua_console_model;
+pub mod lua_console_view;
 mod plot_downsampling;
 pub mod plot_model;
 pub mod plot_view;

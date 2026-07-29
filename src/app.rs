@@ -6,11 +6,12 @@ use crate::app_config::{AppConfig, CONFIG_PATH};
 use crate::components::{
     command_model::CommandModel, command_view, controls_model::ControlsModel, controls_view,
     device_emulator_model::DeviceEmulatorModel, help_model::HelpModel, help_view,
-    plot_model::PlotModel, plot_view, script_model::ScriptModel, script_view,
-    serial_settings_model::SerialSettingsModel, serial_settings_view,
-    series_editor_model::SeriesEditorModel, series_editor_view, series_view,
+    lua_console_model::LuaConsoleModel, lua_console_view, plot_model::PlotModel, plot_view,
+    script_model::ScriptModel, script_view, serial_settings_model::SerialSettingsModel,
+    serial_settings_view, series_editor_model::SeriesEditorModel, series_editor_view, series_view,
 };
 use crate::data::SeriesStore;
+use crate::lua_worker::LuaWorker;
 use crate::sample_sink::NullSampleSink;
 use crate::serial_connection::SerialConfigStore;
 use crate::worker::{WorkerConfig, WorkerHandle};
@@ -37,6 +38,8 @@ pub struct MyApp {
     device_emulator: DeviceEmulatorModel,
     help: HelpModel,
     config: AppConfig,
+    _lua_worker: LuaWorker,
+    lua_console: LuaConsoleModel,
 }
 
 impl MyApp {
@@ -44,6 +47,13 @@ impl MyApp {
         let (config, config_warning) = AppConfig::load_or_default(CONFIG_PATH);
 
         let (log, log_handle) = LogModel::new();
+        let (lua_event_sender, lua_event_receiver) = crossbeam_channel::unbounded();
+
+        let lua_worker =
+            LuaWorker::spawn(lua_event_sender).expect("failed to spawn Lua worker thread");
+
+        let lua_console =
+            LuaConsoleModel::new(lua_worker.handle(), lua_event_receiver, log_handle.clone());
 
         if let Some(warning) = config_warning {
             log_handle.error(warning);
@@ -98,6 +108,8 @@ impl MyApp {
             log_handle,
             device_emulator,
             help: HelpModel::default(),
+            _lua_worker: lua_worker,
+            lua_console,
         }
     }
 }
@@ -106,6 +118,7 @@ impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.device_emulator.poll();
         self.command.poll_events(&mut self.controls);
+        self.lua_console.poll_events();
         self.log.poll();
 
         egui::Panel::top("application_menu").show(ui, |ui| {
@@ -141,6 +154,8 @@ impl eframe::App for MyApp {
                 &self.serial_settings,
                 &mut self.device_emulator,
             );
+
+            lua_console_view::show(ui, &mut self.lua_console);
 
             script_view::show(
                 ui,
