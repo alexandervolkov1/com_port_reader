@@ -1,6 +1,8 @@
 use crate::{
     data::{MetakonValueType, Sample, SeriesMetadata, SeriesSample, SeriesSource},
-    protocol::metakon::{ReadRegisterRequest, RegisterDataType, read_register},
+    protocol::metakon::{
+        ReadRegisterRequest, RegisterDataType, WriteRegisterRequest, read_register, write_register,
+    },
     serial_connection::{SerialConfigStore, SerialConnection},
 };
 
@@ -140,6 +142,27 @@ impl AcquisitionSource for SerialCommandSource {
         })?;
 
         Ok(Some(response))
+    }
+
+    fn write_metakon_register(
+        &mut self,
+        request: WriteRegisterRequest,
+    ) -> Result<bool, AcquisitionError> {
+        let connection = self.connection().map_err(|error| {
+            AcquisitionError::from(format!("Cannot write Metakon register: {error}",))
+        })?;
+
+        write_register(connection, request).map_err(|error| {
+            AcquisitionError::from(format!(
+                "Metakon device {}, channel {}, \
+                 register 0x{:02X} write failed: {error}",
+                request.device(),
+                request.channel(),
+                request.register(),
+            ))
+        })?;
+
+        Ok(true)
     }
 
     fn stop(&mut self) -> Result<(), AcquisitionError> {

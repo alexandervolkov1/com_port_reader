@@ -2,6 +2,7 @@ use crossbeam_channel::Sender;
 use std::{error::Error, fmt, path::PathBuf, time::Duration};
 
 use crate::data::{NewSeries, SeriesId};
+use crate::protocol::metakon::WriteRegisterRequest;
 use crate::serial_connection::SerialPortConfig;
 
 use super::command::WorkerCommand;
@@ -85,6 +86,14 @@ impl WorkerHandle {
         command: String,
     ) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::SendSerialText { config, command })
+    }
+
+    pub fn write_metakon(
+        &self,
+        config: SerialPortConfig,
+        request: WriteRegisterRequest,
+    ) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::WriteMetakon { config, request })
     }
 }
 

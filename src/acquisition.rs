@@ -2,6 +2,7 @@ mod combined_source;
 mod serial_command_source;
 
 use crate::data::{SeriesMetadata, SeriesSample};
+use crate::protocol::metakon::WriteRegisterRequest;
 
 pub use combined_source::CombinedSource;
 pub use serial_command_source::SerialCommandSource;
@@ -47,6 +48,13 @@ pub trait AcquisitionSource: Send {
 
     fn request_text(&mut self, _command: &str) -> Result<Option<String>, AcquisitionError> {
         Ok(None)
+    }
+
+    fn write_metakon_register(
+        &mut self,
+        _request: WriteRegisterRequest,
+    ) -> Result<bool, AcquisitionError> {
+        Ok(false)
     }
 
     fn stop(&mut self) -> Result<(), AcquisitionError> {

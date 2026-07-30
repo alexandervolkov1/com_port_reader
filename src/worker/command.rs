@@ -1,6 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use crate::data::{NewSeries, SeriesId};
+use crate::protocol::metakon::WriteRegisterRequest;
 use crate::serial_connection::SerialPortConfig;
 
 pub enum WorkerCommand {
@@ -26,5 +27,9 @@ pub enum WorkerCommand {
     SendSerialText {
         config: SerialPortConfig,
         command: String,
+    },
+    WriteMetakon {
+        config: SerialPortConfig,
+        request: WriteRegisterRequest,
     },
 }

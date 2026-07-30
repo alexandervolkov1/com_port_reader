@@ -58,6 +58,7 @@ mod tests {
     use super::LuaRuntime;
     use crate::{
         data::{MetakonValueType, SeriesSource},
+        protocol::metakon::{WriteRegisterRequest, WriteRegisterValue},
         user_command::UserCommand,
     };
 
@@ -475,6 +476,42 @@ mod tests {
         assert!(error.contains(
             "unknown app.add_metakon \
              option 'devcie'",
+        ));
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn exposes_metakon_setpoint_command() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                app.set_metakon_setpoint({
+                    device = 15,
+                    channel = 0,
+                    value = 1000
+                })
+                "#,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::WriteMetakon {
+                request
+            } if request
+                == WriteRegisterRequest::new(
+                    15,
+                    0,
+                    0x02,
+                    WriteRegisterValue::Int(1000),
+                ),
         ));
 
         assert!(command_receiver.try_recv().is_err());

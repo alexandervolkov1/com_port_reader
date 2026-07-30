@@ -6,6 +6,7 @@ use crate::{
         DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_REGISTER,
         DEFAULT_METAKON_SCALE, MetakonValueType, NewSeries,
     },
+    protocol::metakon::{WriteRegisterRequest, WriteRegisterValue},
     user_command::UserCommand,
 };
 
@@ -57,6 +58,8 @@ pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<(
     register_delete_series(lua, &app, command_sender.clone())?;
 
     register_rename_series(lua, &app, command_sender.clone())?;
+
+    register_set_metakon_setpoint(lua, &app, command_sender.clone())?;
 
     register_send_serial(lua, &app, command_sender)?;
 
@@ -259,4 +262,58 @@ fn start_emulator_command() -> UserCommand {
 
 fn stop_emulator_command() -> UserCommand {
     UserCommand::StopEmulator
+}
+
+fn register_set_metakon_setpoint(
+    lua: &Lua,
+    app: &Table,
+    command_sender: Sender<UserCommand>,
+) -> mlua::Result<()> {
+    let function = lua.create_function(move |lua, options: Option<Table>| {
+        let options = match options {
+            Some(options) => options,
+            None => lua.create_table()?,
+        };
+
+        validate_setpoint_options(&options)?;
+
+        let device = options
+            .get::<Option<u8>>("device")?
+            .unwrap_or(DEFAULT_METAKON_DEVICE);
+
+        let channel = options
+            .get::<Option<u8>>("channel")?
+            .unwrap_or(DEFAULT_METAKON_CHANNEL);
+
+        let value = options.get::<Option<i16>>("value")?.ok_or_else(|| {
+            mlua::Error::RuntimeError(
+                "app.set_metakon_setpoint \
+                         requires option 'value'"
+                    .to_owned(),
+            )
+        })?;
+
+        let request =
+            WriteRegisterRequest::new(device, channel, 0x02, WriteRegisterValue::Int(value));
+
+        send_application_command(&command_sender, UserCommand::WriteMetakon { request })
+    })?;
+
+    app.set("set_metakon_setpoint", function)
+}
+
+fn validate_setpoint_options(options: &Table) -> mlua::Result<()> {
+    for pair in options.pairs::<String, mlua::Value>() {
+        let (key, _) = pair?;
+
+        if !matches!(key.as_str(), "device" | "channel" | "value") {
+            return Err(mlua::Error::RuntimeError(format!(
+                "unknown \
+                     app.set_metakon_setpoint \
+                     option '{key}'",
+            )));
+        }
+    }
+
+    Ok(())
 }

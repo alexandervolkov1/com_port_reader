@@ -8,6 +8,7 @@ pub use config::WorkerConfig;
 pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
 
+use crate::protocol::metakon::{WriteRegisterRequest, write_register};
 use crate::sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError};
 use crate::serial_connection::SerialConnectionError;
 use crate::utils::current_time_f64;
@@ -411,6 +412,39 @@ impl Worker {
                         let _ = event_sender.send(event);
                     }
 
+                    Ok(WorkerCommand::WriteMetakon { config, request }) => {
+                        let port_name = config.port_name().to_owned();
+
+                        let result = if matches!(state, AcquisitionState::Running { .. }) {
+                            write_metakon_to_active_source(source.as_mut(), request)
+                        } else {
+                            config
+                                .open()
+                                .map_err(|error| {
+                                    AcquisitionError::from(format!(
+                                        "Failed to open COM port \
+                                         '{port_name}': {error}",
+                                    ))
+                                })
+                                .and_then(|mut connection| {
+                                    write_register(&mut connection, request)
+                                        .map_err(|error| AcquisitionError::from(error.to_string()))
+                                })
+                        };
+
+                        let event = match result {
+                            Ok(()) => WorkerEvent::MetakonWriteSucceeded { port_name, request },
+
+                            Err(error) => WorkerEvent::MetakonWriteFailed {
+                                port_name,
+                                request,
+                                error,
+                            },
+                        };
+
+                        let _ = event_sender.send(event);
+                    }
+
                     Err(RecvTimeoutError::Timeout) => {}
 
                     Err(RecvTimeoutError::Disconnected) => {
@@ -513,4 +547,18 @@ fn request_text_from_active_source(
                  text COM commands",
             )
         })
+}
+
+fn write_metakon_to_active_source(
+    source: &mut dyn AcquisitionSource,
+    request: WriteRegisterRequest,
+) -> Result<(), AcquisitionError> {
+    if source.write_metakon_register(request)? {
+        Ok(())
+    } else {
+        Err(AcquisitionError::from(
+            "No acquisition source supports \
+             Metakon register writes",
+        ))
+    }
 }

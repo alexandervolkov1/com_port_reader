@@ -1,4 +1,5 @@
 use crate::data::{SeriesMetadata, SeriesSample};
+use crate::protocol::metakon::WriteRegisterRequest;
 
 use super::{AcquisitionError, AcquisitionSource};
 
@@ -57,6 +58,19 @@ impl AcquisitionSource for CombinedSource {
         }
 
         Ok(None)
+    }
+
+    fn write_metakon_register(
+        &mut self,
+        request: WriteRegisterRequest,
+    ) -> Result<bool, AcquisitionError> {
+        for source in &mut self.sources {
+            if source.write_metakon_register(request)? {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     fn stop(&mut self) -> Result<(), AcquisitionError> {

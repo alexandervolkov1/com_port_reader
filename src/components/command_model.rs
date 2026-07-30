@@ -114,6 +114,21 @@ impl CommandModel {
                     self.set_worker_error(error);
                 }
             }
+
+            UserCommand::WriteMetakon { request } => {
+                let Some(config) = serial_settings.serial_config() else {
+                    self.log.error(
+                        "Cannot write Metakon register: \
+                         select a COM port in Settings.",
+                    );
+
+                    return;
+                };
+
+                if let Err(error) = self.worker_handle.write_metakon(config, request) {
+                    self.set_worker_error(error);
+                }
+            }
         }
     }
 
@@ -152,5 +167,6 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
             | WorkerEvent::SampleSinkFailed(_)
             | WorkerEvent::SerialPortTestFailed { .. }
             | WorkerEvent::SerialTextCommandFailed { .. }
+            | WorkerEvent::MetakonWriteFailed { .. }
     )
 }

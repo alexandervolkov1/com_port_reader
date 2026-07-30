@@ -1,4 +1,5 @@
 use crate::data::NewSeries;
+use crate::protocol::metakon::WriteRegisterRequest;
 
 #[derive(Debug)]
 pub enum UserCommand {
@@ -25,5 +26,9 @@ pub enum UserCommand {
 
     SendSerial {
         command: String,
+    },
+
+    WriteMetakon {
+        request: WriteRegisterRequest,
     },
 }

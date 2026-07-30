@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::protocol::metakon::WriteRegisterRequest;
 use crate::serial_connection::SerialConnectionError;
 use crate::{
     acquisition::AcquisitionError,
@@ -43,6 +44,16 @@ pub enum WorkerEvent {
         port_name: String,
         command: String,
         error: SerialConnectionError,
+    },
+    MetakonWriteSucceeded {
+        port_name: String,
+        request: WriteRegisterRequest,
+    },
+
+    MetakonWriteFailed {
+        port_name: String,
+        request: WriteRegisterRequest,
+        error: AcquisitionError,
     },
 }
 
@@ -133,6 +144,34 @@ impl std::fmt::Display for WorkerEvent {
                     formatter,
                     "COM port '{port_name}': command \
                      '{command}' failed: {error}",
+                )
+            }
+
+            Self::MetakonWriteSucceeded { port_name, request } => {
+                write!(
+                    formatter,
+                    "COM port '{port_name}': Metakon device {}, \
+                     channel {}, register 0x{:02X} set to {}.",
+                    request.device(),
+                    request.channel(),
+                    request.register(),
+                    request.value(),
+                )
+            }
+
+            Self::MetakonWriteFailed {
+                port_name,
+                request,
+                error,
+            } => {
+                write!(
+                    formatter,
+                    "COM port '{port_name}': failed to write \
+                     Metakon device {}, channel {}, register \
+                     0x{:02X}: {error}",
+                    request.device(),
+                    request.channel(),
+                    request.register(),
                 )
             }
         }

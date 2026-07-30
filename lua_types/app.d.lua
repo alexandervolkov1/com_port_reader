@@ -14,6 +14,11 @@
 ---@field scale? number Multiplier applied to the raw register value.
 ---@field name? string Optional unique series name.
 
+---@class MetakonSetpointOptions
+---@field device? integer Device address. Default: 1.
+---@field channel? integer Device channel. Default: 0.
+---@field value integer Raw Int register value.
+
 ---@class ApplicationApi
 app = {}
 
@@ -56,6 +61,10 @@ end
 ---scale = 1.0
 ---@param options? MetakonSeriesOptions
 function app.add_metakon(options) end
+
+---Writes the PID setpoint register 0x02.
+---@param options MetakonSetpointOptions
+function app.set_metakon_setpoint(options) end
 
 ---Deletes a series by name.
 ---@param name string Existing series name.

@@ -117,13 +117,13 @@ pub struct WriteRegisterRequest {
 }
 
 impl WriteRegisterRequest {
-    pub const fn new(
-        device: u8,
-        channel: u8,
-        register: u8,
-        value: WriteRegisterValue,
-    ) -> Self {
-        Self { device, channel, register, value }
+    pub const fn new(device: u8, channel: u8, register: u8, value: WriteRegisterValue) -> Self {
+        Self {
+            device,
+            channel,
+            register,
+            value,
+        }
     }
 
     pub fn encode(self) -> Vec<u8> {
@@ -183,6 +183,36 @@ impl WriteRegisterRequest {
             });
         }
         Ok(())
+    }
+
+    pub const fn device(&self) -> u8 {
+        self.device
+    }
+
+    pub const fn channel(&self) -> u8 {
+        self.channel
+    }
+
+    pub const fn register(&self) -> u8 {
+        self.register
+    }
+
+    pub const fn value(&self) -> WriteRegisterValue {
+        self.value
+    }
+}
+
+impl std::fmt::Display for WriteRegisterValue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ubyte(value) => value.fmt(formatter),
+
+            Self::Byte(value) => value.fmt(formatter),
+
+            Self::Uint(value) => value.fmt(formatter),
+
+            Self::Int(value) => value.fmt(formatter),
+        }
     }
 }
 
@@ -1056,12 +1086,7 @@ mod tests {
 
     #[test]
     fn encodes_int_register_write() {
-        let request = WriteRegisterRequest::new(
-            15,
-            0,
-            0x02,
-            WriteRegisterValue::Int(1234),
-        );
+        let request = WriteRegisterRequest::new(15, 0, 0x02, WriteRegisterValue::Int(1234));
         assert_eq!(
             request.encode(),
             vec![0x0F, 0x00, 0x02, 0x01, 0x04, 0xD2, 0x04, 0x7E],
@@ -1070,12 +1095,7 @@ mod tests {
 
     #[test]
     fn encodes_byte_register_write() {
-        let request = WriteRegisterRequest::new(
-            15,
-            0,
-            0x06,
-            WriteRegisterValue::Byte(-25),
-        );
+        let request = WriteRegisterRequest::new(15, 0, 0x06, WriteRegisterValue::Byte(-25));
         assert_eq!(
             request.encode(),
             vec![0x0F, 0x00, 0x06, 0x01, 0x02, 0xE7, 0x2B],
@@ -1084,12 +1104,7 @@ mod tests {
 
     #[test]
     fn accepts_valid_write_response() {
-        let request = WriteRegisterRequest::new(
-            15,
-            0,
-            0x02,
-            WriteRegisterValue::Int(1234),
-        );
+        let request = WriteRegisterRequest::new(15, 0, 0x02, WriteRegisterValue::Int(1234));
         assert_eq!(
             request.decode_response(&[0x0F, 0x00, 0x02, 0x01, 0xBE]),
             Ok(()),
@@ -1098,12 +1113,7 @@ mod tests {
 
     #[test]
     fn rejects_write_response_with_bad_crc() {
-        let request = WriteRegisterRequest::new(
-            15,
-            0,
-            0x02,
-            WriteRegisterValue::Int(1234),
-        );
+        let request = WriteRegisterRequest::new(15, 0, 0x02, WriteRegisterValue::Int(1234));
         let error = request
             .decode_response(&[0x0F, 0x00, 0x02, 0x01, 0x00])
             .unwrap_err();
@@ -1118,12 +1128,7 @@ mod tests {
 
     #[test]
     fn rejects_write_response_for_another_register() {
-        let request = WriteRegisterRequest::new(
-            15,
-            0,
-            0x02,
-            WriteRegisterValue::Int(1234),
-        );
+        let request = WriteRegisterRequest::new(15, 0, 0x02, WriteRegisterValue::Int(1234));
         let frame = with_crc(&[0x0F, 0x00, 0x03, 0x01]);
         let error = request.decode_response(&frame).unwrap_err();
         assert_eq!(
