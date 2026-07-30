@@ -3,9 +3,10 @@ use egui_extras::{Size, StripBuilder};
 
 use crate::acquisition::{CombinedSource, SerialCommandSource};
 use crate::app_config::{AppConfig, CONFIG_PATH};
+use crate::app_log::{LogHandle, LogModel};
 use crate::components::{
     command_model::CommandModel, controls_model::ControlsModel, controls_view,
-    device_emulator_model::DeviceEmulatorModel, help_model::HelpModel, help_view,
+    device_emulator_model::DeviceEmulatorModel, help_model::HelpModel, help_view, log_view,
     lua_console_model::LuaConsoleModel, lua_console_view, plot_model::PlotModel, plot_view,
     serial_settings_model::SerialSettingsModel, serial_settings_view, series_view,
 };
@@ -15,10 +16,6 @@ use crate::sample_sink::NullSampleSink;
 use crate::serial_connection::SerialConfigStore;
 use crate::user_command::UserCommand;
 use crate::worker::{Worker, WorkerConfig, WorkerHandle};
-use crate::{
-    app_log::{LogHandle, LogModel},
-    components::log_view,
-};
 
 const SERIES_PANEL_WIDTH: f32 = 150.0;
 const TOGGLE_WIDTH: f32 = 22.0;
@@ -46,7 +43,9 @@ impl MyApp {
         let (config, config_warning) = AppConfig::load_or_default(CONFIG_PATH);
 
         let (log, log_handle) = LogModel::new();
+
         let (lua_event_sender, lua_event_receiver) = crossbeam_channel::unbounded();
+
         let (lua_command_sender, lua_command_receiver) = crossbeam_channel::unbounded();
 
         let lua_worker = LuaWorker::spawn(lua_event_sender, lua_command_sender)
@@ -133,13 +132,19 @@ impl MyApp {
 impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.device_emulator.poll();
+
         self.command.poll_events(&mut self.controls);
+
         self.poll_lua_commands();
+
         self.lua_console.poll_events();
+
         self.log.poll();
 
         egui::Panel::top("application_menu").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
+                lua_console_view::show_menu_button(ui, &mut self.lua_console);
+
                 serial_settings_view::show_menu_button(ui, &mut self.serial_settings);
 
                 help_view::show_menu_button(ui, &mut self.help);
@@ -154,6 +159,8 @@ impl eframe::App for MyApp {
                 log_view::show(ui, &mut self.log);
             });
 
+        lua_console_view::show_panel(ui, &mut self.lua_console);
+
         egui::CentralPanel::default().show(ui, |ui| {
             controls_view::show(
                 ui,
@@ -162,9 +169,6 @@ impl eframe::App for MyApp {
                 &self.serial_settings,
                 &mut self.device_emulator,
             );
-            ui.separator();
-
-            lua_console_view::show(ui, &mut self.lua_console);
 
             ui.separator();
 

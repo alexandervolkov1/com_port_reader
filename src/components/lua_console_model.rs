@@ -11,17 +11,27 @@ use crate::{
 };
 
 enum PendingExecution {
-    Console,
+    Console { source: String },
+
     File(PathBuf),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LuaTranscriptEntry {
+    Command(String),
+    Result(String),
+    Error(String),
 }
 
 pub struct LuaConsoleModel {
     worker: LuaWorkerHandle,
     event_receiver: Receiver<LuaEvent>,
     command_buffer: String,
+    transcript: Vec<LuaTranscriptEntry>,
     pending: Option<PendingExecution>,
     disconnected: bool,
     focus_requested: bool,
+    open: bool,
     log: LogHandle,
 }
 
@@ -35,15 +45,45 @@ impl LuaConsoleModel {
             worker,
             event_receiver,
             command_buffer: String::new(),
+            transcript: Vec::new(),
             pending: None,
             disconnected: false,
             focus_requested: false,
+            open: false,
             log,
         }
     }
 
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    pub fn toggle_open(&mut self) {
+        self.open = !self.open;
+    }
+
+    pub fn close(&mut self) {
+        self.open = false;
+    }
+
     pub fn command_buffer_mut(&mut self) -> &mut String {
         &mut self.command_buffer
+    }
+
+    pub fn transcript(&self) -> &[LuaTranscriptEntry] {
+        &self.transcript
+    }
+
+    pub fn has_transcript(&self) -> bool {
+        !self.transcript.is_empty()
+    }
+
+    pub fn clear_transcript(&mut self) {
+        self.transcript.clear();
+    }
+
+    pub fn can_submit(&self) -> bool {
+        self.is_available() && !self.command_buffer.trim().is_empty()
     }
 
     pub fn is_pending(&self) -> bool {
@@ -59,11 +99,16 @@ impl LuaConsoleModel {
     }
 
     pub fn submit(&mut self) {
-        if !self.is_available() || self.command_buffer.trim().is_empty() {
+        if !self.can_submit() {
             return;
         }
 
-        self.submit_source(self.command_buffer.clone(), PendingExecution::Console);
+        let source = self.command_buffer.trim().to_owned();
+
+        self.transcript
+            .push(LuaTranscriptEntry::Command(source.clone()));
+
+        self.submit_source(source.clone(), PendingExecution::Console { source });
     }
 
     pub fn run_file(&mut self, path: &Path) {
@@ -76,8 +121,8 @@ impl LuaConsoleModel {
 
             Err(error) => {
                 self.log.error(format!(
-                    "Failed to read Lua script '{}': \
-                     {error}",
+                    "Failed to read Lua script \
+                         '{}': {error}",
                     path.display(),
                 ));
 
@@ -100,18 +145,7 @@ impl LuaConsoleModel {
                 }
 
                 Err(TryRecvError::Disconnected) => {
-                    if !self.disconnected {
-                        let pending = self.pending.take();
-
-                        self.disconnected = true;
-
-                        self.focus_requested = matches!(&pending, Some(PendingExecution::Console),);
-
-                        self.log.error(
-                            "Lua worker event channel \
-                             is disconnected.",
-                        );
-                    }
+                    self.handle_disconnection();
 
                     break;
                 }
@@ -120,23 +154,32 @@ impl LuaConsoleModel {
     }
 
     fn submit_source(&mut self, source: String, origin: PendingExecution) {
-        let focus_on_error = matches!(&origin, PendingExecution::Console,);
+        let console_execution = matches!(&origin, PendingExecution::Console { .. });
 
         match self.worker.execute(source) {
             Ok(()) => {
+                if console_execution {
+                    self.command_buffer.clear();
+                }
+
                 self.pending = Some(origin);
             }
 
             Err(error) => {
                 self.disconnected = true;
-                self.focus_requested = focus_on_error;
+                self.focus_requested = console_execution;
 
                 match origin {
-                    PendingExecution::Console => {
-                        self.log.error(format!(
+                    PendingExecution::Console { .. } => {
+                        let message = format!(
                             "Failed to submit Lua \
                              command: {error}",
-                        ));
+                        );
+
+                        self.transcript
+                            .push(LuaTranscriptEntry::Error(message.clone()));
+
+                        self.log.error(message);
                     }
 
                     PendingExecution::File(path) => {
@@ -151,56 +194,114 @@ impl LuaConsoleModel {
         }
     }
 
+    fn handle_disconnection(&mut self) {
+        if self.disconnected {
+            return;
+        }
+
+        let pending = self.pending.take();
+
+        self.disconnected = true;
+
+        let message = "Lua worker event channel \
+             is disconnected."
+            .to_owned();
+
+        match pending {
+            Some(PendingExecution::Console { source }) => {
+                if self.command_buffer.is_empty() {
+                    self.command_buffer = source;
+                }
+
+                self.focus_requested = true;
+
+                self.transcript
+                    .push(LuaTranscriptEntry::Error(message.clone()));
+            }
+
+            Some(PendingExecution::File(_)) | None => {}
+        }
+
+        self.log.error(message);
+    }
+
     fn handle_event(&mut self, event: LuaEvent) {
         let pending = self.pending.take();
 
-        self.focus_requested = matches!(&pending, Some(PendingExecution::Console),);
+        self.focus_requested = matches!(&pending, Some(PendingExecution::Console { .. },),);
 
         match event {
             LuaEvent::ExecutionSucceeded(output) => {
-                match pending {
-                    Some(PendingExecution::Console) => {
-                        self.command_buffer.clear();
-                    }
-
-                    Some(PendingExecution::File(path)) => {
-                        self.log.info(format!(
-                            "Lua script '{}' \
-                             executed successfully.",
-                            path.display(),
-                        ));
-                    }
-
-                    None => {}
-                }
-
-                if !output.is_empty() {
-                    self.log.info(format!("Lua result: {}", output.join("\t"),));
-                }
+                self.handle_success(pending, output);
             }
 
-            LuaEvent::ExecutionFailed(error) => match pending {
-                Some(PendingExecution::File(path)) => {
-                    self.log.error(format!(
-                        "Lua script '{}' failed: \
-                             {error}",
-                        path.display(),
-                    ));
-                }
-
-                Some(PendingExecution::Console) | None => {
-                    self.log.error(format!("Lua error: {error}",));
-                }
-            },
+            LuaEvent::ExecutionFailed(error) => {
+                self.handle_failure(pending, error);
+            }
 
             LuaEvent::InitializationFailed(error) => {
                 self.disconnected = true;
                 self.focus_requested = true;
 
-                self.log.error(format!(
+                let message = format!(
                     "Failed to initialize Lua \
                      runtime: {error}",
+                );
+
+                self.transcript
+                    .push(LuaTranscriptEntry::Error(message.clone()));
+
+                self.log.error(message);
+            }
+        }
+    }
+
+    fn handle_success(&mut self, pending: Option<PendingExecution>, output: Vec<String>) {
+        match pending {
+            Some(PendingExecution::Console { .. }) => {
+                if !output.is_empty() {
+                    self.transcript
+                        .push(LuaTranscriptEntry::Result(output.join("\t")));
+                }
+            }
+
+            Some(PendingExecution::File(path)) => {
+                self.log.info(format!(
+                    "Lua script '{}' executed \
+                     successfully.",
+                    path.display(),
                 ));
+
+                if !output.is_empty() {
+                    self.log
+                        .info(format!("Lua script result: {}", output.join("\t"),));
+                }
+            }
+
+            None => {}
+        }
+    }
+
+    fn handle_failure(&mut self, pending: Option<PendingExecution>, error: String) {
+        match pending {
+            Some(PendingExecution::Console { source }) => {
+                if self.command_buffer.is_empty() {
+                    self.command_buffer = source;
+                }
+
+                self.transcript.push(LuaTranscriptEntry::Error(error));
+            }
+
+            Some(PendingExecution::File(path)) => {
+                self.log.error(format!(
+                    "Lua script '{}' failed: \
+                     {error}",
+                    path.display(),
+                ));
+            }
+
+            None => {
+                self.transcript.push(LuaTranscriptEntry::Error(error));
             }
         }
     }
