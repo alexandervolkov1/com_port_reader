@@ -4,7 +4,7 @@ poll_interval_ms = 1000
 max_plot_points_per_series = 1000
 
 [serial]
-main_port = "COM3"
+main_port = "COM5"
 emulator_port = "COM4"
 baud_rate = 9600
 data_bits = 8
