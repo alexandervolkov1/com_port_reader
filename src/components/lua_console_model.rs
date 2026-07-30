@@ -62,20 +62,12 @@ impl LuaConsoleModel {
         self.open = !self.open;
     }
 
-    pub fn close(&mut self) {
-        self.open = false;
-    }
-
     pub fn command_buffer_mut(&mut self) -> &mut String {
         &mut self.command_buffer
     }
 
     pub fn transcript(&self) -> &[LuaTranscriptEntry] {
         &self.transcript
-    }
-
-    pub fn has_transcript(&self) -> bool {
-        !self.transcript.is_empty()
     }
 
     pub fn clear_transcript(&mut self) {
@@ -258,24 +250,18 @@ impl LuaConsoleModel {
 
     fn handle_success(&mut self, pending: Option<PendingExecution>, output: Vec<String>) {
         match pending {
-            Some(PendingExecution::Console { .. }) => {
-                if !output.is_empty() {
-                    self.transcript
-                        .push(LuaTranscriptEntry::Result(output.join("\t")));
-                }
+            Some(PendingExecution::Console { .. }) if !output.is_empty() => {
+                self.transcript
+                    .push(LuaTranscriptEntry::Result(output.join("\t")));
             }
+
+            Some(PendingExecution::Console { .. }) => {}
 
             Some(PendingExecution::File(path)) => {
                 self.log.info(format!(
-                    "Lua script '{}' executed \
-                     successfully.",
+                    "Lua script '{}' executed successfully.",
                     path.display(),
                 ));
-
-                if !output.is_empty() {
-                    self.log
-                        .info(format!("Lua script result: {}", output.join("\t"),));
-                }
             }
 
             None => {}
