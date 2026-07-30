@@ -4,13 +4,11 @@ use rfd::FileDialog;
 use crate::components::lua_console_model::{LuaConsoleModel, LuaTranscriptEntry};
 
 const MIN_PANEL_WIDTH: f32 = 220.0;
-const EDITOR_HEIGHT: f32 = 200.0;
-
+const EDITOR_HEIGHT: f32 = 100.0;
 const COMMAND_COLOR: egui::Color32 = egui::Color32::from_rgb(60, 120, 200);
-
 const RESULT_COLOR: egui::Color32 = egui::Color32::from_rgb(60, 150, 90);
-
 const ERROR_COLOR: egui::Color32 = egui::Color32::from_rgb(200, 70, 70);
+const REPL_PANEL_ID: &str = "lua_repl_panel";
 
 pub fn show_menu_button(ui: &mut egui::Ui, model: &mut LuaConsoleModel) {
     if ui.selectable_label(model.is_open(), "Lua REPL").clicked() {
@@ -23,9 +21,38 @@ pub fn show_panel(root_ui: &mut egui::Ui, model: &mut LuaConsoleModel) {
         return;
     }
 
-    let default_panel_width = (root_ui.available_width() / 3.0).max(MIN_PANEL_WIDTH);
+    let available_width = root_ui.available_width();
 
-    egui::Panel::left("lua_repl_panel")
+    let default_panel_width = (available_width / 3.0).max(MIN_PANEL_WIDTH);
+
+    let width_state_id = egui::Id::new("lua_repl_previous_available_width");
+
+    let previous_width = root_ui
+        .ctx()
+        .data(|data| data.get_temp::<f32>(width_state_id));
+
+    let window_width_changed = match previous_width {
+        Some(previous) => (previous - available_width).abs() > 1.0,
+
+        None => true,
+    };
+
+    root_ui.ctx().data_mut(|data| {
+        data.insert_temp(width_state_id, available_width);
+    });
+
+    let panel_id = egui::Id::new(REPL_PANEL_ID);
+
+    if window_width_changed && let Some(mut state) = egui::PanelState::load(root_ui.ctx(), panel_id)
+    {
+        state.outer_rect.max.x = state.outer_rect.min.x + default_panel_width;
+
+        root_ui.ctx().data_mut(|data| {
+            data.insert_persisted(panel_id, state);
+        });
+    }
+
+    egui::Panel::left(panel_id)
         .resizable(true)
         .default_size(default_panel_width)
         .min_size(MIN_PANEL_WIDTH)
@@ -88,7 +115,7 @@ fn show_editor(ui: &mut egui::Ui, model: &mut LuaConsoleModel) {
             egui::TextEdit::multiline(model.command_buffer_mut())
                 .code_editor()
                 .desired_width(editor_width)
-                .desired_rows(8)
+                .desired_rows(4)
                 .min_size(egui::vec2(editor_width, EDITOR_HEIGHT)),
         );
 

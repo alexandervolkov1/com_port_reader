@@ -11,8 +11,6 @@ pub fn show(
     commands: &CommandModel,
     plot: &mut PlotModel,
 ) {
-    ui.separator();
-
     ScrollArea::vertical().show(ui, |ui| {
         let series = series_store.metadata();
 

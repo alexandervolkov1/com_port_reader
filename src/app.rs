@@ -36,6 +36,7 @@ pub struct MyApp {
     _lua_worker: LuaWorker,
     lua_console: LuaConsoleModel,
     lua_command_receiver: crossbeam_channel::Receiver<UserCommand>,
+    log_panel_open: bool,
 }
 
 impl MyApp {
@@ -112,6 +113,7 @@ impl MyApp {
             _lua_worker: lua_worker,
             lua_console,
             lua_command_receiver,
+            log_panel_open: false,
         }
     }
 
@@ -132,13 +134,9 @@ impl MyApp {
 impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.device_emulator.poll();
-
         self.command.poll_events(&mut self.controls);
-
         self.poll_lua_commands();
-
         self.lua_console.poll_events();
-
         self.log.poll();
 
         egui::Panel::top("application_menu").show(ui, |ui| {
@@ -151,17 +149,24 @@ impl eframe::App for MyApp {
             });
         });
 
-        egui::Panel::bottom("application_log")
-            .resizable(true)
-            .default_size(150.0)
-            .min_size(80.0)
+        if self.log_panel_open {
+            egui::Panel::bottom("application_log_content_v3")
+                .resizable(false)
+                .size_range(150.0..=150.0)
+                .show(ui, |ui| {
+                    log_view::show_entries(ui, &mut self.log);
+                });
+        }
+
+        egui::Panel::bottom("application_log_header")
+            .resizable(false)
             .show(ui, |ui| {
-                log_view::show(ui, &mut self.log);
+                log_view::show_header(ui, &mut self.log_panel_open);
             });
 
-        lua_console_view::show_panel(ui, &mut self.lua_console);
-
         egui::CentralPanel::default().show(ui, |ui| {
+            lua_console_view::show_panel(ui, &mut self.lua_console);
+
             controls_view::show(
                 ui,
                 &mut self.controls,
