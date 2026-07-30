@@ -1,6 +1,10 @@
 use crate::serial_connection::{SerialConnection, SerialConnectionError};
 
 const READ_COMMAND: u8 = 0x00;
+const WRITE_COMMAND: u8 = 0x01;
+
+const WRITE_RESPONSE_LENGTH: usize = 5;
+const WRITE_ATTEMPTS: usize = 3;
 
 const READ_REQUEST_LENGTH: usize = 5;
 const MIN_READ_RESPONSE_LENGTH: usize = 7;
@@ -101,6 +105,112 @@ impl ReadRegisterRequest {
             writable: type_byte & WRITABLE_MASK != 0,
             value,
         })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WriteRegisterRequest {
+    device: u8,
+    channel: u8,
+    register: u8,
+    value: WriteRegisterValue,
+}
+
+impl WriteRegisterRequest {
+    pub const fn new(
+        device: u8,
+        channel: u8,
+        register: u8,
+        value: WriteRegisterValue,
+    ) -> Self {
+        Self { device, channel, register, value }
+    }
+
+    pub fn encode(self) -> Vec<u8> {
+        let mut frame = Vec::with_capacity(8);
+        frame.extend_from_slice(&[
+            self.device,
+            self.channel,
+            self.register,
+            WRITE_COMMAND,
+            self.value.type_code(),
+        ]);
+        self.value.append_data(&mut frame);
+        frame.push(calculate_crc(&frame));
+        frame
+    }
+
+    pub fn decode_response(self, frame: &[u8]) -> Result<(), WriteResponseError> {
+        if frame.len() != WRITE_RESPONSE_LENGTH {
+            return Err(WriteResponseError::InvalidFrameLength {
+                expected: WRITE_RESPONSE_LENGTH,
+                actual: frame.len(),
+            });
+        }
+
+        let payload_end = frame.len() - 1;
+        let expected_crc = calculate_crc(&frame[..payload_end]);
+        let actual_crc = frame[payload_end];
+
+        if actual_crc != expected_crc {
+            return Err(WriteResponseError::CrcMismatch {
+                expected: expected_crc,
+                actual: actual_crc,
+            });
+        }
+        if frame[0] != self.device {
+            return Err(WriteResponseError::UnexpectedDevice {
+                expected: self.device,
+                actual: frame[0],
+            });
+        }
+        if frame[1] != self.channel {
+            return Err(WriteResponseError::UnexpectedChannel {
+                expected: self.channel,
+                actual: frame[1],
+            });
+        }
+        if frame[2] != self.register {
+            return Err(WriteResponseError::UnexpectedRegister {
+                expected: self.register,
+                actual: frame[2],
+            });
+        }
+        if frame[3] != WRITE_COMMAND {
+            return Err(WriteResponseError::UnexpectedCommand {
+                expected: WRITE_COMMAND,
+                actual: frame[3],
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteRegisterValue {
+    Ubyte(u8),
+    Byte(i8),
+    Uint(u16),
+    Int(i16),
+}
+
+impl WriteRegisterValue {
+    const fn type_code(self) -> u8 {
+        match self {
+            Self::Ubyte(_) => 1,
+            Self::Byte(_) => 2,
+            Self::Uint(_) => 3,
+            Self::Int(_) => 4,
+        }
+    }
+
+    fn append_data(self, frame: &mut Vec<u8>) {
+        match self {
+            Self::Ubyte(value) => frame.push(value),
+            Self::Byte(value) => frame.push(value as u8),
+            Self::Uint(value) => frame.extend_from_slice(&value.to_le_bytes()),
+            Self::Int(value) => frame.extend_from_slice(&value.to_le_bytes()),
+        }
     }
 }
 
@@ -298,23 +408,14 @@ impl RegisterValue {
     pub fn into_f64(self) -> Option<f64> {
         match self {
             Self::Bool(value) => Some(if value { 1.0 } else { 0.0 }),
-
             Self::Ubyte(value) => Some(f64::from(value)),
-
             Self::Byte(value) => Some(f64::from(value)),
-
             Self::Uint(value) => Some(f64::from(value)),
-
             Self::Int(value) => Some(f64::from(value)),
-
             Self::Ulong(value) => Some(f64::from(value)),
-
             Self::Long(value) => Some(f64::from(value)),
-
             Self::Float(value) => Some(f64::from(value)),
-
             Self::Double(value) => Some(value),
-
             Self::Ascii(_) => None,
         }
     }
@@ -459,6 +560,49 @@ impl std::fmt::Display for ReadResponseError {
 
 impl std::error::Error for ReadResponseError {}
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WriteResponseError {
+    InvalidFrameLength { expected: usize, actual: usize },
+    CrcMismatch { expected: u8, actual: u8 },
+    UnexpectedDevice { expected: u8, actual: u8 },
+    UnexpectedChannel { expected: u8, actual: u8 },
+    UnexpectedRegister { expected: u8, actual: u8 },
+    UnexpectedCommand { expected: u8, actual: u8 },
+}
+
+impl std::fmt::Display for WriteResponseError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidFrameLength { expected, actual } => write!(
+                formatter,
+                "Invalid Metakon write response length: expected {expected}, received {actual}",
+            ),
+            Self::CrcMismatch { expected, actual } => write!(
+                formatter,
+                "Metakon write response CRC mismatch: expected {expected:02X}, received {actual:02X}",
+            ),
+            Self::UnexpectedDevice { expected, actual } => write!(
+                formatter,
+                "Unexpected Metakon device address in write response: expected {expected}, received {actual}",
+            ),
+            Self::UnexpectedChannel { expected, actual } => write!(
+                formatter,
+                "Unexpected Metakon channel in write response: expected {expected}, received {actual}",
+            ),
+            Self::UnexpectedRegister { expected, actual } => write!(
+                formatter,
+                "Unexpected Metakon register in write response: expected {expected:02X}, received {actual:02X}",
+            ),
+            Self::UnexpectedCommand { expected, actual } => write!(
+                formatter,
+                "Unexpected Metakon command in write response: expected {expected:02X}, received {actual:02X}",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for WriteResponseError {}
+
 fn parse_register_value(type_code: u8, data: &[u8]) -> Result<RegisterValue, ReadResponseError> {
     match type_code {
         0 => {
@@ -567,6 +711,39 @@ fn require_data_length(
     Ok(())
 }
 
+pub fn write_register(
+    connection: &mut SerialConnection,
+    request: WriteRegisterRequest,
+) -> Result<(), WriteRegisterError> {
+    let mut last_error = match write_register_once(connection, request) {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
+    };
+
+    for _ in 1..WRITE_ATTEMPTS {
+        match write_register_once(connection, request) {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = error,
+        }
+    }
+
+    Err(WriteRegisterError {
+        attempts: WRITE_ATTEMPTS,
+        last_error,
+    })
+}
+
+fn write_register_once(
+    connection: &mut SerialConnection,
+    request: WriteRegisterRequest,
+) -> Result<(), WriteRegisterAttemptError> {
+    let request_bytes = request.encode();
+    let mut response_bytes = [0_u8; WRITE_RESPONSE_LENGTH];
+    connection.exchange_exact(&request_bytes, &mut response_bytes)?;
+    request.decode_response(&response_bytes)?;
+    Ok(())
+}
+
 /// Calculates the one-byte CRC used by the Metakon protocol.
 pub fn calculate_crc(bytes: &[u8]) -> u8 {
     let mut crc = 0xFF_u8;
@@ -589,6 +766,64 @@ pub fn calculate_crc(bytes: &[u8]) -> u8 {
     }
 
     crc
+}
+
+#[derive(Debug)]
+pub struct WriteRegisterError {
+    attempts: usize,
+    last_error: WriteRegisterAttemptError,
+}
+
+impl std::fmt::Display for WriteRegisterError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Metakon register write failed after {} attempts: {}",
+            self.attempts, self.last_error,
+        )
+    }
+}
+
+impl std::error::Error for WriteRegisterError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.last_error)
+    }
+}
+
+#[derive(Debug)]
+enum WriteRegisterAttemptError {
+    Serial(SerialConnectionError),
+    InvalidResponse(WriteResponseError),
+}
+
+impl std::fmt::Display for WriteRegisterAttemptError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Serial(error) => error.fmt(formatter),
+            Self::InvalidResponse(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for WriteRegisterAttemptError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Serial(error) => Some(error),
+            Self::InvalidResponse(error) => Some(error),
+        }
+    }
+}
+
+impl From<SerialConnectionError> for WriteRegisterAttemptError {
+    fn from(error: SerialConnectionError) -> Self {
+        Self::Serial(error)
+    }
+}
+
+impl From<WriteResponseError> for WriteRegisterAttemptError {
+    fn from(error: WriteResponseError) -> Self {
+        Self::InvalidResponse(error)
+    }
 }
 
 pub type ReadIntRegisterError = ReadRegisterError;
@@ -672,7 +907,8 @@ impl From<ReadResponseError> for ReadRegisterAttemptError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ReadRegisterRequest, ReadResponseError, RegisterDataType, RegisterValue, calculate_crc,
+        ReadRegisterRequest, ReadResponseError, RegisterDataType, RegisterValue,
+        WriteRegisterRequest, WriteRegisterValue, WriteResponseError, calculate_crc,
     };
 
     #[test]
@@ -816,6 +1052,87 @@ mod tests {
         assert!(response.writable());
 
         assert_eq!(response.value(), &RegisterValue::Byte(-25),);
+    }
+
+    #[test]
+    fn encodes_int_register_write() {
+        let request = WriteRegisterRequest::new(
+            15,
+            0,
+            0x02,
+            WriteRegisterValue::Int(1234),
+        );
+        assert_eq!(
+            request.encode(),
+            vec![0x0F, 0x00, 0x02, 0x01, 0x04, 0xD2, 0x04, 0x7E],
+        );
+    }
+
+    #[test]
+    fn encodes_byte_register_write() {
+        let request = WriteRegisterRequest::new(
+            15,
+            0,
+            0x06,
+            WriteRegisterValue::Byte(-25),
+        );
+        assert_eq!(
+            request.encode(),
+            vec![0x0F, 0x00, 0x06, 0x01, 0x02, 0xE7, 0x2B],
+        );
+    }
+
+    #[test]
+    fn accepts_valid_write_response() {
+        let request = WriteRegisterRequest::new(
+            15,
+            0,
+            0x02,
+            WriteRegisterValue::Int(1234),
+        );
+        assert_eq!(
+            request.decode_response(&[0x0F, 0x00, 0x02, 0x01, 0xBE]),
+            Ok(()),
+        );
+    }
+
+    #[test]
+    fn rejects_write_response_with_bad_crc() {
+        let request = WriteRegisterRequest::new(
+            15,
+            0,
+            0x02,
+            WriteRegisterValue::Int(1234),
+        );
+        let error = request
+            .decode_response(&[0x0F, 0x00, 0x02, 0x01, 0x00])
+            .unwrap_err();
+        assert_eq!(
+            error,
+            WriteResponseError::CrcMismatch {
+                expected: 0xBE,
+                actual: 0x00,
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_write_response_for_another_register() {
+        let request = WriteRegisterRequest::new(
+            15,
+            0,
+            0x02,
+            WriteRegisterValue::Int(1234),
+        );
+        let frame = with_crc(&[0x0F, 0x00, 0x03, 0x01]);
+        let error = request.decode_response(&frame).unwrap_err();
+        assert_eq!(
+            error,
+            WriteResponseError::UnexpectedRegister {
+                expected: 0x02,
+                actual: 0x03,
+            },
+        );
     }
 
     fn with_crc(bytes: &[u8]) -> Vec<u8> {
