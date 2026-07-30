@@ -56,7 +56,10 @@ mod tests {
     use crossbeam_channel::unbounded;
 
     use super::LuaRuntime;
-    use crate::{data::SeriesSource, user_command::UserCommand};
+    use crate::{
+        data::{MetakonValueType, SeriesSource},
+        user_command::UserCommand,
+    };
 
     #[test]
     fn evaluates_lua_code() {
@@ -330,8 +333,9 @@ mod tests {
                     device = 15,
                     channel = 2,
                     register = 0x03,
+                    value_type = "uint",
                     scale = 0.1,
-                    name = "temperature"
+                    name = "proportional_band"
                 })
 
                 app.add_metakon()
@@ -345,7 +349,7 @@ mod tests {
 
         let (source, name) = new_series.into_source_parts();
 
-        assert_eq!(name.as_deref(), Some("temperature"),);
+        assert_eq!(name.as_deref(), Some("proportional_band"),);
 
         assert_eq!(
             source,
@@ -353,6 +357,7 @@ mod tests {
                 device: 15,
                 channel: 2,
                 register: 0x03,
+                value_type: MetakonValueType::Uint,
                 scale: 0.1,
             },
         );
@@ -371,11 +376,81 @@ mod tests {
                 device: 1,
                 channel: 0,
                 register: 0x01,
+                value_type: MetakonValueType::Int,
                 scale: 1.0,
             },
         );
 
-        assert!(command_receiver.try_recv().is_err(),);
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn exposes_metakon_power_series_command() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                app.add_metakon({
+                    device = 15,
+                    channel = 0,
+                    register = 0x06,
+                    value_type = "byte",
+                    name = "power"
+                })
+                "#,
+            )
+            .unwrap();
+
+        let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+            panic!("expected Add command");
+        };
+
+        let (source, name) = new_series.into_source_parts();
+
+        assert_eq!(name.as_deref(), Some("power"));
+
+        assert_eq!(
+            source,
+            SeriesSource::Metakon {
+                device: 15,
+                channel: 0,
+                register: 0x06,
+                value_type: MetakonValueType::Byte,
+                scale: 1.0,
+            },
+        );
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_metakon_value_type() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        let error = runtime
+            .execute(
+                r#"
+                app.add_metakon({
+                    register = 0x06,
+                    value_type = "integer"
+                })
+                "#,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("unknown Metakon value type 'integer'",));
+
+        assert!(command_receiver.try_recv().is_err());
     }
 
     #[test]
@@ -399,9 +474,9 @@ mod tests {
 
         assert!(error.contains(
             "unknown app.add_metakon \
-                 option 'devcie'",
-        ),);
+             option 'devcie'",
+        ));
 
-        assert!(command_receiver.try_recv().is_err(),);
+        assert!(command_receiver.try_recv().is_err());
     }
 }

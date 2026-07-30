@@ -294,6 +294,32 @@ pub enum RegisterValue {
     Ascii(String),
 }
 
+impl RegisterValue {
+    pub fn into_f64(self) -> Option<f64> {
+        match self {
+            Self::Bool(value) => Some(if value { 1.0 } else { 0.0 }),
+
+            Self::Ubyte(value) => Some(f64::from(value)),
+
+            Self::Byte(value) => Some(f64::from(value)),
+
+            Self::Uint(value) => Some(f64::from(value)),
+
+            Self::Int(value) => Some(f64::from(value)),
+
+            Self::Ulong(value) => Some(f64::from(value)),
+
+            Self::Long(value) => Some(f64::from(value)),
+
+            Self::Float(value) => Some(f64::from(value)),
+
+            Self::Double(value) => Some(value),
+
+            Self::Ascii(_) => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReadResponseError {
     FrameTooShort(usize),

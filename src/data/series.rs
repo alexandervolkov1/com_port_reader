@@ -5,6 +5,27 @@ pub const DEFAULT_METAKON_CHANNEL: u8 = 0;
 pub const DEFAULT_METAKON_REGISTER: u8 = 0x01;
 pub const DEFAULT_METAKON_SCALE: f64 = 1.0;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetakonValueType {
+    Ubyte,
+    Byte,
+    Uint,
+    Int,
+}
+
+impl std::fmt::Display for MetakonValueType {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Ubyte => "Ubyte",
+            Self::Byte => "Byte",
+            Self::Uint => "Uint",
+            Self::Int => "Int",
+        };
+
+        formatter.write_str(name)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SeriesId(u64);
 
@@ -30,6 +51,7 @@ pub enum SeriesSource {
         device: u8,
         channel: u8,
         register: u8,
+        value_type: MetakonValueType,
         scale: f64,
     },
 }
@@ -54,12 +76,14 @@ impl std::fmt::Display for SeriesSource {
                 device,
                 channel,
                 register,
+                value_type,
                 scale,
             } => {
                 write!(
                     formatter,
                     "Metakon: device {device}, channel {channel}, \
-                     register 0x{register:02X}, scale {scale}",
+                     register 0x{register:02X}, type {value_type}, \
+                     scale {scale}",
                 )
             }
         }
@@ -91,22 +115,30 @@ impl NewSeries {
         }
     }
 
-    pub fn unnamed_metakon(device: u8, channel: u8, register: u8, scale: f64) -> Self {
+    pub fn unnamed_typed_metakon(
+        device: u8,
+        channel: u8,
+        register: u8,
+        value_type: MetakonValueType,
+        scale: f64,
+    ) -> Self {
         Self {
             source: SeriesSource::Metakon {
                 device,
                 channel,
                 register,
+                value_type,
                 scale,
             },
             name: None,
         }
     }
 
-    pub fn named_metakon(
+    pub fn named_typed_metakon(
         device: u8,
         channel: u8,
         register: u8,
+        value_type: MetakonValueType,
         scale: f64,
         name: impl Into<String>,
     ) -> Self {
@@ -115,6 +147,7 @@ impl NewSeries {
                 device,
                 channel,
                 register,
+                value_type,
                 scale,
             },
             name: Some(name.into()),

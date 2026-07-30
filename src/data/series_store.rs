@@ -254,6 +254,7 @@ fn normalize_series_source(source: SeriesSource) -> Result<SeriesSource, AddSeri
             device,
             channel,
             register,
+            value_type,
             scale,
         } => {
             if !scale.is_finite() || scale <= 0.0 {
@@ -264,6 +265,7 @@ fn normalize_series_source(source: SeriesSource) -> Result<SeriesSource, AddSeri
                 device,
                 channel,
                 register,
+                value_type,
                 scale,
             })
         }
@@ -298,7 +300,9 @@ fn generate_default_name(series: &[Series], prefix: &str, id: SeriesId) -> Strin
 mod tests {
     use super::{RenameSeriesError, SeriesStore};
 
-    use crate::data::{AddSeriesError, NewSeries, SeriesId, SeriesNameError, SeriesSource};
+    use crate::data::{
+        AddSeriesError, MetakonValueType, NewSeries, SeriesId, SeriesNameError, SeriesSource,
+    };
 
     fn add_unnamed(store: &SeriesStore) -> SeriesId {
         store
@@ -636,7 +640,14 @@ mod tests {
         let store = SeriesStore::new();
 
         store
-            .add_series(NewSeries::named_metakon(1, 0, 0x01, 0.1, "temperature"))
+            .add_series(NewSeries::named_typed_metakon(
+                1,
+                0,
+                0x01,
+                MetakonValueType::Int,
+                0.1,
+                "temperature",
+            ))
             .unwrap();
 
         let metadata = store.metadata();
@@ -650,6 +661,7 @@ mod tests {
             SeriesSource::Metakon {
                 device: 1,
                 channel: 0,
+                value_type: MetakonValueType::Int,
                 register: 0x01,
                 scale: 0.1,
             },
@@ -661,7 +673,13 @@ mod tests {
         let store = SeriesStore::new();
 
         store
-            .add_series(NewSeries::unnamed_metakon(1, 0, 0x01, 0.1))
+            .add_series(NewSeries::unnamed_typed_metakon(
+                1,
+                0,
+                0x01,
+                MetakonValueType::Int,
+                0.1,
+            ))
             .unwrap();
 
         let metadata = store.metadata();
@@ -676,7 +694,13 @@ mod tests {
         let store = SeriesStore::new();
 
         for scale in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-            let result = store.add_series(NewSeries::unnamed_metakon(1, 0, 0x01, scale));
+            let result = store.add_series(NewSeries::unnamed_typed_metakon(
+                1,
+                0,
+                0x01,
+                MetakonValueType::Int,
+                scale,
+            ));
 
             assert_eq!(result, Err(AddSeriesError::InvalidMetakonScale,),);
         }

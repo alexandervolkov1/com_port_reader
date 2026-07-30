@@ -1,6 +1,6 @@
 use crate::{
-    data::{Sample, SeriesMetadata, SeriesSample, SeriesSource},
-    protocol::metakon::{ReadRegisterRequest, read_int_register},
+    data::{MetakonValueType, Sample, SeriesMetadata, SeriesSample, SeriesSource},
+    protocol::metakon::{ReadRegisterRequest, RegisterDataType, read_register},
     serial_connection::{SerialConfigStore, SerialConnection},
 };
 
@@ -76,29 +76,45 @@ impl AcquisitionSource for SerialCommandSource {
                     device,
                     channel,
                     register,
+                    value_type,
                     scale,
                 } => {
                     let request = ReadRegisterRequest::new(*device, *channel, *register);
 
-                    let raw_value = read_int_register(connection, request).map_err(|error| {
-                        AcquisitionError::from(format!(
-                            "Metakon series '{}': device {}, \
+                    let expected_type = match value_type {
+                        MetakonValueType::Ubyte => RegisterDataType::Ubyte,
+
+                        MetakonValueType::Byte => RegisterDataType::Byte,
+
+                        MetakonValueType::Uint => RegisterDataType::Uint,
+
+                        MetakonValueType::Int => RegisterDataType::Int,
+                    };
+
+                    let register_value = read_register(connection, request, expected_type)
+                        .map_err(|error| {
+                            AcquisitionError::from(format!(
+                                "Metakon series '{}': device {}, \
                              channel {}, register 0x{:02X} \
                              failed: {error}",
-                            series.name, device, channel, register,
-                        ))
-                    })?;
+                                series.name, device, channel, register,
+                            ))
+                        })?;
 
-                    if raw_value == i16::MIN {
+                    let raw_value = register_value.into_f64().expect(
+                        "numeric Metakon register returned \
+                             a non-numeric value",
+                    );
+
+                    if *register == 0x01 && raw_value == f64::from(i16::MIN) {
                         return Err(AcquisitionError::from(format!(
-                            "Metakon series '{}': \
-                                 instrument reported alarm \
-                                 value -32768",
+                            "Metakon series '{}': instrument \
+                             reported alarm value -32768",
                             series.name,
                         )));
                     }
 
-                    f64::from(raw_value) * *scale
+                    raw_value * *scale
                 }
             };
 
@@ -138,7 +154,7 @@ mod tests {
     use super::{AcquisitionSource, SerialCommandSource};
 
     use crate::{
-        data::{SeriesId, SeriesMetadata, SeriesSource},
+        data::{MetakonValueType, SeriesId, SeriesMetadata, SeriesSource},
         serial_connection::SerialConfigStore,
     };
 
@@ -192,6 +208,7 @@ mod tests {
             source: SeriesSource::Metakon {
                 device: 1,
                 channel: 0,
+                value_type: MetakonValueType::Int,
                 register: 0x01,
                 scale: 0.1,
             },

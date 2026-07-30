@@ -1,9 +1,16 @@
 ---@meta
 
+---@alias MetakonValueType
+---| "ubyte"
+---| "byte"
+---| "uint"
+---| "int"
+
 ---@class MetakonSeriesOptions
 ---@field device? integer Device address, from 0 to 255.
 ---@field channel? integer Device channel, from 0 to 255.
 ---@field register? integer Register address, from 0 to 255.
+---@field value_type? MetakonValueType Register data type. Default: "int".
 ---@field scale? number Multiplier applied to the raw register value.
 ---@field name? string Optional unique series name.
 

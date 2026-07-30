@@ -4,7 +4,7 @@ use mlua::{Lua, Table};
 use crate::{
     data::{
         DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_REGISTER,
-        DEFAULT_METAKON_SCALE, NewSeries,
+        DEFAULT_METAKON_SCALE, MetakonValueType, NewSeries,
     },
     user_command::UserCommand,
 };
@@ -120,6 +120,12 @@ fn register_add_metakon(
             .get::<Option<u8>>("register")?
             .unwrap_or(DEFAULT_METAKON_REGISTER);
 
+        let value_type = options
+            .get::<Option<String>>("value_type")?
+            .map(|value| parse_metakon_value_type(&value))
+            .transpose()?
+            .unwrap_or(MetakonValueType::Int);
+
         let scale = options
             .get::<Option<f64>>("scale")?
             .unwrap_or(DEFAULT_METAKON_SCALE);
@@ -127,9 +133,11 @@ fn register_add_metakon(
         let name = options.get::<Option<String>>("name")?;
 
         let new_series = match name {
-            Some(name) => NewSeries::named_metakon(device, channel, register, scale, name),
+            Some(name) => {
+                NewSeries::named_typed_metakon(device, channel, register, value_type, scale, name)
+            }
 
-            None => NewSeries::unnamed_metakon(device, channel, register, scale),
+            None => NewSeries::unnamed_typed_metakon(device, channel, register, value_type, scale),
         };
 
         send_application_command(&command_sender, UserCommand::Add(new_series))
@@ -144,7 +152,7 @@ fn validate_metakon_options(options: &Table) -> mlua::Result<()> {
 
         if !matches!(
             key.as_str(),
-            "device" | "channel" | "register" | "scale" | "name"
+            "device" | "channel" | "register" | "value_type" | "scale" | "name"
         ) {
             return Err(mlua::Error::RuntimeError(format!(
                 "unknown app.add_metakon \
@@ -154,6 +162,20 @@ fn validate_metakon_options(options: &Table) -> mlua::Result<()> {
     }
 
     Ok(())
+}
+
+fn parse_metakon_value_type(value: &str) -> mlua::Result<MetakonValueType> {
+    match value.to_ascii_lowercase().as_str() {
+        "ubyte" => Ok(MetakonValueType::Ubyte),
+        "byte" => Ok(MetakonValueType::Byte),
+        "uint" => Ok(MetakonValueType::Uint),
+        "int" => Ok(MetakonValueType::Int),
+
+        _ => Err(mlua::Error::RuntimeError(format!(
+            "unknown Metakon value type '{value}'; \
+             expected ubyte, byte, uint or int",
+        ))),
+    }
 }
 
 fn register_delete_series(
