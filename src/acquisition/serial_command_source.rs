@@ -162,7 +162,7 @@ mod tests {
             name: "random_walk".to_owned(),
 
             source: SeriesSource::SerialCommand {
-                command: "walk".to_owned(),
+                command: "read walue".to_owned(),
             },
 
             visible: true,
