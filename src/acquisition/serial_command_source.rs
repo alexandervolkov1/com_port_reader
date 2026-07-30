@@ -1,5 +1,5 @@
 use crate::{
-    data::{Sample, SeriesId, SeriesMetadata, SeriesSample, SeriesSource},
+    data::{Sample, SeriesMetadata, SeriesSample, SeriesSource},
     protocol::metakon::{ReadRegisterRequest, read_int_register},
     serial_connection::{SerialConfigStore, SerialConnection},
 };
@@ -45,14 +45,6 @@ impl SerialCommandSource {
     }
 }
 
-fn serial_request(id: SeriesId, command: &str, step: f64) -> String {
-    if command.eq_ignore_ascii_case("walk") {
-        format!("walk {id} {step}")
-    } else {
-        command.to_owned()
-    }
-}
-
 impl AcquisitionSource for SerialCommandSource {
     fn sample(
         &mut self,
@@ -70,14 +62,12 @@ impl AcquisitionSource for SerialCommandSource {
 
         for series in series {
             let value = match &series.source {
-                SeriesSource::SerialCommand { command, step } => {
-                    let request = serial_request(series.id, command, *step);
-
-                    connection.request_f64(&request).map_err(|error| {
+                SeriesSource::SerialCommand { command } => {
+                    connection.request_f64(command).map_err(|error| {
                         AcquisitionError::from(format!(
                             "COM series '{}': request \
                                  '{}' failed: {error}",
-                            series.name, request,
+                            series.name, command,
                         ))
                     })?
                 }
@@ -145,7 +135,7 @@ impl AcquisitionSource for SerialCommandSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{AcquisitionSource, SerialCommandSource, serial_request};
+    use super::{AcquisitionSource, SerialCommandSource};
 
     use crate::{
         data::{SeriesId, SeriesMetadata, SeriesSource},
@@ -173,7 +163,6 @@ mod tests {
 
             source: SeriesSource::SerialCommand {
                 command: "walk".to_owned(),
-                step: 1.0,
             },
 
             visible: true,
@@ -190,27 +179,6 @@ mod tests {
         );
 
         assert!(output.is_empty());
-    }
-
-    #[test]
-    fn formats_keyed_walk_request() {
-        let request = serial_request(SeriesId::new(42), "walk", 0.25);
-
-        assert_eq!(request, "walk 42 0.25");
-    }
-
-    #[test]
-    fn normalizes_walk_command_case() {
-        let request = serial_request(SeriesId::new(7), "WALK", 2.0);
-
-        assert_eq!(request, "walk 7 2");
-    }
-
-    #[test]
-    fn preserves_other_serial_commands() {
-        let request = serial_request(SeriesId::new(42), "status", 5.0);
-
-        assert_eq!(request, "status");
     }
 
     #[test]

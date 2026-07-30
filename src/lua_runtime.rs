@@ -247,7 +247,6 @@ mod tests {
             source,
             SeriesSource::SerialCommand {
                 command: "read sine".to_owned(),
-                step: 1.0,
             },
         );
 
@@ -263,7 +262,6 @@ mod tests {
             source,
             SeriesSource::SerialCommand {
                 command: "read pressure".to_owned(),
-                step: 1.0,
             },
         );
 

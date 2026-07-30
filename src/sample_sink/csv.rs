@@ -169,7 +169,6 @@ mod tests {
 
             source: SeriesSource::SerialCommand {
                 command: "test".to_owned(),
-                step: 1.0,
             },
 
             visible: true,

@@ -18,7 +18,6 @@ pub enum AddSeriesError {
     InvalidName(SeriesNameError),
     EmptySerialCommand,
     SerialCommandContainsLineBreak,
-    InvalidSerialStep,
     InvalidMetakonScale,
 }
 
@@ -31,10 +30,6 @@ impl std::fmt::Display for AddSeriesError {
 
             Self::SerialCommandContainsLineBreak => {
                 formatter.write_str("Serial command cannot contain a line break")
-            }
-
-            Self::InvalidSerialStep => {
-                formatter.write_str("Serial step must be finite and greater than zero")
             }
 
             Self::InvalidMetakonScale => {
@@ -51,7 +46,6 @@ impl std::error::Error for AddSeriesError {
 
             Self::EmptySerialCommand
             | Self::SerialCommandContainsLineBreak
-            | Self::InvalidSerialStep
             | Self::InvalidMetakonScale => None,
         }
     }
@@ -240,7 +234,7 @@ impl Default for SeriesStore {
 
 fn normalize_series_source(source: SeriesSource) -> Result<SeriesSource, AddSeriesError> {
     match source {
-        SeriesSource::SerialCommand { command, step } => {
+        SeriesSource::SerialCommand { command } => {
             if command.contains('\r') || command.contains('\n') {
                 return Err(AddSeriesError::SerialCommandContainsLineBreak);
             }
@@ -251,13 +245,8 @@ fn normalize_series_source(source: SeriesSource) -> Result<SeriesSource, AddSeri
                 return Err(AddSeriesError::EmptySerialCommand);
             }
 
-            if !step.is_finite() || step <= 0.0 {
-                return Err(AddSeriesError::InvalidSerialStep);
-            }
-
             Ok(SeriesSource::SerialCommand {
                 command: command.to_owned(),
-                step,
             })
         }
 
@@ -313,13 +302,13 @@ mod tests {
 
     fn add_unnamed(store: &SeriesStore) -> SeriesId {
         store
-            .add_series(NewSeries::unnamed_serial_command("walk", 1.0))
+            .add_series(NewSeries::unnamed_serial_command("read value"))
             .unwrap()
     }
 
     fn add_named(store: &SeriesStore, name: &str) -> SeriesId {
         store
-            .add_series(NewSeries::named_serial_command("walk", 1.0, name))
+            .add_series(NewSeries::named_serial_command("read value", name))
             .unwrap()
     }
 
@@ -335,7 +324,7 @@ mod tests {
         let stored_ids =
             store.with(|series| series.iter().map(|series| series.id).collect::<Vec<_>>());
 
-        assert_eq!(stored_ids, vec![first_id, second_id]);
+        assert_eq!(stored_ids, vec![first_id, second_id],);
     }
 
     #[test]
@@ -389,6 +378,7 @@ mod tests {
 
         assert!(store.remove_series(id));
         assert!(!store.remove_series(id));
+
         assert!(!store.set_visibility(id, false));
     }
 
@@ -406,7 +396,7 @@ mod tests {
                 .collect::<Vec<_>>()
         });
 
-        assert_eq!(names, vec!["serial1", "serial2"]);
+        assert_eq!(names, vec!["serial1", "serial2"],);
     }
 
     #[test]
@@ -438,7 +428,8 @@ mod tests {
         let metadata = store.metadata();
 
         assert_eq!(metadata.len(), 1);
-        assert_eq!(metadata[0].name, "temperature");
+
+        assert_eq!(metadata[0].name, "temperature",);
     }
 
     #[test]
@@ -450,7 +441,8 @@ mod tests {
         let metadata = store.metadata();
 
         assert_eq!(metadata.len(), 1);
-        assert_eq!(metadata[0].name, "temperature");
+
+        assert_eq!(metadata[0].name, "temperature",);
     }
 
     #[test]
@@ -459,13 +451,16 @@ mod tests {
 
         add_named(&store, "temperature");
 
-        let result = store.add_series(NewSeries::named_serial_command("walk", 1.0, "temperature"));
+        let result = store.add_series(NewSeries::named_serial_command(
+            "read another value",
+            "temperature",
+        ));
 
         assert_eq!(
             result,
             Err(AddSeriesError::InvalidName(SeriesNameError::Duplicate(
                 "temperature".to_owned(),
-            ),)),
+            ),),),
         );
     }
 
@@ -473,11 +468,11 @@ mod tests {
     fn rejects_empty_name() {
         let store = SeriesStore::new();
 
-        let result = store.add_series(NewSeries::named_serial_command("walk", 1.0, "   "));
+        let result = store.add_series(NewSeries::named_serial_command("read value", "   "));
 
         assert_eq!(
             result,
-            Err(AddSeriesError::InvalidName(SeriesNameError::Empty,)),
+            Err(AddSeriesError::InvalidName(SeriesNameError::Empty,),),
         );
     }
 
@@ -486,8 +481,7 @@ mod tests {
         let store = SeriesStore::new();
 
         let result = store.add_series(NewSeries::named_serial_command(
-            "walk",
-            1.0,
+            "read value",
             "room temperature",
         ));
 
@@ -495,7 +489,7 @@ mod tests {
             result,
             Err(AddSeriesError::InvalidName(
                 SeriesNameError::ContainsWhitespace,
-            )),
+            ),),
         );
     }
 
@@ -505,11 +499,11 @@ mod tests {
 
         let id = add_named(&store, "temperature");
 
-        assert_eq!(store.remove_series_by_name("temperature"), Some(id),);
+        assert_eq!(store.remove_series_by_name("temperature",), Some(id),);
 
         assert!(store.metadata().is_empty());
 
-        assert_eq!(store.remove_series_by_name("temperature"), None,);
+        assert_eq!(store.remove_series_by_name("temperature",), None,);
     }
 
     #[test]
@@ -527,7 +521,8 @@ mod tests {
 
         assert_eq!(metadata.len(), 1);
         assert_eq!(metadata[0].id, id);
-        assert_eq!(metadata[0].name, "room_temperature");
+
+        assert_eq!(metadata[0].name, "room_temperature",);
     }
 
     #[test]
@@ -552,7 +547,7 @@ mod tests {
             result,
             Err(RenameSeriesError::InvalidName(SeriesNameError::Duplicate(
                 "second".to_owned(),
-            ),)),
+            ),),),
         );
     }
 
@@ -564,7 +559,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(RenameSeriesError::NotFound("missing".to_owned(),)),
+            Err(RenameSeriesError::NotFound("missing".to_owned(),),),
         );
     }
 
@@ -574,22 +569,21 @@ mod tests {
 
         store
             .add_series(NewSeries::named_serial_command(
-                "  walk  ",
-                0.25,
-                "random_walk",
+                "  read temperature  ",
+                "temperature",
             ))
             .unwrap();
 
         let metadata = store.metadata();
 
         assert_eq!(metadata.len(), 1);
-        assert_eq!(metadata[0].name, "random_walk");
+
+        assert_eq!(metadata[0].name, "temperature",);
 
         assert_eq!(
             metadata[0].source,
             SeriesSource::SerialCommand {
-                command: "walk".to_owned(),
-                step: 0.25,
+                command: "read temperature".to_owned(),
             },
         );
     }
@@ -598,9 +592,9 @@ mod tests {
     fn rejects_empty_serial_command() {
         let store = SeriesStore::new();
 
-        let result = store.add_series(NewSeries::named_serial_command("   ", 1.0, "random_walk"));
+        let result = store.add_series(NewSeries::named_serial_command("   ", "temperature"));
 
-        assert_eq!(result, Err(AddSeriesError::EmptySerialCommand),);
+        assert_eq!(result, Err(AddSeriesError::EmptySerialCommand,),);
     }
 
     #[test]
@@ -608,23 +602,11 @@ mod tests {
         let store = SeriesStore::new();
 
         let result = store.add_series(NewSeries::named_serial_command(
-            "walk\nnext",
-            1.0,
-            "random_walk",
+            "read value\nnext",
+            "temperature",
         ));
 
-        assert_eq!(result, Err(AddSeriesError::SerialCommandContainsLineBreak),);
-    }
-
-    #[test]
-    fn rejects_invalid_serial_step() {
-        let store = SeriesStore::new();
-
-        for step in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-            let result = store.add_series(NewSeries::unnamed_serial_command("walk", step));
-
-            assert_eq!(result, Err(AddSeriesError::InvalidSerialStep),);
-        }
+        assert_eq!(result, Err(AddSeriesError::SerialCommandContainsLineBreak,),);
     }
 
     #[test]
@@ -632,19 +614,19 @@ mod tests {
         let store = SeriesStore::new();
 
         store
-            .add_series(NewSeries::unnamed_serial_command("walk", 1.0))
+            .add_series(NewSeries::unnamed_serial_command("read value"))
             .unwrap();
 
         let metadata = store.metadata();
 
         assert_eq!(metadata.len(), 1);
-        assert_eq!(metadata[0].name, "serial1");
+
+        assert_eq!(metadata[0].name, "serial1",);
 
         assert_eq!(
             metadata[0].source,
             SeriesSource::SerialCommand {
-                command: "walk".to_owned(),
-                step: 1.0,
+                command: "read value".to_owned(),
             },
         );
     }
@@ -660,7 +642,8 @@ mod tests {
         let metadata = store.metadata();
 
         assert_eq!(metadata.len(), 1);
-        assert_eq!(metadata[0].name, "temperature");
+
+        assert_eq!(metadata[0].name, "temperature",);
 
         assert_eq!(
             metadata[0].source,
@@ -684,7 +667,8 @@ mod tests {
         let metadata = store.metadata();
 
         assert_eq!(metadata.len(), 1);
-        assert_eq!(metadata[0].name, "metakon1");
+
+        assert_eq!(metadata[0].name, "metakon1",);
     }
 
     #[test]
@@ -694,7 +678,7 @@ mod tests {
         for scale in [0.0, -1.0, f64::NAN, f64::INFINITY] {
             let result = store.add_series(NewSeries::unnamed_metakon(1, 0, 0x01, scale));
 
-            assert_eq!(result, Err(AddSeriesError::InvalidMetakonScale),);
+            assert_eq!(result, Err(AddSeriesError::InvalidMetakonScale,),);
         }
     }
 }

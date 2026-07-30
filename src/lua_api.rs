@@ -4,7 +4,7 @@ use mlua::{Lua, Table};
 use crate::{
     data::{
         DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_REGISTER,
-        DEFAULT_METAKON_SCALE, DEFAULT_SERIAL_STEP, NewSeries,
+        DEFAULT_METAKON_SCALE, NewSeries,
     },
     user_command::UserCommand,
 };
@@ -84,9 +84,9 @@ fn register_add_serial(
 ) -> mlua::Result<()> {
     let function = lua.create_function(move |_, (command, name): (String, Option<String>)| {
         let new_series = match name {
-            Some(name) => NewSeries::named_serial_command(command, DEFAULT_SERIAL_STEP, name),
+            Some(name) => NewSeries::named_serial_command(command, name),
 
-            None => NewSeries::unnamed_serial_command(command, DEFAULT_SERIAL_STEP),
+            None => NewSeries::unnamed_serial_command(command),
         };
 
         send_application_command(&command_sender, UserCommand::Add(new_series))
