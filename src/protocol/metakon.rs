@@ -242,6 +242,18 @@ impl WriteRegisterValue {
             Self::Int(value) => frame.extend_from_slice(&value.to_le_bytes()),
         }
     }
+
+    pub const fn data_type(self) -> RegisterDataType {
+        match self {
+            Self::Ubyte(_) => RegisterDataType::Ubyte,
+
+            Self::Byte(_) => RegisterDataType::Byte,
+
+            Self::Uint(_) => RegisterDataType::Uint,
+
+            Self::Int(_) => RegisterDataType::Int,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -447,6 +459,32 @@ impl RegisterValue {
             Self::Float(value) => Some(f64::from(value)),
             Self::Double(value) => Some(value),
             Self::Ascii(_) => None,
+        }
+    }
+}
+
+impl std::fmt::Display for RegisterValue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bool(value) => value.fmt(formatter),
+
+            Self::Ubyte(value) => value.fmt(formatter),
+
+            Self::Byte(value) => value.fmt(formatter),
+
+            Self::Uint(value) => value.fmt(formatter),
+
+            Self::Int(value) => value.fmt(formatter),
+
+            Self::Ulong(value) => value.fmt(formatter),
+
+            Self::Long(value) => value.fmt(formatter),
+
+            Self::Float(value) => value.fmt(formatter),
+
+            Self::Double(value) => value.fmt(formatter),
+
+            Self::Ascii(value) => value.fmt(formatter),
         }
     }
 }

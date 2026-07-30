@@ -1,7 +1,8 @@
 use crate::{
     data::{MetakonValueType, Sample, SeriesMetadata, SeriesSample, SeriesSource},
     protocol::metakon::{
-        ReadRegisterRequest, RegisterDataType, WriteRegisterRequest, read_register, write_register,
+        ReadRegisterRequest, RegisterDataType, RegisterValue, WriteRegisterRequest, read_register,
+        write_register,
     },
     serial_connection::{SerialConfigStore, SerialConnection},
 };
@@ -147,22 +148,41 @@ impl AcquisitionSource for SerialCommandSource {
     fn write_metakon_register(
         &mut self,
         request: WriteRegisterRequest,
-    ) -> Result<bool, AcquisitionError> {
+    ) -> Result<Option<RegisterValue>, AcquisitionError> {
         let connection = self.connection().map_err(|error| {
-            AcquisitionError::from(format!("Cannot write Metakon register: {error}",))
+            AcquisitionError::from(format!(
+                "Cannot write Metakon register: \
+                     {error}",
+            ))
         })?;
 
         write_register(connection, request).map_err(|error| {
             AcquisitionError::from(format!(
                 "Metakon device {}, channel {}, \
-                 register 0x{:02X} write failed: {error}",
+                     register 0x{:02X} write failed: \
+                     {error}",
                 request.device(),
                 request.channel(),
                 request.register(),
             ))
         })?;
 
-        Ok(true)
+        let read_request =
+            ReadRegisterRequest::new(request.device(), request.channel(), request.register());
+
+        let actual_value = read_register(connection, read_request, request.value().data_type())
+            .map_err(|error| {
+                AcquisitionError::from(format!(
+                    "Metakon device {}, channel {}, register \
+                 0x{:02X} was written, but verification \
+                 read failed: {error}",
+                    request.device(),
+                    request.channel(),
+                    request.register(),
+                ))
+            })?;
+
+        Ok(Some(actual_value))
     }
 
     fn stop(&mut self) -> Result<(), AcquisitionError> {

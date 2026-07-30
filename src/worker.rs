@@ -8,7 +8,9 @@ pub use config::WorkerConfig;
 pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
 
-use crate::protocol::metakon::{WriteRegisterRequest, write_register};
+use crate::protocol::metakon::{
+    ReadRegisterRequest, RegisterValue, WriteRegisterRequest, read_register, write_register,
+};
 use crate::sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError};
 use crate::serial_connection::SerialConnectionError;
 use crate::utils::current_time_f64;
@@ -418,22 +420,15 @@ impl Worker {
                         let result = if matches!(state, AcquisitionState::Running { .. }) {
                             write_metakon_to_active_source(source.as_mut(), request)
                         } else {
-                            config
-                                .open()
-                                .map_err(|error| {
-                                    AcquisitionError::from(format!(
-                                        "Failed to open COM port \
-                                         '{port_name}': {error}",
-                                    ))
-                                })
-                                .and_then(|mut connection| {
-                                    write_register(&mut connection, request)
-                                        .map_err(|error| AcquisitionError::from(error.to_string()))
-                                })
+                            write_and_verify_metakon(&config, request)
                         };
 
                         let event = match result {
-                            Ok(()) => WorkerEvent::MetakonWriteSucceeded { port_name, request },
+                            Ok(actual_value) => WorkerEvent::MetakonWriteSucceeded {
+                                port_name,
+                                request,
+                                actual_value,
+                            },
 
                             Err(error) => WorkerEvent::MetakonWriteFailed {
                                 port_name,
@@ -552,13 +547,42 @@ fn request_text_from_active_source(
 fn write_metakon_to_active_source(
     source: &mut dyn AcquisitionSource,
     request: WriteRegisterRequest,
-) -> Result<(), AcquisitionError> {
-    if source.write_metakon_register(request)? {
-        Ok(())
-    } else {
-        Err(AcquisitionError::from(
+) -> Result<RegisterValue, AcquisitionError> {
+    source.write_metakon_register(request)?.ok_or_else(|| {
+        AcquisitionError::from(
             "No acquisition source supports \
-             Metakon register writes",
+                 Metakon register writes",
+        )
+    })
+}
+
+fn write_and_verify_metakon(
+    config: &crate::serial_connection::SerialPortConfig,
+    request: WriteRegisterRequest,
+) -> Result<RegisterValue, AcquisitionError> {
+    let port_name = config.port_name();
+
+    let mut connection = config.open().map_err(|error| {
+        AcquisitionError::from(format!(
+            "Failed to open COM port \
+                 '{port_name}': {error}",
         ))
-    }
+    })?;
+
+    write_register(&mut connection, request).map_err(|error| {
+        AcquisitionError::from(format!(
+            "Metakon register write failed: \
+                 {error}",
+        ))
+    })?;
+
+    let read_request =
+        ReadRegisterRequest::new(request.device(), request.channel(), request.register());
+
+    read_register(&mut connection, read_request, request.value().data_type()).map_err(|error| {
+        AcquisitionError::from(format!(
+            "Metakon register was written, but \
+             verification read failed: {error}",
+        ))
+    })
 }
