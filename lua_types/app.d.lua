@@ -1,23 +1,28 @@
 ---@meta
 
 ---@alias MetakonValueType
----| "ubyte"
----| "byte"
----| "uint"
----| "int"
+---| "ubyte" Unsigned 8-bit integer.
+---| "byte" Signed 8-bit integer.
+---| "uint" Unsigned 16-bit integer.
+---| "int" Signed 16-bit integer.
 
 ---@class MetakonSeriesOptions
----@field device? integer Device address, from 0 to 255.
----@field channel? integer Device channel, from 0 to 255.
----@field register? integer Register address, from 0 to 255.
----@field value_type? MetakonValueType Register data type. Default: "int".
----@field scale? number Multiplier applied to the raw register value.
+---@field device? integer Device address, from 0 to 255. Default: 1.
+---@field channel? integer Device channel, from 0 to 255. Default: 0.
+---@field register? integer Register address, from 0 to 255. Default: 0x01.
+---@field value_type? MetakonValueType Register value type. Default: "int".
+---@field scale? number Multiplier applied to the raw register value. Default: 1.0.
 ---@field name? string Optional unique series name.
 
 ---@class MetakonSetpointOptions
----@field device? integer Device address. Default: 1.
----@field channel? integer Device channel. Default: 0.
----@field value integer Raw Int register value.
+---@field device? integer Device address, from 0 to 255. Default: 1.
+---@field channel? integer Device channel, from 0 to 255. Default: 0.
+---@field value integer Raw Int register value, from -999 to 9999.
+
+---@class MetakonParameterOptions
+---@field device? integer Device address, from 0 to 255. Default: 1.
+---@field channel? integer Device channel, from 0 to 255. Default: 0.
+---@field value integer Raw register value.
 
 ---@class ApplicationApi
 app = {}
@@ -58,13 +63,10 @@ end
 ---device = 1
 ---channel = 0
 ---register = 0x01
+---value_type = "int"
 ---scale = 1.0
 ---@param options? MetakonSeriesOptions
 function app.add_metakon(options) end
-
----Writes the PID setpoint register 0x02.
----@param options MetakonSetpointOptions
-function app.set_metakon_setpoint(options) end
 
 ---Deletes a series by name.
 ---@param name string Existing series name.
@@ -82,3 +84,32 @@ end
 ---Sends one serial command and writes the response to the application log.
 ---@param command string Command text.
 function app.send_serial(command) end
+
+---Writes the PID setpoint to Metakon register 0x02.
+---
+---The value is written as a raw signed 16-bit integer.
+---Allowed range: -999 to 9999.
+---@param options MetakonSetpointOptions
+function app.set_metakon_setpoint(options) end
+
+---Writes the proportional band to Metakon register 0x03.
+---
+---The value is written as an unsigned 16-bit integer.
+---Allowed range: 1 to 9999.
+---@param options MetakonParameterOptions
+function app.set_metakon_proportional_band(options) end
+
+---Writes the integration time to Metakon register 0x04.
+---
+---The value is expressed in seconds and written as an unsigned
+---16-bit integer.
+---Allowed range: 1 to 30000.
+---@param options MetakonParameterOptions
+function app.set_metakon_integral_time(options) end
+
+---Writes the derivative time to Metakon register 0x05.
+---
+---The value is written as an unsigned 8-bit integer.
+---Allowed range: 0 to 255.
+---@param options MetakonParameterOptions
+function app.set_metakon_derivative_time(options) end

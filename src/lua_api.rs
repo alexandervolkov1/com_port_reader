@@ -59,8 +59,57 @@ pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<(
 
     register_rename_series(lua, &app, command_sender.clone())?;
 
-    register_set_metakon_setpoint(lua, &app, command_sender.clone())?;
+    register_metakon_write_command(
+        lua,
+        &app,
+        command_sender.clone(),
+        MetakonWriteCommand {
+            name: "set_metakon_setpoint",
+            register: 0x02,
+            minimum: -999,
+            maximum: 9_999,
+            value_factory: metakon_int_value,
+        },
+    )?;
 
+    register_metakon_write_command(
+        lua,
+        &app,
+        command_sender.clone(),
+        MetakonWriteCommand {
+            name: "set_metakon_proportional_band",
+            register: 0x03,
+            minimum: 1,
+            maximum: 9_999,
+            value_factory: metakon_uint_value,
+        },
+    )?;
+
+    register_metakon_write_command(
+        lua,
+        &app,
+        command_sender.clone(),
+        MetakonWriteCommand {
+            name: "set_metakon_integral_time",
+            register: 0x04,
+            minimum: 1,
+            maximum: 30_000,
+            value_factory: metakon_uint_value,
+        },
+    )?;
+
+    register_metakon_write_command(
+        lua,
+        &app,
+        command_sender.clone(),
+        MetakonWriteCommand {
+            name: "set_metakon_derivative_time",
+            register: 0x05,
+            minimum: 0,
+            maximum: 255,
+            value_factory: metakon_ubyte_value,
+        },
+    )?;
     register_send_serial(lua, &app, command_sender)?;
 
     lua.globals().set("app", app)
@@ -264,18 +313,29 @@ fn stop_emulator_command() -> UserCommand {
     UserCommand::StopEmulator
 }
 
-fn register_set_metakon_setpoint(
+#[derive(Clone, Copy)]
+struct MetakonWriteCommand {
+    name: &'static str,
+    register: u8,
+    minimum: i64,
+    maximum: i64,
+    value_factory: fn(i64) -> WriteRegisterValue,
+}
+
+fn register_metakon_write_command(
     lua: &Lua,
     app: &Table,
     command_sender: Sender<UserCommand>,
+    command: MetakonWriteCommand,
 ) -> mlua::Result<()> {
     let function = lua.create_function(move |lua, options: Option<Table>| {
         let options = match options {
             Some(options) => options,
+
             None => lua.create_table()?,
         };
 
-        validate_setpoint_options(&options)?;
+        validate_metakon_write_options(&options, command.name)?;
 
         let device = options
             .get::<Option<u8>>("device")?
@@ -285,35 +345,58 @@ fn register_set_metakon_setpoint(
             .get::<Option<u8>>("channel")?
             .unwrap_or(DEFAULT_METAKON_CHANNEL);
 
-        let value = options.get::<Option<i16>>("value")?.ok_or_else(|| {
-            mlua::Error::RuntimeError(
-                "app.set_metakon_setpoint \
-                         requires option 'value'"
-                    .to_owned(),
-            )
+        let value = options.get::<Option<i64>>("value")?.ok_or_else(|| {
+            mlua::Error::RuntimeError(format!(
+                "app.{} requires option \
+                         'value'",
+                command.name,
+            ))
         })?;
 
-        let request =
-            WriteRegisterRequest::new(device, channel, 0x02, WriteRegisterValue::Int(value));
+        if !(command.minimum..=command.maximum).contains(&value) {
+            return Err(mlua::Error::RuntimeError(format!(
+                "app.{} value must be between \
+                         {} and {}, received {}",
+                command.name, command.minimum, command.maximum, value,
+            )));
+        }
+
+        let request = WriteRegisterRequest::new(
+            device,
+            channel,
+            command.register,
+            (command.value_factory)(value),
+        );
 
         send_application_command(&command_sender, UserCommand::WriteMetakon { request })
     })?;
 
-    app.set("set_metakon_setpoint", function)
+    app.set(command.name, function)
 }
 
-fn validate_setpoint_options(options: &Table) -> mlua::Result<()> {
+fn validate_metakon_write_options(options: &Table, command_name: &str) -> mlua::Result<()> {
     for pair in options.pairs::<String, mlua::Value>() {
         let (key, _) = pair?;
 
         if !matches!(key.as_str(), "device" | "channel" | "value") {
             return Err(mlua::Error::RuntimeError(format!(
-                "unknown \
-                     app.set_metakon_setpoint \
+                "unknown app.{command_name} \
                      option '{key}'",
             )));
         }
     }
 
     Ok(())
+}
+
+fn metakon_int_value(value: i64) -> WriteRegisterValue {
+    WriteRegisterValue::Int(value as i16)
+}
+
+fn metakon_uint_value(value: i64) -> WriteRegisterValue {
+    WriteRegisterValue::Uint(value as u16)
+}
+
+fn metakon_ubyte_value(value: i64) -> WriteRegisterValue {
+    WriteRegisterValue::Ubyte(value as u8)
 }

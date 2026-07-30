@@ -516,4 +516,128 @@ mod tests {
 
         assert!(command_receiver.try_recv().is_err());
     }
+
+    #[test]
+    fn exposes_metakon_proportional_band_command() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                app.set_metakon_proportional_band({
+                    device = 15,
+                    channel = 0,
+                    value = 250
+                })
+                "#,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::WriteMetakon {
+                request
+            } if request
+                == WriteRegisterRequest::new(
+                    15,
+                    0,
+                    0x03,
+                    WriteRegisterValue::Uint(250),
+                ),
+        ));
+    }
+
+    #[test]
+    fn exposes_metakon_integral_time_command() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                app.set_metakon_integral_time({
+                    device = 15,
+                    value = 120
+                })
+                "#,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::WriteMetakon {
+                request
+            } if request
+                == WriteRegisterRequest::new(
+                    15,
+                    0,
+                    0x04,
+                    WriteRegisterValue::Uint(120),
+                ),
+        ));
+    }
+
+    #[test]
+    fn exposes_metakon_derivative_time_command() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                app.set_metakon_derivative_time({
+                    device = 15,
+                    value = 10
+                })
+                "#,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::WriteMetakon {
+                request
+            } if request
+                == WriteRegisterRequest::new(
+                    15,
+                    0,
+                    0x05,
+                    WriteRegisterValue::Ubyte(10),
+                ),
+        ));
+    }
+
+    #[test]
+    fn rejects_metakon_parameter_out_of_range() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        let error = runtime
+            .execute(
+                r#"
+                app.set_metakon_derivative_time({
+                    value = 256
+                })
+                "#,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("value must be between 0 and 255",));
+
+        assert!(command_receiver.try_recv().is_err());
+    }
 }
