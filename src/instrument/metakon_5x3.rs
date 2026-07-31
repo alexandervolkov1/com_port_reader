@@ -1,5 +1,9 @@
-use crate::protocol::metakon::{
-    ReadRegisterRequest, RegisterDataType, WriteRegisterRequest, WriteRegisterValue,
+use crate::{
+    protocol::metakon::{
+        ReadRegisterError, ReadRegisterRequest, RegisterDataType, RegisterValue,
+        WriteRegisterRequest, WriteRegisterValue, read_register,
+    },
+    serial_connection::SerialConnection,
 };
 
 pub const DEFAULT_DEVICE: u8 = 1;
@@ -27,6 +31,24 @@ impl Metakon5x3 {
 
     pub const fn read_request(self, register: Metakon5x3Register) -> ReadRegisterRequest {
         ReadRegisterRequest::new(self.device, self.channel, register.address())
+    }
+
+    pub fn read(
+        self,
+        connection: &mut SerialConnection,
+        register: Metakon5x3Register,
+    ) -> Result<RegisterValue, Metakon5x3ReadError> {
+        read_register(
+            connection,
+            self.read_request(register),
+            register.data_type(),
+        )
+        .map_err(|source| Metakon5x3ReadError {
+            device: self.device,
+            channel: self.channel,
+            register,
+            source,
+        })
     }
 
     pub fn write_request(
@@ -70,6 +92,27 @@ pub enum Metakon5x3Register {
 }
 
 impl Metakon5x3Register {
+    pub const fn from_address(address: u8) -> Option<Self> {
+        match address {
+            0x00 => Some(Self::ChannelType),
+            0x01 => Some(Self::Measurement),
+            0x02 => Some(Self::Setpoint),
+            0x03 => Some(Self::ProportionalBand),
+            0x04 => Some(Self::IntegralTime),
+            0x05 => Some(Self::DerivativeTime),
+            0x06 => Some(Self::OutputPower),
+            0x07 => Some(Self::PwmPositive),
+            0x08 => Some(Self::PwmNegative),
+            0x09 => Some(Self::UpperSetpoint),
+            0x0A => Some(Self::UpperHysteresis),
+            0x0B => Some(Self::UpperOutput),
+            0x0C => Some(Self::LowerSetpoint),
+            0x0D => Some(Self::LowerHysteresis),
+            0x0E => Some(Self::LowerOutput),
+            _ => None,
+        }
+    }
+
     pub const fn address(self) -> u8 {
         match self {
             Self::ChannelType => 0x00,
@@ -229,6 +272,35 @@ impl Metakon5x3Write {
             | Self::LowerHysteresis(_)
             | Self::LowerOutput(_) => Ok(()),
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct Metakon5x3ReadError {
+    device: u8,
+    channel: u8,
+    register: Metakon5x3Register,
+    source: ReadRegisterError,
+}
+
+impl std::fmt::Display for Metakon5x3ReadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Metakon 5X3 device {}, channel {}, {} \
+             register 0x{:02X} read failed: {}",
+            self.device,
+            self.channel,
+            self.register,
+            self.register.address(),
+            self.source,
+        )
+    }
+}
+
+impl std::error::Error for Metakon5x3ReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
     }
 }
 
@@ -481,5 +553,22 @@ mod tests {
 
         assert_eq!(instrument.device(), 1);
         assert_eq!(instrument.channel(), 0);
+    }
+
+    #[test]
+    fn finds_register_by_address() {
+        for address in 0x00..=0x0E {
+            let register =
+                Metakon5x3Register::from_address(address).expect("documented register must exist");
+
+            assert_eq!(register.address(), address);
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_register_address() {
+        assert_eq!(Metakon5x3Register::from_address(0x0F), None,);
+
+        assert_eq!(Metakon5x3Register::from_address(0xFF), None,);
     }
 }
