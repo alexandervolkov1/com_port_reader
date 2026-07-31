@@ -640,4 +640,119 @@ mod tests {
 
         assert!(command_receiver.try_recv().is_err());
     }
+
+    #[test]
+    fn exposes_metakon_controller_series() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                controller = app.metakon({
+                    device = 15,
+                    channel = 0,
+                    scale = 1.0
+                })
+
+                controller:add_measurement("temperature")
+                controller:add_setpoint("setpoint")
+                controller:add_output_power("power")
+                "#,
+            )
+            .unwrap();
+
+        let expected = [
+            ("temperature", 0x01, MetakonValueType::Int),
+            ("setpoint", 0x02, MetakonValueType::Int),
+            ("power", 0x06, MetakonValueType::Byte),
+        ];
+
+        for (expected_name, register, value_type) in expected {
+            let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+                panic!("expected Add command");
+            };
+
+            let (source, name) = new_series.into_source_parts();
+
+            assert_eq!(name.as_deref(), Some(expected_name),);
+
+            assert_eq!(
+                source,
+                SeriesSource::Metakon {
+                    device: 15,
+                    channel: 0,
+                    register,
+                    value_type,
+                    scale: 1.0,
+                },
+            );
+        }
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn exposes_metakon_controller_setpoint() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                controller = app.metakon({
+                    device = 15,
+                    channel = 0
+                })
+
+                controller:setpoint(150)
+                "#,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::WriteMetakon {
+                request
+            } if request
+                == WriteRegisterRequest::new(
+                    15,
+                    0,
+                    0x02,
+                    WriteRegisterValue::Int(150),
+                ),
+        ));
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_metakon_controller_option() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        let error = runtime
+            .execute(
+                r#"
+                app.metakon({
+                    devcie = 15
+                })
+                "#,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("unknown app.metakon option 'devcie'",),);
+
+        assert!(command_receiver.try_recv().is_err());
+    }
 }

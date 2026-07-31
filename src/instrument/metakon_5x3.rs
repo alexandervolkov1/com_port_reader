@@ -1,4 +1,5 @@
 use crate::{
+    data::{MetakonValueType, NewSeries},
     protocol::metakon::{
         ReadRegisterError, ReadRegisterRequest, RegisterDataType, RegisterValue,
         WriteRegisterError, WriteRegisterRequest, WriteRegisterValue, read_register,
@@ -86,6 +87,60 @@ impl Metakon5x3 {
 
         self.read(connection, register)
             .map_err(|source| Metakon5x3WriteError::VerificationRead { register, source })
+    }
+
+    pub fn measurement_series(self, scale: f64, name: Option<String>) -> NewSeries {
+        self.new_series(
+            Metakon5x3Register::Measurement,
+            MetakonValueType::Int,
+            scale,
+            name,
+        )
+    }
+
+    pub fn setpoint_series(self, scale: f64, name: Option<String>) -> NewSeries {
+        self.new_series(
+            Metakon5x3Register::Setpoint,
+            MetakonValueType::Int,
+            scale,
+            name,
+        )
+    }
+
+    pub fn output_power_series(self, name: Option<String>) -> NewSeries {
+        self.new_series(
+            Metakon5x3Register::OutputPower,
+            MetakonValueType::Byte,
+            1.0,
+            name,
+        )
+    }
+
+    fn new_series(
+        self,
+        register: Metakon5x3Register,
+        value_type: MetakonValueType,
+        scale: f64,
+        name: Option<String>,
+    ) -> NewSeries {
+        match name {
+            Some(name) => NewSeries::named_typed_metakon(
+                self.device,
+                self.channel,
+                register.address(),
+                value_type,
+                scale,
+                name,
+            ),
+
+            None => NewSeries::unnamed_typed_metakon(
+                self.device,
+                self.channel,
+                register.address(),
+                value_type,
+                scale,
+            ),
+        }
     }
 
     pub fn write_request(

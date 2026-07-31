@@ -1,11 +1,12 @@
 use crossbeam_channel::Sender;
-use mlua::{Lua, Table};
+use mlua::{Lua, Table, UserData, UserDataMethods};
 
 use crate::{
     data::{
         DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_REGISTER,
         DEFAULT_METAKON_SCALE, MetakonValueType, NewSeries,
     },
+    instrument::metakon_5x3::{Metakon5x3, Metakon5x3Write},
     protocol::metakon::{WriteRegisterRequest, WriteRegisterValue},
     user_command::UserCommand,
 };
@@ -52,6 +53,8 @@ pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<(
     )?;
 
     register_add_serial(lua, &app, command_sender.clone())?;
+
+    register_metakon_controller(lua, &app, command_sender.clone())?;
 
     register_add_metakon(lua, &app, command_sender.clone())?;
 
@@ -145,6 +148,160 @@ fn register_add_serial(
     })?;
 
     app.set("add_serial", function)
+}
+
+fn register_metakon_controller(
+    lua: &Lua,
+    app: &Table,
+    command_sender: Sender<UserCommand>,
+) -> mlua::Result<()> {
+    let function = lua.create_function(move |lua, options: Option<Table>| {
+        let options = match options {
+            Some(options) => options,
+            None => lua.create_table()?,
+        };
+
+        validate_metakon_controller_options(&options)?;
+
+        let device = options
+            .get::<Option<u8>>("device")?
+            .unwrap_or(DEFAULT_METAKON_DEVICE);
+
+        let channel = options
+            .get::<Option<u8>>("channel")?
+            .unwrap_or(DEFAULT_METAKON_CHANNEL);
+
+        let scale = options
+            .get::<Option<f64>>("scale")?
+            .unwrap_or(DEFAULT_METAKON_SCALE);
+
+        if !scale.is_finite() || scale <= 0.0 {
+            return Err(mlua::Error::RuntimeError(
+                "app.metakon scale must be finite and \
+                     greater than zero"
+                    .to_owned(),
+            ));
+        }
+
+        lua.create_userdata(LuaMetakon5x3 {
+            instrument: Metakon5x3::new(device, channel),
+            scale,
+            command_sender: command_sender.clone(),
+        })
+    })?;
+
+    app.set("metakon", function)
+}
+
+fn validate_metakon_controller_options(options: &Table) -> mlua::Result<()> {
+    for pair in options.pairs::<String, mlua::Value>() {
+        let (key, _) = pair?;
+
+        if !matches!(key.as_str(), "device" | "channel" | "scale") {
+            return Err(mlua::Error::RuntimeError(format!(
+                "unknown app.metakon option '{key}'",
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Clone)]
+struct LuaMetakon5x3 {
+    instrument: Metakon5x3,
+    scale: f64,
+    command_sender: Sender<UserCommand>,
+}
+
+impl LuaMetakon5x3 {
+    fn add_series(&self, new_series: NewSeries) -> mlua::Result<()> {
+        send_application_command(&self.command_sender, UserCommand::Add(new_series))
+    }
+
+    fn write(&self, parameter: Metakon5x3Write) -> mlua::Result<()> {
+        let request = self
+            .instrument
+            .write_request(parameter)
+            .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+        send_application_command(&self.command_sender, UserCommand::WriteMetakon { request })
+    }
+}
+
+impl UserData for LuaMetakon5x3 {
+    fn add_methods<M>(methods: &mut M)
+    where
+        M: UserDataMethods<Self>,
+    {
+        methods.add_method("add_measurement", |_, controller, name: Option<String>| {
+            controller.add_series(
+                controller
+                    .instrument
+                    .measurement_series(controller.scale, name),
+            )
+        });
+
+        methods.add_method("add_setpoint", |_, controller, name: Option<String>| {
+            controller.add_series(
+                controller
+                    .instrument
+                    .setpoint_series(controller.scale, name),
+            )
+        });
+
+        methods.add_method("add_output_power", |_, controller, name: Option<String>| {
+            controller.add_series(controller.instrument.output_power_series(name))
+        });
+
+        methods.add_method("setpoint", |_, controller, value: i64| {
+            let value = i16::try_from(value).map_err(|_| {
+                mlua::Error::RuntimeError(
+                    "Metakon 5X3 setpoint does not \
+                             fit into Int"
+                        .to_owned(),
+                )
+            })?;
+
+            controller.write(Metakon5x3Write::Setpoint(value))
+        });
+
+        methods.add_method("proportional_band", |_, controller, value: i64| {
+            let value = u16::try_from(value).map_err(|_| {
+                mlua::Error::RuntimeError(
+                    "Metakon 5X3 proportional band \
+                             does not fit into Uint"
+                        .to_owned(),
+                )
+            })?;
+
+            controller.write(Metakon5x3Write::ProportionalBand(value))
+        });
+
+        methods.add_method("integral_time", |_, controller, value: i64| {
+            let value = u16::try_from(value).map_err(|_| {
+                mlua::Error::RuntimeError(
+                    "Metakon 5X3 integral time does \
+                             not fit into Uint"
+                        .to_owned(),
+                )
+            })?;
+
+            controller.write(Metakon5x3Write::IntegralTime(value))
+        });
+
+        methods.add_method("derivative_time", |_, controller, value: i64| {
+            let value = u8::try_from(value).map_err(|_| {
+                mlua::Error::RuntimeError(
+                    "Metakon 5X3 derivative time \
+                             must be between 0 and 255"
+                        .to_owned(),
+                )
+            })?;
+
+            controller.write(Metakon5x3Write::DerivativeTime(value))
+        });
+    }
 }
 
 fn register_add_metakon(
