@@ -2,18 +2,14 @@ use crate::serial_connection::{SerialConnection, SerialConnectionError};
 
 const READ_COMMAND: u8 = 0x00;
 const WRITE_COMMAND: u8 = 0x01;
-
 const WRITE_RESPONSE_LENGTH: usize = 5;
 const WRITE_ATTEMPTS: usize = 3;
-
 const READ_REQUEST_LENGTH: usize = 5;
 const MIN_READ_RESPONSE_LENGTH: usize = 7;
 const MAX_FRAME_LENGTH: usize = 38;
-
 const TYPE_MASK: u8 = 0x0F;
 const READABLE_MASK: u8 = 0x40;
 const WRITABLE_MASK: u8 = 0x80;
-
 const READ_ATTEMPTS: usize = 3;
 const READ_RESPONSE_OVERHEAD: usize = 6;
 
@@ -202,22 +198,9 @@ impl WriteRegisterRequest {
     }
 }
 
-impl std::fmt::Display for WriteRegisterValue {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Ubyte(value) => value.fmt(formatter),
-
-            Self::Byte(value) => value.fmt(formatter),
-
-            Self::Uint(value) => value.fmt(formatter),
-
-            Self::Int(value) => value.fmt(formatter),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WriteRegisterValue {
+    Bool(bool),
     Ubyte(u8),
     Byte(i8),
     Uint(u16),
@@ -227,6 +210,7 @@ pub enum WriteRegisterValue {
 impl WriteRegisterValue {
     const fn type_code(self) -> u8 {
         match self {
+            Self::Bool(_) => 0,
             Self::Ubyte(_) => 1,
             Self::Byte(_) => 2,
             Self::Uint(_) => 3,
@@ -236,22 +220,43 @@ impl WriteRegisterValue {
 
     fn append_data(self, frame: &mut Vec<u8>) {
         match self {
+            Self::Bool(value) => {
+                frame.push(if value { 0xFF } else { 0x00 });
+            }
+
             Self::Ubyte(value) => frame.push(value),
+
             Self::Byte(value) => frame.push(value as u8),
-            Self::Uint(value) => frame.extend_from_slice(&value.to_le_bytes()),
-            Self::Int(value) => frame.extend_from_slice(&value.to_le_bytes()),
+
+            Self::Uint(value) => {
+                frame.extend_from_slice(&value.to_le_bytes());
+            }
+
+            Self::Int(value) => {
+                frame.extend_from_slice(&value.to_le_bytes());
+            }
         }
     }
 
     pub const fn data_type(self) -> RegisterDataType {
         match self {
+            Self::Bool(_) => RegisterDataType::Bool,
             Self::Ubyte(_) => RegisterDataType::Ubyte,
-
             Self::Byte(_) => RegisterDataType::Byte,
-
             Self::Uint(_) => RegisterDataType::Uint,
-
             Self::Int(_) => RegisterDataType::Int,
+        }
+    }
+}
+
+impl std::fmt::Display for WriteRegisterValue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bool(value) => value.fmt(formatter),
+            Self::Ubyte(value) => value.fmt(formatter),
+            Self::Byte(value) => value.fmt(formatter),
+            Self::Uint(value) => value.fmt(formatter),
+            Self::Int(value) => value.fmt(formatter),
         }
     }
 }
@@ -1184,5 +1189,25 @@ mod tests {
         frame.push(calculate_crc(bytes));
 
         frame
+    }
+
+    #[test]
+    fn encodes_boolean_write_request() {
+        let request = WriteRegisterRequest::new(15, 0, 0x0B, WriteRegisterValue::Bool(true));
+
+        let frame = request.encode();
+
+        assert_eq!(&frame[..6], &[15, 0, 0x0B, 0x01, 0x00, 0xFF]);
+        assert_eq!(frame[6], calculate_crc(&frame[..6]));
+    }
+
+    #[test]
+    fn encodes_false_boolean_write_request() {
+        let request = WriteRegisterRequest::new(15, 0, 0x0E, WriteRegisterValue::Bool(false));
+
+        let frame = request.encode();
+
+        assert_eq!(&frame[..6], &[15, 0, 0x0E, 0x01, 0x00, 0x00]);
+        assert_eq!(frame[6], calculate_crc(&frame[..6]));
     }
 }
