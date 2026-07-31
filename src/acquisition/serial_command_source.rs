@@ -1,10 +1,9 @@
+use std::collections::HashSet;
+
 use crate::{
     data::{MetakonValueType, Sample, SeriesMetadata, SeriesSample, SeriesSource},
-    instrument::metakon_5x3::{Metakon5x3, Metakon5x3Register},
-    protocol::metakon::{
-        ReadRegisterRequest, RegisterDataType, RegisterValue, WriteRegisterRequest, read_register,
-        write_register,
-    },
+    instrument::metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
+    protocol::metakon::{RegisterDataType, RegisterValue, WriteRegisterRequest},
     serial_connection::{SerialConfigStore, SerialConnection},
 };
 
@@ -13,6 +12,7 @@ use super::{AcquisitionError, AcquisitionSource};
 pub struct SerialCommandSource {
     config_store: SerialConfigStore,
     connection: Option<SerialConnection>,
+    verified_metakon_channels: HashSet<(u8, u8)>,
 }
 
 impl SerialCommandSource {
@@ -20,6 +20,7 @@ impl SerialCommandSource {
         Self {
             config_store,
             connection: None,
+            verified_metakon_channels: HashSet::new(),
         }
     }
 
@@ -39,6 +40,7 @@ impl SerialCommandSource {
                 ))
             })?;
 
+            self.verified_metakon_channels.clear();
             self.connection = Some(connection);
         }
 
@@ -46,6 +48,36 @@ impl SerialCommandSource {
             .connection
             .as_mut()
             .expect("connection was initialized above"))
+    }
+
+    fn verified_metakon_connection(
+        &mut self,
+        device: u8,
+        channel: u8,
+    ) -> Result<&mut SerialConnection, AcquisitionError> {
+        let address = (device, channel);
+
+        if !self.verified_metakon_channels.contains(&address) {
+            let instrument = Metakon5x3::new(device, channel);
+
+            {
+                let connection = self.connection()?;
+
+                instrument
+                    .verify_channel_type(connection)
+                    .map_err(|error| {
+                        AcquisitionError::from(format!(
+                            "Metakon device {device}, channel \
+                             {channel} is not a Metakon 5X3 \
+                             channel: {error}",
+                        ))
+                    })?;
+            }
+
+            self.verified_metakon_channels.insert(address);
+        }
+
+        self.connection()
     }
 }
 
@@ -60,17 +92,17 @@ impl AcquisitionSource for SerialCommandSource {
             return Ok(());
         }
 
-        let connection = self.connection().map_err(|error| {
-            AcquisitionError::from(format!("Cannot acquire serial series: {error}",))
-        })?;
-
         for series in series {
             let value = match &series.source {
                 SeriesSource::SerialCommand { command } => {
+                    let connection = self.connection().map_err(|error| {
+                        AcquisitionError::from(format!("Cannot acquire serial series: {error}",))
+                    })?;
+
                     connection.request_f64(command).map_err(|error| {
                         AcquisitionError::from(format!(
-                            "COM series '{}': request \
-                                 '{}' failed: {error}",
+                            "COM series '{}': request '{}' failed: \
+                             {error}",
                             series.name, command,
                         ))
                     })?
@@ -114,6 +146,15 @@ impl AcquisitionSource for SerialCommandSource {
                     }
 
                     let instrument = Metakon5x3::new(*device, *channel);
+
+                    let connection = self
+                        .verified_metakon_connection(*device, *channel)
+                        .map_err(|error| {
+                            AcquisitionError::from(format!(
+                                "Metakon series '{}': {error}",
+                                series.name,
+                            ))
+                        })?;
 
                     let register_value =
                         instrument
@@ -172,44 +213,29 @@ impl AcquisitionSource for SerialCommandSource {
         &mut self,
         request: WriteRegisterRequest,
     ) -> Result<Option<RegisterValue>, AcquisitionError> {
-        let connection = self.connection().map_err(|error| {
-            AcquisitionError::from(format!(
-                "Cannot write Metakon register: \
-                     {error}",
-            ))
-        })?;
-
-        write_register(connection, request).map_err(|error| {
-            AcquisitionError::from(format!(
-                "Metakon device {}, channel {}, \
-                     register 0x{:02X} write failed: \
-                     {error}",
-                request.device(),
-                request.channel(),
-                request.register(),
-            ))
-        })?;
-
-        let read_request =
-            ReadRegisterRequest::new(request.device(), request.channel(), request.register());
-
-        let actual_value = read_register(connection, read_request, request.value().data_type())
+        let connection = self
+            .verified_metakon_connection(request.device(), request.channel())
             .map_err(|error| {
-                AcquisitionError::from(format!(
-                    "Metakon device {}, channel {}, register \
-                 0x{:02X} was written, but verification \
-                 read failed: {error}",
-                    request.device(),
-                    request.channel(),
-                    request.register(),
-                ))
+                AcquisitionError::from(format!("Cannot write Metakon register: {error}",))
             })?;
+
+        let instrument = Metakon5x3::new(request.device(), request.channel());
+
+        let parameter =
+            Metakon5x3Write::try_from((request.register(), request.value())).map_err(|error| {
+                AcquisitionError::from(format!("Cannot write Metakon 5X3 register: {error}",))
+            })?;
+
+        let actual_value = instrument
+            .write(connection, parameter)
+            .map_err(|error| AcquisitionError::from(error.to_string()))?;
 
         Ok(Some(actual_value))
     }
 
     fn stop(&mut self) -> Result<(), AcquisitionError> {
         self.connection.take();
+        self.verified_metakon_channels.clear();
 
         Ok(())
     }
@@ -221,6 +247,7 @@ mod tests {
 
     use crate::{
         data::{MetakonValueType, SeriesId, SeriesMetadata, SeriesSource},
+        instrument::metakon_5x3::Metakon5x3IdentificationError,
         serial_connection::SerialConfigStore,
     };
 
@@ -288,10 +315,24 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "Cannot acquire serial series: \
+            "Metakon series 'temperature': \
              COM port is not selected",
         );
 
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn reports_unexpected_channel_type() {
+        let error = Metakon5x3IdentificationError::UnexpectedChannelType {
+            expected: 0x03,
+            actual: 0x04,
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "unexpected Metakon channel type 0x04; \
+             expected Metakon 5X3 type 0x03",
+        );
     }
 }

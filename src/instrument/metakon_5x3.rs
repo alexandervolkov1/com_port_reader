@@ -1,7 +1,8 @@
 use crate::{
     protocol::metakon::{
         ReadRegisterError, ReadRegisterRequest, RegisterDataType, RegisterValue,
-        WriteRegisterRequest, WriteRegisterValue, read_register,
+        WriteRegisterError, WriteRegisterRequest, WriteRegisterValue, read_register,
+        write_register,
     },
     serial_connection::SerialConnection,
 };
@@ -19,14 +20,6 @@ pub struct Metakon5x3 {
 impl Metakon5x3 {
     pub const fn new(device: u8, channel: u8) -> Self {
         Self { device, channel }
-    }
-
-    pub const fn device(self) -> u8 {
-        self.device
-    }
-
-    pub const fn channel(self) -> u8 {
-        self.channel
     }
 
     pub const fn read_request(self, register: Metakon5x3Register) -> ReadRegisterRequest {
@@ -49,6 +42,50 @@ impl Metakon5x3 {
             register,
             source,
         })
+    }
+
+    pub fn verify_channel_type(
+        self,
+        connection: &mut SerialConnection,
+    ) -> Result<(), Metakon5x3IdentificationError> {
+        let value = self
+            .read(connection, Metakon5x3Register::ChannelType)
+            .map_err(Metakon5x3IdentificationError::Read)?;
+
+        let RegisterValue::Ubyte(actual) = value else {
+            unreachable!("channel type register was read as Ubyte");
+        };
+
+        if actual != CHANNEL_TYPE_CODE {
+            return Err(Metakon5x3IdentificationError::UnexpectedChannelType {
+                expected: CHANNEL_TYPE_CODE,
+                actual,
+            });
+        }
+
+        Ok(())
+    }
+
+    pub fn write(
+        self,
+        connection: &mut SerialConnection,
+        parameter: Metakon5x3Write,
+    ) -> Result<RegisterValue, Metakon5x3WriteError> {
+        let register = parameter.register();
+
+        let request = self
+            .write_request(parameter)
+            .map_err(Metakon5x3WriteError::InvalidValue)?;
+
+        write_register(connection, request).map_err(|source| Metakon5x3WriteError::Write {
+            device: self.device,
+            channel: self.channel,
+            register,
+            source,
+        })?;
+
+        self.read(connection, register)
+            .map_err(|source| Metakon5x3WriteError::VerificationRead { register, source })
     }
 
     pub fn write_request(
@@ -275,6 +312,120 @@ impl Metakon5x3Write {
     }
 }
 
+impl TryFrom<(u8, WriteRegisterValue)> for Metakon5x3Write {
+    type Error = Metakon5x3WriteConversionError;
+
+    fn try_from((address, value): (u8, WriteRegisterValue)) -> Result<Self, Self::Error> {
+        let register = Metakon5x3Register::from_address(address)
+            .ok_or(Metakon5x3WriteConversionError::UnknownRegister(address))?;
+
+        if !register.writable() {
+            return Err(Metakon5x3WriteConversionError::ReadOnlyRegister(register));
+        }
+
+        let actual_type = value.data_type();
+        let expected_type = register.data_type();
+
+        if actual_type != expected_type {
+            return Err(Metakon5x3WriteConversionError::UnexpectedType {
+                register,
+                expected: expected_type,
+                actual: actual_type,
+            });
+        }
+
+        let parameter = match (register, value) {
+            (Metakon5x3Register::Setpoint, WriteRegisterValue::Int(value)) => Self::Setpoint(value),
+
+            (Metakon5x3Register::ProportionalBand, WriteRegisterValue::Uint(value)) => {
+                Self::ProportionalBand(value)
+            }
+
+            (Metakon5x3Register::IntegralTime, WriteRegisterValue::Uint(value)) => {
+                Self::IntegralTime(value)
+            }
+
+            (Metakon5x3Register::DerivativeTime, WriteRegisterValue::Ubyte(value)) => {
+                Self::DerivativeTime(value)
+            }
+
+            (Metakon5x3Register::OutputPower, WriteRegisterValue::Byte(value)) => {
+                Self::OutputPower(value)
+            }
+
+            (Metakon5x3Register::UpperSetpoint, WriteRegisterValue::Int(value)) => {
+                Self::UpperSetpoint(value)
+            }
+
+            (Metakon5x3Register::UpperHysteresis, WriteRegisterValue::Ubyte(value)) => {
+                Self::UpperHysteresis(value)
+            }
+
+            (Metakon5x3Register::UpperOutput, WriteRegisterValue::Bool(value)) => {
+                Self::UpperOutput(value)
+            }
+
+            (Metakon5x3Register::LowerSetpoint, WriteRegisterValue::Int(value)) => {
+                Self::LowerSetpoint(value)
+            }
+
+            (Metakon5x3Register::LowerHysteresis, WriteRegisterValue::Ubyte(value)) => {
+                Self::LowerHysteresis(value)
+            }
+
+            (Metakon5x3Register::LowerOutput, WriteRegisterValue::Bool(value)) => {
+                Self::LowerOutput(value)
+            }
+
+            _ => unreachable!("register access and value type were checked above"),
+        };
+
+        parameter.validate()?;
+
+        Ok(parameter)
+    }
+}
+
+#[derive(Debug)]
+pub enum Metakon5x3IdentificationError {
+    Read(Metakon5x3ReadError),
+
+    UnexpectedChannelType { expected: u8, actual: u8 },
+}
+
+impl std::fmt::Display for Metakon5x3IdentificationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Read(error) => {
+                write!(
+                    formatter,
+                    "failed to read Metakon channel type: \
+                     {error}",
+                )
+            }
+
+            Self::UnexpectedChannelType { expected, actual } => {
+                write!(
+                    formatter,
+                    "unexpected Metakon channel type \
+                     0x{actual:02X}; expected Metakon 5X3 \
+                     type 0x{expected:02X}",
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for Metakon5x3IdentificationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Read(error) => Some(error),
+
+            Self::UnexpectedChannelType { .. } => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Metakon5x3ReadError {
     device: u8,
@@ -301,6 +452,145 @@ impl std::fmt::Display for Metakon5x3ReadError {
 impl std::error::Error for Metakon5x3ReadError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.source)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Metakon5x3WriteConversionError {
+    UnknownRegister(u8),
+
+    ReadOnlyRegister(Metakon5x3Register),
+
+    UnexpectedType {
+        register: Metakon5x3Register,
+        expected: RegisterDataType,
+        actual: RegisterDataType,
+    },
+
+    InvalidValue(Metakon5x3ValueError),
+}
+
+impl std::fmt::Display for Metakon5x3WriteConversionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownRegister(address) => {
+                write!(
+                    formatter,
+                    "register 0x{address:02X} does not belong \
+                     to the Metakon 5X3 register model",
+                )
+            }
+
+            Self::ReadOnlyRegister(register) => {
+                write!(
+                    formatter,
+                    "Metakon 5X3 {} register 0x{:02X} \
+                     is read-only",
+                    register,
+                    register.address(),
+                )
+            }
+
+            Self::UnexpectedType {
+                register,
+                expected,
+                actual,
+            } => {
+                write!(
+                    formatter,
+                    "Metakon 5X3 {} register 0x{:02X} \
+                     expects type {:?}, received {:?}",
+                    register,
+                    register.address(),
+                    expected,
+                    actual,
+                )
+            }
+
+            Self::InvalidValue(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for Metakon5x3WriteConversionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InvalidValue(error) => Some(error),
+
+            Self::UnknownRegister(_) | Self::ReadOnlyRegister(_) | Self::UnexpectedType { .. } => {
+                None
+            }
+        }
+    }
+}
+
+impl From<Metakon5x3ValueError> for Metakon5x3WriteConversionError {
+    fn from(error: Metakon5x3ValueError) -> Self {
+        Self::InvalidValue(error)
+    }
+}
+
+#[derive(Debug)]
+pub enum Metakon5x3WriteError {
+    InvalidValue(Metakon5x3ValueError),
+
+    Write {
+        device: u8,
+        channel: u8,
+        register: Metakon5x3Register,
+        source: WriteRegisterError,
+    },
+
+    VerificationRead {
+        register: Metakon5x3Register,
+        source: Metakon5x3ReadError,
+    },
+}
+
+impl std::fmt::Display for Metakon5x3WriteError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidValue(error) => error.fmt(formatter),
+
+            Self::Write {
+                device,
+                channel,
+                register,
+                source,
+            } => {
+                write!(
+                    formatter,
+                    "Metakon 5X3 device {device}, \
+                     channel {channel}, {} register \
+                     0x{:02X} write failed: {source}",
+                    register,
+                    register.address(),
+                )
+            }
+
+            Self::VerificationRead { register, source } => {
+                write!(
+                    formatter,
+                    "Metakon 5X3 {} register 0x{:02X} \
+                     was written, but verification \
+                     read failed: {source}",
+                    register,
+                    register.address(),
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for Metakon5x3WriteError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InvalidValue(error) => Some(error),
+
+            Self::Write { source, .. } => Some(source),
+
+            Self::VerificationRead { source, .. } => Some(source),
+        }
     }
 }
 
@@ -344,16 +634,10 @@ fn validate_range(
 
 #[cfg(test)]
 mod tests {
-    use super::{CHANNEL_TYPE_CODE, Metakon5x3, Metakon5x3Register, Metakon5x3Write};
-
+    use super::{Metakon5x3, Metakon5x3Register, Metakon5x3Write, Metakon5x3WriteConversionError};
     use crate::protocol::metakon::{
         ReadRegisterRequest, RegisterDataType, WriteRegisterRequest, WriteRegisterValue,
     };
-
-    #[test]
-    fn channel_type_code_is_three() {
-        assert_eq!(CHANNEL_TYPE_CODE, 0x03);
-    }
 
     #[test]
     fn describes_all_channel_registers() {
@@ -551,8 +835,10 @@ mod tests {
     fn uses_default_address() {
         let instrument = Metakon5x3::default();
 
-        assert_eq!(instrument.device(), 1);
-        assert_eq!(instrument.channel(), 0);
+        assert_eq!(
+            instrument.read_request(Metakon5x3Register::ChannelType,),
+            ReadRegisterRequest::new(1, 0, 0x00),
+        );
     }
 
     #[test]
@@ -570,5 +856,65 @@ mod tests {
         assert_eq!(Metakon5x3Register::from_address(0x0F), None,);
 
         assert_eq!(Metakon5x3Register::from_address(0xFF), None,);
+    }
+
+    #[test]
+    fn converts_typed_setpoint_value() {
+        let parameter = Metakon5x3Write::try_from((0x02, WriteRegisterValue::Int(150)));
+
+        assert_eq!(parameter, Ok(Metakon5x3Write::Setpoint(150)),);
+    }
+
+    #[test]
+    fn converts_boolean_output_value() {
+        let parameter = Metakon5x3Write::try_from((0x0B, WriteRegisterValue::Bool(true)));
+
+        assert_eq!(parameter, Ok(Metakon5x3Write::UpperOutput(true)),);
+    }
+
+    #[test]
+    fn rejects_write_to_read_only_register() {
+        let result = Metakon5x3Write::try_from((0x01, WriteRegisterValue::Int(150)));
+
+        assert_eq!(
+            result,
+            Err(Metakon5x3WriteConversionError::ReadOnlyRegister(
+                Metakon5x3Register::Measurement,
+            ),),
+        );
+    }
+
+    #[test]
+    fn rejects_incorrect_register_value_type() {
+        let result = Metakon5x3Write::try_from((0x02, WriteRegisterValue::Uint(150)));
+
+        assert_eq!(
+            result,
+            Err(Metakon5x3WriteConversionError::UnexpectedType {
+                register: Metakon5x3Register::Setpoint,
+                expected: RegisterDataType::Int,
+                actual: RegisterDataType::Uint,
+            },),
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_write_register() {
+        let result = Metakon5x3Write::try_from((0xFF, WriteRegisterValue::Ubyte(1)));
+
+        assert_eq!(
+            result,
+            Err(Metakon5x3WriteConversionError::UnknownRegister(0xFF,),),
+        );
+    }
+
+    #[test]
+    fn rejects_out_of_range_converted_value() {
+        let result = Metakon5x3Write::try_from((0x06, WriteRegisterValue::Byte(101)));
+
+        assert!(matches!(
+            result,
+            Err(Metakon5x3WriteConversionError::InvalidValue(_)),
+        ));
     }
 }
