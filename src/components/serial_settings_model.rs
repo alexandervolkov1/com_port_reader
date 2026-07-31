@@ -105,15 +105,14 @@ impl SerialSettingsModel {
                 self.ports.sort();
                 self.ports.dedup();
 
-                if self.selected_port.is_none() {
-                    self.selected_port = self.ports.first().cloned();
-                }
+                self.selected_port = refreshed_selection(self.selected_port.take(), &self.ports);
 
                 self.error = None;
             }
 
             Err(error) => {
                 self.ports.clear();
+                self.selected_port = None;
 
                 self.error = Some(format!("Failed to enumerate COM ports: {error}",));
             }
@@ -237,6 +236,17 @@ impl Default for SerialSettingsModel {
     }
 }
 
+fn refreshed_selection(
+    selected_port: Option<String>,
+    available_ports: &[String],
+) -> Option<String> {
+    match selected_port {
+        Some(selected_port) if available_ports.contains(&selected_port) => Some(selected_port),
+
+        _ => available_ports.first().cloned(),
+    }
+}
+
 fn configured_port(port: &str) -> Option<String> {
     if port.is_empty() {
         None
@@ -249,7 +259,8 @@ fn configured_port(port: &str) -> Option<String> {
 mod tests {
     use serialport::{DataBits, FlowControl, Parity, StopBits};
 
-    use super::SerialSettings;
+    use super::{SerialSettings, refreshed_selection};
+
     use crate::app_config::{SerialFlowControl, SerialParity, SerialPortSettings};
 
     #[test]
@@ -283,5 +294,39 @@ mod tests {
     #[test]
     fn preserves_configured_port() {
         assert_eq!(super::configured_port("COM3"), Some("COM3".to_owned()),);
+    }
+
+    #[test]
+    fn preserves_available_selected_port_after_refresh() {
+        let ports = vec!["COM3".to_owned(), "COM4".to_owned()];
+
+        let selected = refreshed_selection(Some("COM4".to_owned()), &ports);
+
+        assert_eq!(selected, Some("COM4".to_owned()));
+    }
+
+    #[test]
+    fn selects_first_port_when_selected_port_disappears() {
+        let ports = vec!["COM3".to_owned(), "COM4".to_owned()];
+
+        let selected = refreshed_selection(Some("COM9".to_owned()), &ports);
+
+        assert_eq!(selected, Some("COM3".to_owned()));
+    }
+
+    #[test]
+    fn selects_first_port_when_nothing_was_selected() {
+        let ports = vec!["COM3".to_owned(), "COM4".to_owned()];
+
+        let selected = refreshed_selection(None, &ports);
+
+        assert_eq!(selected, Some("COM3".to_owned()));
+    }
+
+    #[test]
+    fn clears_selection_when_no_ports_are_available() {
+        let selected = refreshed_selection(Some("COM3".to_owned()), &[]);
+
+        assert_eq!(selected, None);
     }
 }

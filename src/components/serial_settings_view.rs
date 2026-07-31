@@ -168,6 +168,8 @@ fn show_main_port_controls(
         .clone()
         .unwrap_or_else(|| "No port selected".to_owned());
 
+    let mut refresh_requested = false;
+
     ui.horizontal(|ui| {
         ui.label("Application port:");
 
@@ -182,7 +184,7 @@ fn show_main_port_controls(
         });
 
         if ui.button("Refresh").clicked() {
-            model.refresh_ports();
+            refresh_requested = true;
         }
 
         if ui
@@ -195,6 +197,10 @@ fn show_main_port_controls(
 
     if settings_enabled && selected_port.as_deref() != model.selected_port() {
         model.set_selected_port(selected_port);
+    }
+
+    if refresh_requested {
+        model.refresh_ports();
     }
 }
 
