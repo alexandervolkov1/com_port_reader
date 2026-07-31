@@ -6,13 +6,14 @@ pub const CONFIG_PATH: &str = "config.toml";
 
 const DEFAULT_FPS: u32 = 30;
 const DEFAULT_POLL_INTERVAL_MS: u64 = 1_000;
+const DEFAULT_PLOT_WINDOW_SECONDS: u64 = 3_600;
 const DEFAULT_MAX_PLOT_POINTS_PER_SERIES: usize = 4_000;
-
+const MIN_PLOT_WINDOW_SECONDS: u64 = 1;
+const MAX_PLOT_WINDOW_SECONDS: u64 = 14 * 24 * 60 * 60;
 const DEFAULT_BAUD_RATE: u32 = 9_600;
 const DEFAULT_DATA_BITS: u8 = 8;
 const DEFAULT_STOP_BITS: u8 = 1;
 const DEFAULT_TIMEOUT_MS: u64 = 250;
-
 const MIN_PLOT_POINTS_PER_SERIES: usize = 4;
 const MAX_PLOT_POINTS_PER_SERIES: usize = 100_000;
 
@@ -104,6 +105,7 @@ impl AppConfig {
 pub struct ApplicationSettings {
     pub fps: u32,
     pub poll_interval_ms: u64,
+    pub plot_window_seconds: u64,
     pub max_plot_points_per_series: usize,
 }
 
@@ -127,6 +129,15 @@ impl ApplicationSettings {
                 .to_owned());
         }
 
+        if !(MIN_PLOT_WINDOW_SECONDS..=MAX_PLOT_WINDOW_SECONDS).contains(&self.plot_window_seconds)
+        {
+            return Err(format!(
+                "application.plot_window_seconds must be between \
+                 {MIN_PLOT_WINDOW_SECONDS} and \
+                 {MAX_PLOT_WINDOW_SECONDS}",
+            ));
+        }
+
         if !(MIN_PLOT_POINTS_PER_SERIES..=MAX_PLOT_POINTS_PER_SERIES)
             .contains(&self.max_plot_points_per_series)
         {
@@ -147,6 +158,7 @@ impl Default for ApplicationSettings {
         Self {
             fps: DEFAULT_FPS,
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
+            plot_window_seconds: DEFAULT_PLOT_WINDOW_SECONDS,
             max_plot_points_per_series: DEFAULT_MAX_PLOT_POINTS_PER_SERIES,
         }
     }
@@ -260,6 +272,7 @@ mod tests {
         assert_eq!(config.serial.data_bits, 8);
         assert_eq!(config.serial.parity, SerialParity::None,);
         assert_eq!(config.serial.flow_control, SerialFlowControl::None,);
+        assert_eq!(config.application.plot_window_seconds, 3_600,);
         assert!(config.emulator.script_path.is_empty());
     }
 
@@ -277,6 +290,7 @@ fps = 60
         assert_eq!(config.application.poll_interval_ms, 1_000,);
         assert_eq!(config.application.max_plot_points_per_series, 4_000,);
         assert_eq!(config.serial.baud_rate, 9_600);
+        assert_eq!(config.application.plot_window_seconds, 3_600,);
     }
 
     #[test]
@@ -392,5 +406,37 @@ main_port = \" COM3\"
         .unwrap();
 
         assert_eq!(config.emulator.script_path, "emulator_scripts/sine.lua",);
+    }
+
+    #[test]
+    fn rejects_zero_plot_window() {
+        let result = AppConfig::parse(
+            "\
+    [application]
+    plot_window_seconds = 0
+    ",
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            "application.plot_window_seconds must be between \
+             1 and 1209600",
+        );
+    }
+
+    #[test]
+    fn rejects_plot_window_longer_than_two_weeks() {
+        let result = AppConfig::parse(
+            "\
+    [application]
+    plot_window_seconds = 1209601
+    ",
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            "application.plot_window_seconds must be between \
+             1 and 1209600",
+        );
     }
 }

@@ -10,9 +10,7 @@ use crate::{
 use eframe::egui;
 use egui_plot::{AxisHints, GridInput, GridMark, HoverPosition, Line, Plot, PlotPoints};
 
-const WINDOW_SECONDS: f64 = 3600.0;
 const MIN_PANE_HEIGHT: f32 = 80.0;
-
 const Y_AXIS_MIN_WIDTH: f32 = 50.0;
 const Y_LABEL_MIN_SPACING: f32 = 14.0;
 const Y_LABEL_FULL_SPACING: f32 = 20.0;
@@ -23,9 +21,9 @@ pub fn show(
     plot: &mut PlotModel,
     series_store: &SeriesStore,
     max_points_per_series: usize,
+    window_seconds: f64,
 ) {
-    let (min_x, max_x) = prepare_lines(plot, series_store, max_points_per_series);
-
+    let (min_x, max_x) = prepare_lines(plot, series_store, max_points_per_series, window_seconds);
     let pane_count = plot.panes.len();
 
     let spacing = ui.spacing().item_spacing.y;
@@ -253,6 +251,7 @@ fn prepare_lines(
     plot: &mut PlotModel,
     series_store: &SeriesStore,
     max_points_per_series: usize,
+    window_seconds: f64,
 ) -> (f64, f64) {
     series_store.with(|series| {
         let latest_x = series
@@ -270,11 +269,11 @@ fn prepare_lines(
         let data_span = latest_x - first_x;
 
         let live_bounds = if data_span <= 0.0 {
-            (latest_x - WINDOW_SECONDS, latest_x)
-        } else if data_span < WINDOW_SECONDS {
+            (latest_x - window_seconds, latest_x)
+        } else if data_span < window_seconds {
             (first_x, latest_x)
         } else {
-            (latest_x - WINDOW_SECONDS, latest_x)
+            (latest_x - window_seconds, latest_x)
         };
 
         let (min_x, max_x) = if plot.follow_latest {

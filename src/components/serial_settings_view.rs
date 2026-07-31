@@ -457,6 +457,17 @@ fn show_application_settings(ui: &mut egui::Ui, settings: &mut ApplicationSettin
 
             ui.end_row();
 
+            ui.label("Live plot window:");
+
+            ui.add(
+                egui::DragValue::new(&mut settings.plot_window_seconds)
+                    .range(1..=1_209_600)
+                    .speed(60.0)
+                    .suffix(" s"),
+            );
+
+            ui.end_row();
+
             ui.label("Plot points per series:");
 
             ui.add(

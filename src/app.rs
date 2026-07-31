@@ -189,6 +189,7 @@ impl eframe::App for MyApp {
                                 &mut self.plot,
                                 &self.series,
                                 self.config.application.max_plot_points_per_series,
+                                self.config.application.plot_window_seconds as f64,
                             );
                         });
 
@@ -213,6 +214,7 @@ impl eframe::App for MyApp {
                                 &mut self.plot,
                                 &self.series,
                                 self.config.application.max_plot_points_per_series,
+                                self.config.application.plot_window_seconds as f64,
                             );
                         });
 
