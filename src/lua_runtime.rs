@@ -433,4 +433,57 @@ mod tests {
 
         assert!(command_receiver.try_recv().is_err());
     }
+
+    #[test]
+    fn exposes_metakon_controller_parameter_series() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                local controller = app.metakon({
+                    device = 15,
+                    channel = 2,
+                })
+
+                controller:add_proportional_band("pid_p")
+                controller:add_integral_time("pid_i")
+                controller:add_derivative_time("pid_d")
+                "#,
+            )
+            .unwrap();
+
+        let expected = [
+            ("pid_p", 0x03, MetakonValueType::Uint),
+            ("pid_i", 0x04, MetakonValueType::Uint),
+            ("pid_d", 0x05, MetakonValueType::Ubyte),
+        ];
+
+        for (expected_name, expected_register, expected_type) in expected {
+            let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+                panic!("expected Add command");
+            };
+
+            let (source, name) = new_series.into_source_parts();
+
+            assert_eq!(name.as_deref(), Some(expected_name));
+
+            assert_eq!(
+                source,
+                SeriesSource::Metakon {
+                    device: 15,
+                    channel: 2,
+                    register: expected_register,
+                    value_type: expected_type,
+                    scale: 1.0,
+                },
+            );
+        }
+
+        assert!(command_receiver.try_recv().is_err());
+    }
 }
