@@ -1,6 +1,6 @@
-mod csv;
-
 use crate::data::{SeriesMetadata, SeriesSample};
+
+mod csv;
 
 pub use csv::CsvSampleSink;
 

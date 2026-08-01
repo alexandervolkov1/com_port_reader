@@ -1,3 +1,25 @@
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread::{self, JoinHandle},
+    time::Instant,
+};
+
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
+
+use crate::{
+    acquisition::{AcquisitionError, AcquisitionSource},
+    data::{Series, SeriesSample, SeriesStore},
+    protocol::metakon::{
+        ReadRegisterRequest, RegisterValue, WriteRegisterRequest, read_register, write_register,
+    },
+    sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError},
+    serial_connection::SerialConnectionError,
+    utils::current_time_f64,
+};
+
 mod command;
 mod config;
 mod event;
@@ -7,25 +29,6 @@ pub use command::WorkerCommand;
 pub use config::WorkerConfig;
 pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
-
-use crate::protocol::metakon::{
-    ReadRegisterRequest, RegisterValue, WriteRegisterRequest, read_register, write_register,
-};
-use crate::sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError};
-use crate::serial_connection::SerialConnectionError;
-use crate::utils::current_time_f64;
-use crate::{
-    acquisition::{AcquisitionError, AcquisitionSource},
-    data::{Series, SeriesSample, SeriesStore},
-};
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
-
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-use std::thread::{self, JoinHandle};
-use std::time::Instant;
 
 enum AcquisitionState {
     Stopped,

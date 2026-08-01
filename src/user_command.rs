@@ -1,14 +1,11 @@
-use crate::data::NewSeries;
-use crate::protocol::metakon::WriteRegisterRequest;
+use crate::{data::NewSeries, protocol::metakon::WriteRegisterRequest};
 
 #[derive(Debug)]
 pub enum UserCommand {
     Add(NewSeries),
-
     Delete {
         name: String,
     },
-
     Rename {
         current_name: String,
         new_name: String,
@@ -27,7 +24,6 @@ pub enum UserCommand {
     SendSerial {
         command: String,
     },
-
     WriteMetakon {
         request: WriteRegisterRequest,
     },

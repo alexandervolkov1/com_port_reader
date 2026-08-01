@@ -10,6 +10,7 @@ mod lua_execution;
 #[path = "../device_emulator_handle.rs"]
 mod device_emulator_handle;
 
+use serialport::{DataBits, FlowControl, Parity, StopBits};
 use std::{
     env,
     error::Error,
@@ -21,8 +22,6 @@ use std::{
 };
 
 use device_emulator_handle::{DeviceEmulatorHandle, DeviceEmulatorPortConfig};
-
-use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 const DEFAULT_BAUD_RATE: u32 = 9_600;
 

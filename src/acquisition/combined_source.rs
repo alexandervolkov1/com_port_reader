@@ -1,5 +1,7 @@
-use crate::data::{SeriesMetadata, SeriesSample};
-use crate::protocol::metakon::{RegisterValue, WriteRegisterRequest};
+use crate::{
+    data::{SeriesMetadata, SeriesSample},
+    protocol::metakon::{RegisterValue, WriteRegisterRequest},
+};
 
 use super::{AcquisitionError, AcquisitionSource};
 

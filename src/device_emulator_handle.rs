@@ -19,7 +19,6 @@ use crate::{
 };
 
 const READ_TIMEOUT: Duration = Duration::from_millis(100);
-
 const MAX_COMMAND_LENGTH: usize = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

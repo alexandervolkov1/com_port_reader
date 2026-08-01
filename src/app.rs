@@ -1,21 +1,23 @@
 use eframe::egui;
 use egui_extras::{Size, StripBuilder};
 
-use crate::acquisition::{CombinedSource, SerialCommandSource};
-use crate::app_config::{AppConfig, CONFIG_PATH};
-use crate::app_log::{LogHandle, LogModel};
-use crate::components::{
-    command_model::CommandModel, controls_model::ControlsModel, controls_view,
-    device_emulator_model::DeviceEmulatorModel, help_model::HelpModel, help_view, log_view,
-    lua_console_model::LuaConsoleModel, lua_console_view, plot_model::PlotModel, plot_view,
-    serial_settings_model::SerialSettingsModel, serial_settings_view, series_view,
+use crate::{
+    acquisition::{CombinedSource, SerialCommandSource},
+    app_config::{AppConfig, CONFIG_PATH},
+    app_log::{LogHandle, LogModel},
+    components::{
+        command_model::CommandModel, controls_model::ControlsModel, controls_view,
+        device_emulator_model::DeviceEmulatorModel, help_model::HelpModel, help_view, log_view,
+        lua_console_model::LuaConsoleModel, lua_console_view, plot_model::PlotModel, plot_view,
+        serial_settings_model::SerialSettingsModel, serial_settings_view, series_view,
+    },
+    data::SeriesStore,
+    lua_worker::LuaWorker,
+    sample_sink::NullSampleSink,
+    serial_connection::SerialConfigStore,
+    user_command::UserCommand,
+    worker::{Worker, WorkerConfig, WorkerHandle},
 };
-use crate::data::SeriesStore;
-use crate::lua_worker::LuaWorker;
-use crate::sample_sink::NullSampleSink;
-use crate::serial_connection::SerialConfigStore;
-use crate::user_command::UserCommand;
-use crate::worker::{Worker, WorkerConfig, WorkerHandle};
 
 const SERIES_PANEL_WIDTH: f32 = 150.0;
 const TOGGLE_WIDTH: f32 = 22.0;

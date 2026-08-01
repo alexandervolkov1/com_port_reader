@@ -1,3 +1,6 @@
+use eframe::egui;
+use egui_plot::{AxisHints, GridInput, GridMark, HoverPosition, Line, Plot, PlotPoints};
+
 use crate::{
     components::{
         plot_downsampling::downsample_min_max_into,
@@ -6,9 +9,6 @@ use crate::{
     data::SeriesStore,
     utils::{current_time_f64, mark_for_timestamp},
 };
-
-use eframe::egui;
-use egui_plot::{AxisHints, GridInput, GridMark, HoverPosition, Line, Plot, PlotPoints};
 
 const MIN_PANE_HEIGHT: f32 = 80.0;
 const Y_AXIS_MIN_WIDTH: f32 = 50.0;

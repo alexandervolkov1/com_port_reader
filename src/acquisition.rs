@@ -1,8 +1,10 @@
+use crate::{
+    data::{SeriesMetadata, SeriesSample},
+    protocol::metakon::{RegisterValue, WriteRegisterRequest},
+};
+
 mod combined_source;
 mod serial_command_source;
-
-use crate::data::{SeriesMetadata, SeriesSample};
-use crate::protocol::metakon::{RegisterValue, WriteRegisterRequest};
 
 pub use combined_source::CombinedSource;
 pub use serial_command_source::SerialCommandSource;

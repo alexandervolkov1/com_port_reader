@@ -13,18 +13,14 @@ use crate::{
 };
 
 const BAUD_RATES: &[u32] = &[1_200, 2_400, 4_800, 9_600, 19_200, 38_400, 57_600, 115_200];
-
 const DATA_BITS: &[DataBits] = &[
     DataBits::Five,
     DataBits::Six,
     DataBits::Seven,
     DataBits::Eight,
 ];
-
 const PARITIES: &[Parity] = &[Parity::None, Parity::Even, Parity::Odd];
-
 const STOP_BITS: &[StopBits] = &[StopBits::One, StopBits::Two];
-
 const FLOW_CONTROLS: &[FlowControl] = &[
     FlowControl::None,
     FlowControl::Software,
