@@ -41,8 +41,9 @@ fn show_lua_reference(ui: &mut egui::Ui) {
 
     ui.label(
         "Application scripts control acquisition, \
-         recording, series and the device emulator \
-         through the global 'app' table.",
+         recording, series, instruments and the \
+         device emulator through the global 'app' \
+         table.",
     );
 
     ui.label(
@@ -54,28 +55,37 @@ fn show_lua_reference(ui: &mut egui::Ui) {
 
     ui.separator();
 
-    ui.heading("Lua console");
+    ui.heading("Lua REPL");
 
     ui.label(
-        "Enter a Lua expression or statement in the \
-         Lua field and press Enter.",
+        "Enter a Lua expression or a multiline Lua \
+         statement in the editor.",
     );
 
     ui.label(
-        "Expression results and errors are written \
-         to the application log.",
+        "Press Ctrl+Enter or click Execute to run \
+         the entered code.",
+    );
+
+    ui.label(
+        "Commands, returned values and Lua errors are \
+         displayed in the REPL history.",
+    );
+
+    ui.label(
+        "Actions affecting the application are also \
+         written to the application log.",
     );
 
     ui.label(
         "Variables and functions remain available \
-         between console commands and executed \
-         application scripts.",
+         between REPL commands and executed scripts.",
     );
 
     ui.label(
-        "Use 'Run Lua...' to execute a Lua file. \
+        "Use 'Run script...' to execute a Lua file. \
          The file is evaluated by the same runtime \
-         as the console.",
+         as the REPL.",
     );
 
     ui.separator();
@@ -142,29 +152,27 @@ fn show_lua_reference(ui: &mut egui::Ui) {
 
     ui.separator();
 
-    ui.heading("Metakon series");
+    ui.heading("Metakon 5X3 controller");
 
     reference(
         ui,
-        "app.add_metakon()",
-        "Adds a Metakon series using all default \
-         parameters.",
+        "controller = app.metakon()",
+        "Creates a Metakon 5X3 controller using the \
+         default device and channel.",
     );
 
     reference(
         ui,
-        "app.add_metakon(options)",
-        "Adds a periodically sampled Metakon register. \
-         Parameters are passed in a Lua table.",
+        "controller = app.metakon(options)",
+        "Creates a controller with explicitly \
+         configured instrument parameters.",
     );
 
     ui.monospace(
-        "app.add_metakon({\n\
+        "controller = app.metakon({\n\
          \x20   device = 15,\n\
          \x20   channel = 0,\n\
-         \x20   register = 0x01,\n\
-         \x20   scale = 0.1,\n\
-         \x20   name = \"temperature\",\n\
+         \x20   scale = 1.0,\n\
          })",
     );
 
@@ -175,22 +183,140 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     ui.monospace(
         "device = 1\n\
          channel = 0\n\
-         register = 0x01\n\
-         scale = 1.0\n\
-         name = automatic",
+         scale = 1.0",
     );
 
     ui.add_space(8.0);
 
     ui.label(
-        "The raw signed register value is multiplied \
-         by scale before being stored and plotted.",
+        "Assigning the controller to a global \
+         variable makes it available later from \
+         the REPL.",
+    );
+
+    ui.label(
+        "The Rust driver selects register addresses \
+         and data types. Lua code does not need to \
+         know the Metakon register map.",
     );
 
     ui.label(
         "Unknown option names are rejected. This \
          prevents misspelled instrument parameters \
          from silently using defaults.",
+    );
+
+    ui.separator();
+
+    ui.heading("Metakon acquisition series");
+
+    reference(
+        ui,
+        "controller:add_measurement(name)",
+        "Adds the measured-value series. The name \
+         argument is optional.",
+    );
+
+    reference(
+        ui,
+        "controller:add_setpoint(name)",
+        "Adds the current PID setpoint series.",
+    );
+
+    reference(
+        ui,
+        "controller:add_output_power(name)",
+        "Adds the current output-power series. Output \
+         power is reported from -100 to 100.",
+    );
+
+    reference(
+        ui,
+        "controller:add_proportional_band(name)",
+        "Adds the current PID proportional-band \
+         series.",
+    );
+
+    reference(
+        ui,
+        "controller:add_integral_time(name)",
+        "Adds the current PID integral-time series.",
+    );
+
+    reference(
+        ui,
+        "controller:add_derivative_time(name)",
+        "Adds the current PID derivative-time series.",
+    );
+
+    ui.monospace(
+        "controller:add_measurement(\"temperature\")\n\
+         controller:add_setpoint(\"setpoint\")\n\
+         controller:add_output_power(\"power\")\n\
+         controller:add_proportional_band(\"pid_p\")\n\
+         controller:add_integral_time(\"pid_i\")\n\
+         controller:add_derivative_time(\"pid_d\")",
+    );
+
+    ui.add_space(8.0);
+
+    ui.label(
+        "The controller scale is applied to the \
+         measurement and setpoint series before \
+         values are stored and plotted.",
+    );
+
+    ui.separator();
+
+    ui.heading("Metakon PID control");
+
+    reference(
+        ui,
+        "controller:setpoint(value)",
+        "Changes the PID setpoint. The value must be \
+         an integer from -999 to 9999.",
+    );
+
+    reference(
+        ui,
+        "controller:proportional_band(value)",
+        "Changes the PID proportional band. The value \
+         must be an integer from 1 to 9999.",
+    );
+
+    reference(
+        ui,
+        "controller:integral_time(value)",
+        "Changes the PID integral time in seconds. \
+         The value must be an integer from 1 to \
+         30000.",
+    );
+
+    reference(
+        ui,
+        "controller:derivative_time(value)",
+        "Changes the PID derivative time in seconds. \
+         The value must be an integer from 0 to 255.",
+    );
+
+    ui.monospace(
+        "controller:setpoint(150)\n\
+         controller:proportional_band(250)\n\
+         controller:integral_time(120)\n\
+         controller:derivative_time(10)",
+    );
+
+    ui.add_space(8.0);
+
+    ui.label(
+        "The controller scale is not applied when \
+         writing PID parameters.",
+    );
+
+    ui.label(
+        "Write commands are sent through the worker. \
+         Periodic acquisition keeps priority over \
+         interactive commands.",
     );
 
     ui.separator();
@@ -239,7 +365,7 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     ui.add_space(8.0);
 
     ui.label(
-        "The application COM port and its serial line \
+        "The application COM port and its serial-line \
          settings are selected in Settings.",
     );
 
@@ -298,33 +424,42 @@ fn show_lua_reference(ui: &mut egui::Ui) {
 
     ui.separator();
 
-    ui.heading("Application script example");
+    ui.heading("Metakon application script");
 
     ui.label(
         "Application scripts are normally stored in \
          the lua_scripts directory and executed with \
-         'Run Lua...'.",
+         'Run script...'.",
     );
 
     ui.monospace(
         "app.stop()\n\
-         app.stop_emu()\n\
          app.clear()\n\n\
-         app.start_emu()\n\n\
-         app.add_serial(\n\
-         \x20   \"read phase_a\",\n\
-         \x20   \"phase_A\"\n\
+         controller = app.metakon({\n\
+         \x20   device = 15,\n\
+         \x20   channel = 0,\n\
+         \x20   scale = 1.0,\n\
+         })\n\n\
+         controller:add_measurement(\n\
+         \x20   \"temperature\"\n\
          )\n\n\
-         app.add_serial(\n\
-         \x20   \"read phase_b\",\n\
-         \x20   \"phase_B\"\n\
+         controller:add_setpoint(\n\
+         \x20   \"setpoint\"\n\
          )\n\n\
-         app.add_serial(\n\
-         \x20   \"read phase_c\",\n\
-         \x20   \"phase_C\"\n\
+         controller:add_output_power(\n\
+         \x20   \"power\"\n\
          )\n\n\
          app.start()",
     );
+
+    ui.add_space(8.0);
+
+    ui.label(
+        "Because controller is global in this example, \
+         it can later be used from the REPL:",
+    );
+
+    ui.monospace("controller:setpoint(150)");
 
     ui.separator();
 
@@ -376,7 +511,7 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     ui.label(
         "One Lua execution is limited to 500 ms. \
          Infinite loops and blocking process logic \
-         are interrupted and reported in the log.",
+         are interrupted and reported in the REPL.",
     );
 
     ui.label(
