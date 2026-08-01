@@ -34,6 +34,34 @@ function Metakon5x3:add_pwm_positive(name) end
 ---@param name? string Optional unique series name.
 function Metakon5x3:add_pwm_negative(name) end
 
+---Adds the upper-alarm setpoint series.
+---@param name? string Optional unique series name.
+function Metakon5x3:add_upper_setpoint(name) end
+
+---Adds the upper-alarm hysteresis series.
+---@param name? string Optional unique series name.
+function Metakon5x3:add_upper_hysteresis(name) end
+
+---Adds the upper-alarm output-state series.
+---
+---The series contains 0 for false and 1 for true.
+---@param name? string Optional unique series name.
+function Metakon5x3:add_upper_output(name) end
+
+---Adds the lower-alarm setpoint series.
+---@param name? string Optional unique series name.
+function Metakon5x3:add_lower_setpoint(name) end
+
+---Adds the lower-alarm hysteresis series.
+---@param name? string Optional unique series name.
+function Metakon5x3:add_lower_hysteresis(name) end
+
+---Adds the lower-alarm output-state series.
+---
+---The series contains 0 for false and 1 for true.
+---@param name? string Optional unique series name.
+function Metakon5x3:add_lower_output(name) end
+
 ---Adds the PID proportional-band series.
 ---@param name? string
 function Metakon5x3:add_proportional_band(name) end

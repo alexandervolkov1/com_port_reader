@@ -143,6 +143,60 @@ impl Metakon5x3 {
         )
     }
 
+    pub fn upper_setpoint_series(self, scale: f64, name: Option<String>) -> NewSeries {
+        self.new_series(
+            Metakon5x3Register::UpperSetpoint,
+            MetakonValueType::Int,
+            scale,
+            name,
+        )
+    }
+
+    pub fn upper_hysteresis_series(self, scale: f64, name: Option<String>) -> NewSeries {
+        self.new_series(
+            Metakon5x3Register::UpperHysteresis,
+            MetakonValueType::Ubyte,
+            scale,
+            name,
+        )
+    }
+
+    pub fn upper_output_series(self, name: Option<String>) -> NewSeries {
+        self.new_series(
+            Metakon5x3Register::UpperOutput,
+            MetakonValueType::Bool,
+            1.0,
+            name,
+        )
+    }
+
+    pub fn lower_setpoint_series(self, scale: f64, name: Option<String>) -> NewSeries {
+        self.new_series(
+            Metakon5x3Register::LowerSetpoint,
+            MetakonValueType::Int,
+            scale,
+            name,
+        )
+    }
+
+    pub fn lower_hysteresis_series(self, scale: f64, name: Option<String>) -> NewSeries {
+        self.new_series(
+            Metakon5x3Register::LowerHysteresis,
+            MetakonValueType::Ubyte,
+            scale,
+            name,
+        )
+    }
+
+    pub fn lower_output_series(self, name: Option<String>) -> NewSeries {
+        self.new_series(
+            Metakon5x3Register::LowerOutput,
+            MetakonValueType::Bool,
+            1.0,
+            name,
+        )
+    }
+
     fn new_series(
         self,
         register: Metakon5x3Register,

@@ -486,4 +486,65 @@ mod tests {
 
         assert!(command_receiver.try_recv().is_err());
     }
+
+    #[test]
+    fn exposes_metakon_controller_alarm_series() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                local controller = app.metakon({
+                    device = 15,
+                    channel = 2,
+                    scale = 0.1,
+                })
+
+                controller:add_upper_setpoint("high")
+                controller:add_upper_hysteresis("high_hyst")
+                controller:add_upper_output("high_active")
+
+                controller:add_lower_setpoint("low")
+                controller:add_lower_hysteresis("low_hyst")
+                controller:add_lower_output("low_active")
+                "#,
+            )
+            .unwrap();
+
+        let expected = [
+            ("high", 0x09, MetakonValueType::Int, 0.1),
+            ("high_hyst", 0x0A, MetakonValueType::Ubyte, 0.1),
+            ("high_active", 0x0B, MetakonValueType::Bool, 1.0),
+            ("low", 0x0C, MetakonValueType::Int, 0.1),
+            ("low_hyst", 0x0D, MetakonValueType::Ubyte, 0.1),
+            ("low_active", 0x0E, MetakonValueType::Bool, 1.0),
+        ];
+
+        for (expected_name, expected_register, expected_type, expected_scale) in expected {
+            let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+                panic!("expected Add command");
+            };
+
+            let (source, name) = new_series.into_source_parts();
+
+            assert_eq!(name.as_deref(), Some(expected_name),);
+
+            assert_eq!(
+                source,
+                SeriesSource::Metakon {
+                    device: 15,
+                    channel: 2,
+                    register: expected_register,
+                    value_type: expected_type,
+                    scale: expected_scale,
+                },
+            );
+        }
+
+        assert!(command_receiver.try_recv().is_err());
+    }
 }

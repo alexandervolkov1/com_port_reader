@@ -205,6 +205,58 @@ impl UserData for LuaMetakon5x3 {
         });
 
         methods.add_method(
+            "add_upper_setpoint",
+            |_, controller, name: Option<String>| {
+                controller.add_series(
+                    controller
+                        .instrument
+                        .upper_setpoint_series(controller.scale, name),
+                )
+            },
+        );
+
+        methods.add_method(
+            "add_upper_hysteresis",
+            |_, controller, name: Option<String>| {
+                controller.add_series(
+                    controller
+                        .instrument
+                        .upper_hysteresis_series(controller.scale, name),
+                )
+            },
+        );
+
+        methods.add_method("add_upper_output", |_, controller, name: Option<String>| {
+            controller.add_series(controller.instrument.upper_output_series(name))
+        });
+
+        methods.add_method(
+            "add_lower_setpoint",
+            |_, controller, name: Option<String>| {
+                controller.add_series(
+                    controller
+                        .instrument
+                        .lower_setpoint_series(controller.scale, name),
+                )
+            },
+        );
+
+        methods.add_method(
+            "add_lower_hysteresis",
+            |_, controller, name: Option<String>| {
+                controller.add_series(
+                    controller
+                        .instrument
+                        .lower_hysteresis_series(controller.scale, name),
+                )
+            },
+        );
+
+        methods.add_method("add_lower_output", |_, controller, name: Option<String>| {
+            controller.add_series(controller.instrument.lower_output_series(name))
+        });
+
+        methods.add_method(
             "add_proportional_band",
             |_, controller, name: Option<String>| {
                 controller.add_series(controller.instrument.proportional_band_series(name))
