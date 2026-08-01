@@ -276,6 +276,73 @@ impl UserData for LuaMetakon5x3 {
                 controller.add_series(controller.instrument.derivative_time_series(name))
             },
         );
+        methods.add_method("output_power", |_, controller, value: i64| {
+            let value = i8::try_from(value).map_err(|_| {
+                mlua::Error::RuntimeError(
+                    "Metakon 5X3 output power does not \
+                         fit into Byte"
+                        .to_owned(),
+                )
+            })?;
+
+            controller.write(Metakon5x3Write::OutputPower(value))
+        });
+
+        methods.add_method("upper_setpoint", |_, controller, value: i64| {
+            let value = i16::try_from(value).map_err(|_| {
+                mlua::Error::RuntimeError(
+                    "Metakon 5X3 upper setpoint does not \
+                         fit into Int"
+                        .to_owned(),
+                )
+            })?;
+
+            controller.write(Metakon5x3Write::UpperSetpoint(value))
+        });
+
+        methods.add_method("upper_hysteresis", |_, controller, value: i64| {
+            let value = u8::try_from(value).map_err(|_| {
+                mlua::Error::RuntimeError(
+                    "Metakon 5X3 upper hysteresis must be \
+                         between 0 and 255"
+                        .to_owned(),
+                )
+            })?;
+
+            controller.write(Metakon5x3Write::UpperHysteresis(value))
+        });
+
+        methods.add_method("upper_output", |_, controller, value: bool| {
+            controller.write(Metakon5x3Write::UpperOutput(value))
+        });
+
+        methods.add_method("lower_setpoint", |_, controller, value: i64| {
+            let value = i16::try_from(value).map_err(|_| {
+                mlua::Error::RuntimeError(
+                    "Metakon 5X3 lower setpoint does not \
+                         fit into Int"
+                        .to_owned(),
+                )
+            })?;
+
+            controller.write(Metakon5x3Write::LowerSetpoint(value))
+        });
+
+        methods.add_method("lower_hysteresis", |_, controller, value: i64| {
+            let value = u8::try_from(value).map_err(|_| {
+                mlua::Error::RuntimeError(
+                    "Metakon 5X3 lower hysteresis must be \
+                         between 0 and 255"
+                        .to_owned(),
+                )
+            })?;
+
+            controller.write(Metakon5x3Write::LowerHysteresis(value))
+        });
+
+        methods.add_method("lower_output", |_, controller, value: bool| {
+            controller.write(Metakon5x3Write::LowerOutput(value))
+        });
 
         methods.add_method("setpoint", |_, controller, value: i64| {
             let value = i16::try_from(value).map_err(|_| {

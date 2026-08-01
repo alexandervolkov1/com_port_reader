@@ -547,4 +547,78 @@ mod tests {
 
         assert!(command_receiver.try_recv().is_err());
     }
+
+    #[test]
+    fn exposes_metakon_controller_output_commands() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                local controller = app.metakon({
+                    device = 15,
+                    channel = 2,
+                })
+
+                controller:output_power(-40)
+
+                controller:upper_setpoint(200)
+                controller:upper_hysteresis(5)
+                controller:upper_output(true)
+
+                controller:lower_setpoint(100)
+                controller:lower_hysteresis(4)
+                controller:lower_output(false)
+                "#,
+            )
+            .unwrap();
+
+        let expected = [
+            WriteRegisterRequest::new(15, 2, 0x06, WriteRegisterValue::Byte(-40)),
+            WriteRegisterRequest::new(15, 2, 0x09, WriteRegisterValue::Int(200)),
+            WriteRegisterRequest::new(15, 2, 0x0A, WriteRegisterValue::Ubyte(5)),
+            WriteRegisterRequest::new(15, 2, 0x0B, WriteRegisterValue::Bool(true)),
+            WriteRegisterRequest::new(15, 2, 0x0C, WriteRegisterValue::Int(100)),
+            WriteRegisterRequest::new(15, 2, 0x0D, WriteRegisterValue::Ubyte(4)),
+            WriteRegisterRequest::new(15, 2, 0x0E, WriteRegisterValue::Bool(false)),
+        ];
+
+        for expected_request in expected {
+            assert!(matches!(
+                command_receiver.try_recv().unwrap(),
+                UserCommand::WriteMetakon { request }
+                    if request == expected_request,
+            ));
+        }
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn rejects_metakon_output_power_out_of_range() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        let error = runtime
+            .execute(
+                r#"
+                local controller = app.metakon()
+
+                controller:output_power(101)
+                "#,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("output power must be between -100 and 100",));
+
+        assert!(command_receiver.try_recv().is_err());
+    }
 }

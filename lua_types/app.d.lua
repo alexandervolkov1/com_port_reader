@@ -74,6 +74,56 @@ function Metakon5x3:add_integral_time(name) end
 ---@param name? string
 function Metakon5x3:add_derivative_time(name) end
 
+---Changes the output power.
+---
+---The value must be an integer from -100 to 100.
+---The instrument can alter the written value according
+---to its current operating mode and control algorithm.
+---@param value integer
+function Metakon5x3:output_power(value) end
+
+---Changes the upper-comparator setpoint.
+---
+---The value must be an integer from -999 to 9999.
+---The controller scale is not applied when writing.
+---@param value integer
+function Metakon5x3:upper_setpoint(value) end
+
+---Changes the upper-comparator hysteresis.
+---
+---The value must be an integer from 0 to 255.
+---The controller scale is not applied when writing.
+---@param value integer
+function Metakon5x3:upper_hysteresis(value) end
+
+---Changes the upper-comparator output state.
+---
+---The instrument can alter the written state according
+---to its current control algorithm.
+---@param value boolean
+function Metakon5x3:upper_output(value) end
+
+---Changes the lower-comparator setpoint.
+---
+---The value must be an integer from -999 to 9999.
+---The controller scale is not applied when writing.
+---@param value integer
+function Metakon5x3:lower_setpoint(value) end
+
+---Changes the lower-comparator hysteresis.
+---
+---The value must be an integer from 0 to 255.
+---The controller scale is not applied when writing.
+---@param value integer
+function Metakon5x3:lower_hysteresis(value) end
+
+---Changes the lower-comparator output state.
+---
+---The instrument can alter the written state according
+---to its current control algorithm.
+---@param value boolean
+function Metakon5x3:lower_output(value) end
+
 ---Changes the PID setpoint.
 ---
 ---The value must be an integer from -999 to 9999.
