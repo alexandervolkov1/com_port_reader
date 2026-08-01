@@ -2,7 +2,6 @@ use super::Sample;
 
 pub const DEFAULT_METAKON_DEVICE: u8 = 1;
 pub const DEFAULT_METAKON_CHANNEL: u8 = 0;
-pub const DEFAULT_METAKON_REGISTER: u8 = 0x01;
 pub const DEFAULT_METAKON_SCALE: f64 = 1.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

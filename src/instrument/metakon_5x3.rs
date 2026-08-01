@@ -116,6 +116,33 @@ impl Metakon5x3 {
         )
     }
 
+    pub fn proportional_band_series(self, name: Option<String>) -> NewSeries {
+        self.new_series(
+            Metakon5x3Register::ProportionalBand,
+            MetakonValueType::Uint,
+            1.0,
+            name,
+        )
+    }
+
+    pub fn integral_time_series(self, name: Option<String>) -> NewSeries {
+        self.new_series(
+            Metakon5x3Register::IntegralTime,
+            MetakonValueType::Uint,
+            1.0,
+            name,
+        )
+    }
+
+    pub fn derivative_time_series(self, name: Option<String>) -> NewSeries {
+        self.new_series(
+            Metakon5x3Register::DerivativeTime,
+            MetakonValueType::Ubyte,
+            1.0,
+            name,
+        )
+    }
+
     fn new_series(
         self,
         register: Metakon5x3Register,
