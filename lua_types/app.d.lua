@@ -22,6 +22,18 @@ function Metakon5x3:add_setpoint(name) end
 ---@param name? string Optional unique series name.
 function Metakon5x3:add_output_power(name) end
 
+---Adds the positive PWM-output state series.
+---
+---The series contains 0 for false and 1 for true.
+---@param name? string Optional unique series name.
+function Metakon5x3:add_pwm_positive(name) end
+
+---Adds the negative PWM-output state series.
+---
+---The series contains 0 for false and 1 for true.
+---@param name? string Optional unique series name.
+function Metakon5x3:add_pwm_negative(name) end
+
 ---Adds the PID proportional-band series.
 ---@param name? string
 function Metakon5x3:add_proportional_band(name) end

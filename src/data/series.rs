@@ -6,6 +6,7 @@ pub const DEFAULT_METAKON_SCALE: f64 = 1.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MetakonValueType {
+    Bool,
     Ubyte,
     Byte,
     Uint,
@@ -15,6 +16,7 @@ pub enum MetakonValueType {
 impl std::fmt::Display for MetakonValueType {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
+            Self::Bool => "Bool",
             Self::Ubyte => "Ubyte",
             Self::Byte => "Byte",
             Self::Uint => "Uint",

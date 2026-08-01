@@ -183,6 +183,24 @@ impl Metakon5x3 {
             parameter.value(),
         ))
     }
+
+    pub fn pwm_positive_series(self, name: Option<String>) -> NewSeries {
+        self.new_series(
+            Metakon5x3Register::PwmPositive,
+            MetakonValueType::Bool,
+            1.0,
+            name,
+        )
+    }
+
+    pub fn pwm_negative_series(self, name: Option<String>) -> NewSeries {
+        self.new_series(
+            Metakon5x3Register::PwmNegative,
+            MetakonValueType::Bool,
+            1.0,
+            name,
+        )
+    }
 }
 
 impl Default for Metakon5x3 {

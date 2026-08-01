@@ -196,6 +196,14 @@ impl UserData for LuaMetakon5x3 {
             controller.add_series(controller.instrument.output_power_series(name))
         });
 
+        methods.add_method("add_pwm_positive", |_, controller, name: Option<String>| {
+            controller.add_series(controller.instrument.pwm_positive_series(name))
+        });
+
+        methods.add_method("add_pwm_negative", |_, controller, name: Option<String>| {
+            controller.add_series(controller.instrument.pwm_negative_series(name))
+        });
+
         methods.add_method(
             "add_proportional_band",
             |_, controller, name: Option<String>| {

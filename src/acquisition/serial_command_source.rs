@@ -125,12 +125,10 @@ impl AcquisitionSource for SerialCommandSource {
                     };
 
                     let configured_type = match value_type {
+                        MetakonValueType::Bool => RegisterDataType::Bool,
                         MetakonValueType::Ubyte => RegisterDataType::Ubyte,
-
                         MetakonValueType::Byte => RegisterDataType::Byte,
-
                         MetakonValueType::Uint => RegisterDataType::Uint,
-
                         MetakonValueType::Int => RegisterDataType::Int,
                     };
 
