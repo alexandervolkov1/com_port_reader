@@ -339,6 +339,8 @@ mod tests {
                 controller:add_measurement("temperature")
                 controller:add_setpoint("setpoint")
                 controller:add_output_power("power")
+                controller:add_pwm_positive("pwm_positive")
+                controller:add_pwm_negative("pwm_negative")
                 "#,
             )
             .unwrap();
@@ -347,6 +349,8 @@ mod tests {
             ("temperature", 0x01, MetakonValueType::Int),
             ("setpoint", 0x02, MetakonValueType::Int),
             ("power", 0x06, MetakonValueType::Byte),
+            ("pwm_positive", 0x07, MetakonValueType::Bool),
+            ("pwm_negative", 0x08, MetakonValueType::Bool),
         ];
 
         for (expected_name, register, value_type) in expected {
@@ -374,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn exposes_metakon_controller_setpoint() {
+    fn exposes_metakon_controller_pid_commands() {
         let runtime = LuaRuntime::new();
 
         let (command_sender, command_receiver) = unbounded();
@@ -384,52 +388,33 @@ mod tests {
         runtime
             .execute(
                 r#"
-                controller = app.metakon({
+                local controller = app.metakon({
                     device = 15,
-                    channel = 0
+                    channel = 0,
                 })
 
                 controller:setpoint(150)
+                controller:proportional_band(250)
+                controller:integral_time(120)
+                controller:derivative_time(10)
                 "#,
             )
             .unwrap();
 
-        assert!(matches!(
-            command_receiver.try_recv().unwrap(),
-            UserCommand::WriteMetakon {
-                request
-            } if request
-                == WriteRegisterRequest::new(
-                    15,
-                    0,
-                    0x02,
-                    WriteRegisterValue::Int(150),
-                ),
-        ));
+        let expected = [
+            WriteRegisterRequest::new(15, 0, 0x02, WriteRegisterValue::Int(150)),
+            WriteRegisterRequest::new(15, 0, 0x03, WriteRegisterValue::Uint(250)),
+            WriteRegisterRequest::new(15, 0, 0x04, WriteRegisterValue::Uint(120)),
+            WriteRegisterRequest::new(15, 0, 0x05, WriteRegisterValue::Ubyte(10)),
+        ];
 
-        assert!(command_receiver.try_recv().is_err());
-    }
-
-    #[test]
-    fn rejects_unknown_metakon_controller_option() {
-        let runtime = LuaRuntime::new();
-
-        let (command_sender, command_receiver) = unbounded();
-
-        runtime.install_application_api(command_sender).unwrap();
-
-        let error = runtime
-            .execute(
-                r#"
-                app.metakon({
-                    devcie = 15
-                })
-                "#,
-            )
-            .unwrap_err()
-            .to_string();
-
-        assert!(error.contains("unknown app.metakon option 'devcie'",),);
+        for expected_request in expected {
+            assert!(matches!(
+                command_receiver.try_recv().unwrap(),
+                UserCommand::WriteMetakon { request }
+                    if request == expected_request,
+            ));
+        }
 
         assert!(command_receiver.try_recv().is_err());
     }

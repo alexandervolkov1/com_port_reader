@@ -49,8 +49,8 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     ui.label(
         "Device model scripts implement the behaviour \
          of a virtual instrument. They communicate \
-         with the application only through the \
-         configured COM-port pair.",
+         with the application through the configured \
+         virtual COM-port pair.",
     );
 
     ui.separator();
@@ -120,15 +120,16 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     reference(
         ui,
         "app.add_serial(command)",
-        "Adds a periodically sampled serial series. \
-         A unique name is generated automatically.",
+        "Adds a periodically sampled text-command \
+         serial series. A unique name is generated \
+         automatically.",
     );
 
     reference(
         ui,
         "app.add_serial(command, name)",
-        "Adds a periodically sampled serial series \
-         with an explicit name.",
+        "Adds a periodically sampled text-command \
+         serial series with an explicit name.",
     );
 
     ui.monospace(
@@ -141,8 +142,8 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     ui.add_space(8.0);
 
     ui.label(
-        "The command must produce a response that can \
-         be parsed as one finite f64 value.",
+        "The response must be parseable as one finite \
+         f64 value.",
     );
 
     ui.label(
@@ -158,7 +159,7 @@ fn show_lua_reference(ui: &mut egui::Ui) {
         ui,
         "controller = app.metakon()",
         "Creates a Metakon 5X3 controller using the \
-         default device and channel.",
+         default device, channel and scale.",
     );
 
     reference(
@@ -178,7 +179,7 @@ fn show_lua_reference(ui: &mut egui::Ui) {
 
     ui.add_space(8.0);
 
-    ui.strong("Metakon defaults:");
+    ui.strong("Defaults:");
 
     ui.monospace(
         "device = 1\n\
@@ -189,32 +190,37 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     ui.add_space(8.0);
 
     ui.label(
-        "Assigning the controller to a global \
-         variable makes it available later from \
-         the REPL.",
+        "Assign the controller to a global variable \
+         if it must remain available from the REPL \
+         after a script finishes.",
     );
 
     ui.label(
-        "The Rust driver selects register addresses \
-         and data types. Lua code does not need to \
-         know the Metakon register map.",
+        "The Rust driver selects register addresses, \
+         data types and valid value ranges. Lua code \
+         does not need to know the register map.",
     );
 
     ui.label(
-        "Unknown option names are rejected. This \
-         prevents misspelled instrument parameters \
-         from silently using defaults.",
+        "Before the first operation on a device \
+         channel, the driver verifies that it is a \
+         Metakon 5X3 channel.",
+    );
+
+    ui.label(
+        "Unknown app.metakon option names are \
+         rejected.",
     );
 
     ui.separator();
 
-    ui.heading("Metakon acquisition series");
+    ui.heading("Primary Metakon series");
 
     reference(
         ui,
         "controller:add_measurement(name)",
-        "Adds the measured-value series. The name \
-         argument is optional.",
+        "Adds the measured-value series. The name is \
+         optional.",
     );
 
     reference(
@@ -226,9 +232,27 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     reference(
         ui,
         "controller:add_output_power(name)",
-        "Adds the current output-power series. Output \
-         power is reported from -100 to 100.",
+        "Adds the calculated output-power series. \
+         Values range from -100 to 100 percent.",
     );
+
+    ui.monospace(
+        "controller:add_measurement(\"temperature\")\n\
+         controller:add_setpoint(\"setpoint\")\n\
+         controller:add_output_power(\"power\")",
+    );
+
+    ui.add_space(8.0);
+
+    ui.label(
+        "The controller scale is applied to measured \
+         values and setpoint values before they are \
+         stored and plotted.",
+    );
+
+    ui.separator();
+
+    ui.heading("PID parameter series");
 
     reference(
         ui,
@@ -250,25 +274,114 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     );
 
     ui.monospace(
-        "controller:add_measurement(\"temperature\")\n\
-         controller:add_setpoint(\"setpoint\")\n\
-         controller:add_output_power(\"power\")\n\
-         controller:add_proportional_band(\"pid_p\")\n\
+        "controller:add_proportional_band(\"pid_p\")\n\
          controller:add_integral_time(\"pid_i\")\n\
          controller:add_derivative_time(\"pid_d\")",
+    );
+
+    ui.separator();
+
+    ui.heading("PWM output states");
+
+    reference(
+        ui,
+        "controller:add_pwm_positive(name)",
+        "Adds the positive PWM-output state series. \
+         This output normally controls the heater.",
+    );
+
+    reference(
+        ui,
+        "controller:add_pwm_negative(name)",
+        "Adds the negative PWM-output state series. \
+         This output normally controls the cooler.",
+    );
+
+    ui.monospace(
+        "controller:add_pwm_positive(\"heater_pwm\")\n\
+         controller:add_pwm_negative(\"cooler_pwm\")",
     );
 
     ui.add_space(8.0);
 
     ui.label(
-        "The controller scale is applied to the \
-         measurement and setpoint series before \
-         values are stored and plotted.",
+        "PWM states are read-only Boolean values. \
+         False is stored as 0 and true as 1.",
+    );
+
+    ui.label(
+        "They show the instantaneous state at the \
+         polling moment, not the average output \
+         power. Use add_output_power() for the \
+         calculated power value.",
     );
 
     ui.separator();
 
-    ui.heading("Metakon PID control");
+    ui.heading("Comparator series");
+
+    reference(
+        ui,
+        "controller:add_upper_setpoint(name)",
+        "Adds the upper-comparator setpoint series.",
+    );
+
+    reference(
+        ui,
+        "controller:add_upper_hysteresis(name)",
+        "Adds the upper-comparator hysteresis series.",
+    );
+
+    reference(
+        ui,
+        "controller:add_upper_output(name)",
+        "Adds the upper-comparator output-state \
+         series.",
+    );
+
+    reference(
+        ui,
+        "controller:add_lower_setpoint(name)",
+        "Adds the lower-comparator setpoint series.",
+    );
+
+    reference(
+        ui,
+        "controller:add_lower_hysteresis(name)",
+        "Adds the lower-comparator hysteresis series.",
+    );
+
+    reference(
+        ui,
+        "controller:add_lower_output(name)",
+        "Adds the lower-comparator output-state \
+         series.",
+    );
+
+    ui.monospace(
+        "controller:add_upper_setpoint(\"high\")\n\
+         controller:add_upper_hysteresis(\"high_hyst\")\n\
+         controller:add_upper_output(\"high_active\")\n\n\
+         controller:add_lower_setpoint(\"low\")\n\
+         controller:add_lower_hysteresis(\"low_hyst\")\n\
+         controller:add_lower_output(\"low_active\")",
+    );
+
+    ui.add_space(8.0);
+
+    ui.label(
+        "The controller scale is applied to comparator \
+         setpoints and hysteresis values.",
+    );
+
+    ui.label(
+        "Comparator output states are stored as 0 or \
+         1.",
+    );
+
+    ui.separator();
+
+    ui.heading("PID control");
 
     reference(
         ui,
@@ -313,10 +426,118 @@ fn show_lua_reference(ui: &mut egui::Ui) {
          writing PID parameters.",
     );
 
+    ui.separator();
+
+    ui.heading("Output-power control");
+
+    reference(
+        ui,
+        "controller:output_power(value)",
+        "Writes the output power. The value must be \
+         an integer from -100 to 100.",
+    );
+
+    ui.monospace("controller:output_power(50)");
+
+    ui.add_space(8.0);
+
     ui.label(
-        "Write commands are sent through the worker. \
-         Periodic acquisition keeps priority over \
-         interactive commands.",
+        "The instrument can change the written output \
+         power according to its operating mode and \
+         control algorithm.",
+    );
+
+    ui.label(
+        "After every write, the application reads the \
+         register back and reports the resulting \
+         value.",
+    );
+
+    ui.separator();
+
+    ui.heading("Comparator control");
+
+    reference(
+        ui,
+        "controller:upper_setpoint(value)",
+        "Changes the upper-comparator setpoint. The \
+         value must be an integer from -999 to 9999.",
+    );
+
+    reference(
+        ui,
+        "controller:upper_hysteresis(value)",
+        "Changes the upper-comparator hysteresis. The \
+         value must be an integer from 0 to 255.",
+    );
+
+    reference(
+        ui,
+        "controller:upper_output(value)",
+        "Writes the upper-comparator output state. \
+         The value must be true or false.",
+    );
+
+    reference(
+        ui,
+        "controller:lower_setpoint(value)",
+        "Changes the lower-comparator setpoint. The \
+         value must be an integer from -999 to 9999.",
+    );
+
+    reference(
+        ui,
+        "controller:lower_hysteresis(value)",
+        "Changes the lower-comparator hysteresis. The \
+         value must be an integer from 0 to 255.",
+    );
+
+    reference(
+        ui,
+        "controller:lower_output(value)",
+        "Writes the lower-comparator output state. \
+         The value must be true or false.",
+    );
+
+    ui.monospace(
+        "controller:upper_setpoint(200)\n\
+         controller:upper_hysteresis(5)\n\
+         controller:upper_output(true)\n\n\
+         controller:lower_setpoint(100)\n\
+         controller:lower_hysteresis(5)\n\
+         controller:lower_output(false)",
+    );
+
+    ui.add_space(8.0);
+
+    ui.label(
+        "The controller scale is not applied when \
+         writing comparator parameters.",
+    );
+
+    ui.label(
+        "The instrument may change a written output \
+         state according to its current algorithm.",
+    );
+
+    ui.separator();
+
+    ui.heading("Metakon write behaviour");
+
+    ui.label(
+        "Metakon write operations are queued in the \
+         acquisition worker.",
+    );
+
+    ui.label(
+        "Periodic acquisition has priority over \
+         interactive write commands.",
+    );
+
+    ui.label(
+        "The driver validates the value, writes it, \
+         reads the same parameter back and reports \
+         the actual value or an error.",
     );
 
     ui.separator();
@@ -353,7 +574,7 @@ fn show_lua_reference(ui: &mut egui::Ui) {
         ui,
         "app.send_serial(command)",
         "Sends one text command to the application \
-         COM port and writes the response to the log.",
+         COM port and writes its response to the log.",
     );
 
     ui.monospace(
@@ -365,7 +586,7 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     ui.add_space(8.0);
 
     ui.label(
-        "The application COM port and its serial-line \
+        "The application COM port and serial-line \
          settings are selected in Settings.",
     );
 
@@ -440,23 +661,21 @@ fn show_lua_reference(ui: &mut egui::Ui) {
          \x20   channel = 0,\n\
          \x20   scale = 1.0,\n\
          })\n\n\
-         controller:add_measurement(\n\
-         \x20   \"temperature\"\n\
-         )\n\n\
-         controller:add_setpoint(\n\
-         \x20   \"setpoint\"\n\
-         )\n\n\
-         controller:add_output_power(\n\
-         \x20   \"power\"\n\
-         )\n\n\
+         controller:add_measurement(\"temperature\")\n\
+         controller:add_setpoint(\"setpoint\")\n\
+         controller:add_output_power(\"power\")\n\n\
+         controller:add_proportional_band(\"pid_p\")\n\
+         controller:add_integral_time(\"pid_i\")\n\
+         controller:add_derivative_time(\"pid_d\")\n\n\
          app.start()",
     );
 
     ui.add_space(8.0);
 
     ui.label(
-        "Because controller is global in this example, \
-         it can later be used from the REPL:",
+        "Because controller is global in this \
+         example, it remains available from the \
+         REPL:",
     );
 
     ui.monospace("controller:setpoint(150)");
@@ -498,10 +717,10 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     ui.add_space(8.0);
 
     ui.label(
-        "The emulator reloads the selected model \
-         only when it starts. Script state is \
-         preserved between commands while the \
-         emulator remains running.",
+        "The emulator reloads the selected model only \
+         when it starts. Script state is preserved \
+         between commands while the emulator remains \
+         running.",
     );
 
     ui.separator();
@@ -510,8 +729,8 @@ fn show_lua_reference(ui: &mut egui::Ui) {
 
     ui.label(
         "One Lua execution is limited to 500 ms. \
-         Infinite loops and blocking process logic \
-         are interrupted and reported in the REPL.",
+         Infinite loops and blocking Lua code are \
+         interrupted and reported in the REPL.",
     );
 
     ui.label(

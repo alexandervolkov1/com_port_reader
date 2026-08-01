@@ -3,8 +3,7 @@
 ---@class Metakon5x3Options
 ---@field device? integer Device address from 0 to 255. Default: 1.
 ---@field channel? integer Device channel from 0 to 255. Default: 0.
----@field scale? number Multiplier applied to measurement and setpoint series. Default: 1.0.
-
+---@field scale? number Multiplier applied to measurement, setpoint and comparator threshold series. Default: 1.0.
 ---@class Metakon5x3
 local Metakon5x3 = {}
 
