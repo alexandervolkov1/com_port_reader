@@ -420,6 +420,30 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unknown_metakon_controller_option() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        let error = runtime
+            .execute(
+                r#"
+                app.metakon({
+                    devcie = 15
+                })
+                "#,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("unknown app.metakon option 'devcie'",),);
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
     fn exposes_metakon_controller_parameter_series() {
         let runtime = LuaRuntime::new();
 

@@ -12,9 +12,8 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use crate::{
     acquisition::{AcquisitionError, AcquisitionSource},
     data::{Series, SeriesSample, SeriesStore},
-    protocol::metakon::{
-        ReadRegisterRequest, RegisterValue, WriteRegisterRequest, read_register, write_register,
-    },
+    instrument::metakon_5x3::{Metakon5x3, Metakon5x3Write},
+    protocol::metakon::{RegisterValue, WriteRegisterRequest},
     sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError},
     serial_connection::SerialConnectionError,
     utils::current_time_f64,
@@ -563,29 +562,37 @@ fn write_and_verify_metakon(
     config: &crate::serial_connection::SerialPortConfig,
     request: WriteRegisterRequest,
 ) -> Result<RegisterValue, AcquisitionError> {
+    let instrument = Metakon5x3::new(request.device(), request.channel());
+
+    let parameter =
+        Metakon5x3Write::try_from((request.register(), request.value())).map_err(|error| {
+            AcquisitionError::from(format!(
+                "Cannot write Metakon 5X3 register: \
+             {error}",
+            ))
+        })?;
+
     let port_name = config.port_name();
 
     let mut connection = config.open().map_err(|error| {
         AcquisitionError::from(format!(
             "Failed to open COM port \
-                 '{port_name}': {error}",
+             '{port_name}': {error}",
         ))
     })?;
 
-    write_register(&mut connection, request).map_err(|error| {
-        AcquisitionError::from(format!(
-            "Metakon register write failed: \
-                 {error}",
-        ))
-    })?;
+    instrument
+        .verify_channel_type(&mut connection)
+        .map_err(|error| {
+            AcquisitionError::from(format!(
+                "Metakon device {}, channel {} is not \
+                 a Metakon 5X3 channel: {error}",
+                request.device(),
+                request.channel(),
+            ))
+        })?;
 
-    let read_request =
-        ReadRegisterRequest::new(request.device(), request.channel(), request.register());
-
-    read_register(&mut connection, read_request, request.value().data_type()).map_err(|error| {
-        AcquisitionError::from(format!(
-            "Metakon register was written, but \
-             verification read failed: {error}",
-        ))
-    })
+    instrument
+        .write(&mut connection, parameter)
+        .map_err(|error| AcquisitionError::from(error.to_string()))
 }
