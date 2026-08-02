@@ -1,4 +1,9 @@
-use crate::{data::NewSeries, protocol::metakon::WriteRegisterRequest};
+use crossbeam_channel::Sender;
+
+use crate::{
+    acquisition::InstrumentReadResult, data::NewSeries, instrument::InstrumentReadRequest,
+    protocol::metakon::WriteRegisterRequest,
+};
 
 #[derive(Debug)]
 pub enum UserCommand {
@@ -28,6 +33,12 @@ pub enum UserCommand {
     SendSerial {
         command: String,
     },
+
+    ReadInstrument {
+        request: InstrumentReadRequest,
+        response_sender: Sender<InstrumentReadResult>,
+    },
+
     WriteMetakon {
         request: WriteRegisterRequest,
     },

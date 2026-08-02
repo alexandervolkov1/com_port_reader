@@ -221,6 +221,77 @@ fn show_lua_reference(ui: &mut egui::Ui) {
 
     ui.separator();
 
+    ui.heading("Generic Metakon parameters");
+
+    reference(
+        ui,
+        "controller:add(parameter)",
+        "Adds a periodically sampled instrument \
+         parameter with an automatically generated \
+         series name.",
+    );
+
+    reference(
+        ui,
+        "controller:add(parameter, name)",
+        "Adds a periodically sampled instrument \
+         parameter with an explicit series name.",
+    );
+
+    reference(
+        ui,
+        "controller:read(parameter)",
+        "Reads one instrument parameter immediately \
+         and returns a number or Boolean value to \
+         Lua. The result or communication error is \
+         also written to the application log.",
+    );
+
+    ui.monospace(
+        "controller:add(\"measurement\", \"temperature\")\n\
+         controller:add(\"setpoint\", \"setpoint\")\n\
+         controller:add(\"output_power\", \"power\")",
+    );
+
+    ui.add_space(8.0);
+
+    ui.monospace(
+        "local temperature = \
+         controller:read(\"measurement\")\n\
+         local heater_on = \
+         controller:read(\"pwm_positive\")",
+    );
+
+    ui.add_space(8.0);
+
+    ui.label(
+        "Parameter names are stable Lua identifiers. \
+         Register addresses and wire data types remain \
+         inside the Rust driver.",
+    );
+
+    ui.label(
+        "Available parameters: channel_type, \
+         measurement, setpoint, proportional_band, \
+         integral_time, derivative_time, output_power, \
+         pwm_positive, pwm_negative, upper_setpoint, \
+         upper_hysteresis, upper_output, lower_setpoint, \
+         lower_hysteresis and lower_output.",
+    );
+
+    ui.label(
+        "Periodic acquisition has priority over an \
+         immediate read request.",
+    );
+
+    ui.label(
+        "When acquisition is stopped, an immediate \
+         read opens the selected COM port temporarily \
+         and closes it after the operation.",
+    );
+
+    ui.separator();
+
     ui.heading("Primary Metakon series");
 
     reference(
@@ -254,7 +325,7 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     ui.label(
         "The controller scale is applied to measured \
          values and setpoint values before they are \
-         stored and plotted.",
+         returned or stored.",
     );
 
     ui.separator();
@@ -529,22 +600,22 @@ fn show_lua_reference(ui: &mut egui::Ui) {
 
     ui.separator();
 
-    ui.heading("Metakon write behaviour");
+    ui.heading("Metakon command scheduling");
 
     ui.label(
-        "Metakon write operations are queued in the \
-         acquisition worker.",
+        "Metakon read and write operations are queued \
+         in the acquisition worker.",
     );
 
     ui.label(
         "Periodic acquisition has priority over \
-         interactive write commands.",
+         interactive read and write commands.",
     );
 
     ui.label(
-        "The driver validates the value, writes it, \
-         reads the same parameter back and reports \
-         the actual value or an error.",
+        "After every write, the driver reads the same \
+         parameter back and reports its actual value \
+         or an error.",
     );
 
     ui.separator();
@@ -668,12 +739,12 @@ fn show_lua_reference(ui: &mut egui::Ui) {
          \x20   channel = 0,\n\
          \x20   scale = 1.0,\n\
          })\n\n\
-         controller:add_measurement(\"temperature\")\n\
-         controller:add_setpoint(\"setpoint\")\n\
-         controller:add_output_power(\"power\")\n\n\
-         controller:add_proportional_band(\"pid_p\")\n\
-         controller:add_integral_time(\"pid_i\")\n\
-         controller:add_derivative_time(\"pid_d\")\n\n\
+         controller:add(\"measurement\", \"temperature\")\n\
+         controller:add(\"setpoint\", \"setpoint\")\n\
+         controller:add(\"output_power\", \"power\")\n\n\
+         controller:add(\"proportional_band\", \"pid_p\")\n\
+         controller:add(\"integral_time\", \"pid_i\")\n\
+         controller:add(\"derivative_time\", \"pid_d\")\n\n\
          app.start()",
     );
 
@@ -685,7 +756,10 @@ fn show_lua_reference(ui: &mut egui::Ui) {
          REPL:",
     );
 
-    ui.monospace("controller:setpoint(150)");
+    ui.monospace(
+        "controller:read(\"measurement\")\n\
+         controller:setpoint(150)",
+    );
 
     ui.separator();
 
@@ -735,9 +809,10 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     ui.heading("Execution limits");
 
     ui.label(
-        "One Lua execution is limited to 500 ms. \
-         Infinite loops and blocking Lua code are \
-         interrupted and reported in the REPL.",
+        "One Lua execution is normally limited to \
+         500 ms. Instrument reads may additionally \
+         wait for their configured communication \
+         timeout.",
     );
 
     ui.label(

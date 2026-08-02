@@ -1,9 +1,14 @@
-use crossbeam_channel::Sender;
 use std::{error::Error, fmt, path::PathBuf, time::Duration};
 
-use crate::data::{NewSeries, SeriesId};
-use crate::protocol::metakon::WriteRegisterRequest;
-use crate::serial_connection::SerialPortConfig;
+use crossbeam_channel::Sender;
+
+use crate::{
+    acquisition::InstrumentReadResult,
+    data::{NewSeries, SeriesId},
+    instrument::InstrumentReadRequest,
+    protocol::metakon::WriteRegisterRequest,
+    serial_connection::SerialPortConfig,
+};
 
 use super::command::WorkerCommand;
 
@@ -86,6 +91,19 @@ impl WorkerHandle {
         command: String,
     ) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::SendSerialText { config, command })
+    }
+
+    pub fn read_instrument(
+        &self,
+        port_name: String,
+        request: InstrumentReadRequest,
+        response_sender: Sender<InstrumentReadResult>,
+    ) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::ReadInstrument {
+            port_name,
+            request,
+            response_sender,
+        })
     }
 
     pub fn write_metakon(

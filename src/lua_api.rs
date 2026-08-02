@@ -1,14 +1,18 @@
-use crossbeam_channel::Sender;
-use mlua::{Lua, Table, UserData, UserDataMethods};
+use std::time::Duration;
+
+use crossbeam_channel::{RecvTimeoutError, Sender, bounded};
+use mlua::{Lua, Table, UserData, UserDataMethods, Value};
 
 use crate::{
     data::{DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, NewSeries},
     instrument::{
-        InstrumentReadRequest,
+        InstrumentReadRequest, InstrumentValue,
         metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
     },
     user_command::UserCommand,
 };
+
+const INSTRUMENT_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<()> {
     let app = lua.create_table()?;
@@ -155,6 +159,7 @@ fn validate_metakon_controller_options(options: &Table) -> mlua::Result<()> {
 }
 
 #[derive(Clone)]
+
 struct LuaMetakon5x3 {
     instrument: Metakon5x3,
     scale: f64,
@@ -191,6 +196,67 @@ impl LuaMetakon5x3 {
 
         send_application_command(&self.command_sender, UserCommand::WriteMetakon { request })
     }
+
+    fn parameter_scale(&self, parameter: Metakon5x3Register) -> f64 {
+        match parameter {
+            Metakon5x3Register::Measurement
+            | Metakon5x3Register::Setpoint
+            | Metakon5x3Register::UpperSetpoint
+            | Metakon5x3Register::UpperHysteresis
+            | Metakon5x3Register::LowerSetpoint
+            | Metakon5x3Register::LowerHysteresis => self.scale,
+
+            Metakon5x3Register::ChannelType
+            | Metakon5x3Register::ProportionalBand
+            | Metakon5x3Register::IntegralTime
+            | Metakon5x3Register::DerivativeTime
+            | Metakon5x3Register::OutputPower
+            | Metakon5x3Register::PwmPositive
+            | Metakon5x3Register::PwmNegative
+            | Metakon5x3Register::UpperOutput
+            | Metakon5x3Register::LowerOutput => 1.0,
+        }
+    }
+
+    fn read_parameter(&self, parameter: Metakon5x3Register) -> mlua::Result<InstrumentValue> {
+        let scale = self.parameter_scale(parameter);
+
+        let request = InstrumentReadRequest::metakon_5x3(self.instrument, parameter, scale);
+
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::ReadInstrument {
+                request,
+                response_sender,
+            },
+        )?;
+
+        match response_receiver.recv_timeout(INSTRUMENT_READ_TIMEOUT) {
+            Ok(Ok(value)) => Ok(value),
+
+            Ok(Err(error)) => Err(mlua::Error::RuntimeError(format!(
+                "Instrument read failed: {error}",
+            ))),
+
+            Err(RecvTimeoutError::Timeout) => Err(mlua::Error::RuntimeError(
+                "Timed out waiting for instrument read".to_owned(),
+            )),
+
+            Err(RecvTimeoutError::Disconnected) => Err(mlua::Error::RuntimeError(
+                "Instrument read response channel \
+                     is disconnected"
+                    .to_owned(),
+            )),
+        }
+    }
+}
+
+fn metakon_parameter_from_key(key: &str) -> mlua::Result<Metakon5x3Register> {
+    Metakon5x3Register::from_key(key).ok_or_else(|| {
+        mlua::Error::RuntimeError(format!("Unknown Metakon 5X3 parameter: '{key}'",))
+    })
 }
 
 impl UserData for LuaMetakon5x3 {
@@ -198,6 +264,27 @@ impl UserData for LuaMetakon5x3 {
     where
         M: UserDataMethods<Self>,
     {
+        methods.add_method(
+            "add",
+            |_, controller, (parameter_key, name): (String, Option<String>)| {
+                let parameter = metakon_parameter_from_key(&parameter_key)?;
+
+                let scale = controller.parameter_scale(parameter);
+
+                controller.add_parameter_series(parameter, scale, name)
+            },
+        );
+
+        methods.add_method("read", |_, controller, parameter_key: String| {
+            let parameter = metakon_parameter_from_key(&parameter_key)?;
+
+            match controller.read_parameter(parameter)? {
+                InstrumentValue::Boolean(value) => Ok(Value::Boolean(value)),
+
+                InstrumentValue::Number(value) => Ok(Value::Number(value)),
+            }
+        });
+
         methods.add_method("add_measurement", |_, controller, name: Option<String>| {
             controller.add_parameter_series(Metakon5x3Register::Measurement, controller.scale, name)
         });

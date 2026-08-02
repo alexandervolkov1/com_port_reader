@@ -37,6 +37,7 @@ impl ParameterRange {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ParameterDescriptor {
+    pub key: &'static str,
     pub name: &'static str,
     pub access: ParameterAccess,
     pub value_type: ParameterValueType,

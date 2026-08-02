@@ -37,6 +37,8 @@ impl From<&str> for AcquisitionError {
     }
 }
 
+pub type InstrumentReadResult = Result<InstrumentValue, AcquisitionError>;
+
 pub trait AcquisitionSource: Send {
     fn start(&mut self) -> Result<(), AcquisitionError> {
         Ok(())

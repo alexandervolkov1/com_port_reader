@@ -139,23 +139,51 @@ pub enum Metakon5x3Register {
 }
 
 impl Metakon5x3Register {
+    pub const ALL: [Self; 15] = [
+        Self::ChannelType,
+        Self::Measurement,
+        Self::Setpoint,
+        Self::ProportionalBand,
+        Self::IntegralTime,
+        Self::DerivativeTime,
+        Self::OutputPower,
+        Self::PwmPositive,
+        Self::PwmNegative,
+        Self::UpperSetpoint,
+        Self::UpperHysteresis,
+        Self::UpperOutput,
+        Self::LowerSetpoint,
+        Self::LowerHysteresis,
+        Self::LowerOutput,
+    ];
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|register| register.descriptor().key == key)
+    }
+
     pub const fn descriptor(self) -> ParameterDescriptor {
         match self {
             Self::ChannelType => ParameterDescriptor {
+                key: "channel_type",
                 name: "channel type",
                 access: ParameterAccess::ReadOnly,
                 value_type: ParameterValueType::Unsigned8,
-                range: ParameterRange::new(3, 3),
+                range: ParameterRange::new(0, 255),
             },
 
             Self::Measurement => ParameterDescriptor {
+                key: "measurement",
                 name: "measurement",
                 access: ParameterAccess::ReadOnly,
                 value_type: ParameterValueType::Signed16,
-                range: ParameterRange::new(-999, 9_999),
+                // -32768 is reserved as the measurement-alarm value.
+                range: ParameterRange::new(-32_767, 32_767),
             },
 
             Self::Setpoint => ParameterDescriptor {
+                key: "setpoint",
                 name: "setpoint",
                 access: ParameterAccess::ReadWrite,
                 value_type: ParameterValueType::Signed16,
@@ -163,6 +191,7 @@ impl Metakon5x3Register {
             },
 
             Self::ProportionalBand => ParameterDescriptor {
+                key: "proportional_band",
                 name: "proportional band",
                 access: ParameterAccess::ReadWrite,
                 value_type: ParameterValueType::Unsigned16,
@@ -170,6 +199,7 @@ impl Metakon5x3Register {
             },
 
             Self::IntegralTime => ParameterDescriptor {
+                key: "integral_time",
                 name: "integral time",
                 access: ParameterAccess::ReadWrite,
                 value_type: ParameterValueType::Unsigned16,
@@ -177,6 +207,7 @@ impl Metakon5x3Register {
             },
 
             Self::DerivativeTime => ParameterDescriptor {
+                key: "derivative_time",
                 name: "derivative time",
                 access: ParameterAccess::ReadWrite,
                 value_type: ParameterValueType::Unsigned8,
@@ -184,6 +215,7 @@ impl Metakon5x3Register {
             },
 
             Self::OutputPower => ParameterDescriptor {
+                key: "output_power",
                 name: "output power",
                 access: ParameterAccess::ReadWrite,
                 value_type: ParameterValueType::Signed8,
@@ -191,6 +223,7 @@ impl Metakon5x3Register {
             },
 
             Self::PwmPositive => ParameterDescriptor {
+                key: "pwm_positive",
                 name: "PWM positive output",
                 access: ParameterAccess::ReadOnly,
                 value_type: ParameterValueType::Boolean,
@@ -198,6 +231,7 @@ impl Metakon5x3Register {
             },
 
             Self::PwmNegative => ParameterDescriptor {
+                key: "pwm_negative",
                 name: "PWM negative output",
                 access: ParameterAccess::ReadOnly,
                 value_type: ParameterValueType::Boolean,
@@ -205,6 +239,7 @@ impl Metakon5x3Register {
             },
 
             Self::UpperSetpoint => ParameterDescriptor {
+                key: "upper_setpoint",
                 name: "upper setpoint",
                 access: ParameterAccess::ReadWrite,
                 value_type: ParameterValueType::Signed16,
@@ -212,6 +247,7 @@ impl Metakon5x3Register {
             },
 
             Self::UpperHysteresis => ParameterDescriptor {
+                key: "upper_hysteresis",
                 name: "upper hysteresis",
                 access: ParameterAccess::ReadWrite,
                 value_type: ParameterValueType::Unsigned8,
@@ -219,6 +255,7 @@ impl Metakon5x3Register {
             },
 
             Self::UpperOutput => ParameterDescriptor {
+                key: "upper_output",
                 name: "upper output",
                 access: ParameterAccess::ReadWrite,
                 value_type: ParameterValueType::Boolean,
@@ -226,6 +263,7 @@ impl Metakon5x3Register {
             },
 
             Self::LowerSetpoint => ParameterDescriptor {
+                key: "lower_setpoint",
                 name: "lower setpoint",
                 access: ParameterAccess::ReadWrite,
                 value_type: ParameterValueType::Signed16,
@@ -233,6 +271,7 @@ impl Metakon5x3Register {
             },
 
             Self::LowerHysteresis => ParameterDescriptor {
+                key: "lower_hysteresis",
                 name: "lower hysteresis",
                 access: ParameterAccess::ReadWrite,
                 value_type: ParameterValueType::Unsigned8,
@@ -240,6 +279,7 @@ impl Metakon5x3Register {
             },
 
             Self::LowerOutput => ParameterDescriptor {
+                key: "lower_output",
                 name: "lower output",
                 access: ParameterAccess::ReadWrite,
                 value_type: ParameterValueType::Boolean,
@@ -1010,5 +1050,36 @@ mod tests {
             result,
             Err(Metakon5x3WriteConversionError::InvalidValue(_)),
         ));
+    }
+
+    #[test]
+    fn resolves_registers_by_stable_parameter_key() {
+        let cases = [
+            ("channel_type", Metakon5x3Register::ChannelType),
+            ("measurement", Metakon5x3Register::Measurement),
+            ("setpoint", Metakon5x3Register::Setpoint),
+            ("proportional_band", Metakon5x3Register::ProportionalBand),
+            ("integral_time", Metakon5x3Register::IntegralTime),
+            ("derivative_time", Metakon5x3Register::DerivativeTime),
+            ("output_power", Metakon5x3Register::OutputPower),
+            ("pwm_positive", Metakon5x3Register::PwmPositive),
+            ("pwm_negative", Metakon5x3Register::PwmNegative),
+            ("upper_setpoint", Metakon5x3Register::UpperSetpoint),
+            ("upper_hysteresis", Metakon5x3Register::UpperHysteresis),
+            ("upper_output", Metakon5x3Register::UpperOutput),
+            ("lower_setpoint", Metakon5x3Register::LowerSetpoint),
+            ("lower_hysteresis", Metakon5x3Register::LowerHysteresis),
+            ("lower_output", Metakon5x3Register::LowerOutput),
+        ];
+
+        for (key, expected) in cases {
+            assert_eq!(Metakon5x3Register::from_key(key), Some(expected));
+            assert_eq!(expected.descriptor().key, key);
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_parameter_key() {
+        assert_eq!(Metakon5x3Register::from_key("unknown"), None);
     }
 }

@@ -1,6 +1,7 @@
 use crossbeam_channel::Receiver;
 
 use crate::{
+    acquisition::AcquisitionError,
     app_log::LogHandle,
     components::{
         controls_model::ControlsModel, device_emulator_model::DeviceEmulatorModel,
@@ -119,6 +120,41 @@ impl CommandModel {
                 }
             }
 
+            UserCommand::ReadInstrument {
+                request,
+                response_sender,
+            } => {
+                let Some(config) = serial_settings.serial_config() else {
+                    let error = AcquisitionError::from(
+                        "Cannot read instrument: select a COM \
+                         port in Settings",
+                    );
+
+                    self.log.error(error.to_string());
+
+                    let _ = response_sender.send(Err(error));
+
+                    return;
+                };
+
+                let send_result = self.worker_handle.read_instrument(
+                    config.port_name().to_owned(),
+                    request,
+                    response_sender.clone(),
+                );
+
+                if let Err(send_error) = send_result {
+                    let error = AcquisitionError::from(format!(
+                        "Failed to request instrument read: \
+                         {send_error}",
+                    ));
+
+                    self.log.error(error.to_string());
+
+                    let _ = response_sender.send(Err(error));
+                }
+            }
+
             UserCommand::WriteMetakon { request } => {
                 let Some(config) = serial_settings.serial_config() else {
                     self.log.error(
@@ -171,6 +207,7 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
             | WorkerEvent::SampleSinkFailed(_)
             | WorkerEvent::SerialPortTestFailed { .. }
             | WorkerEvent::SerialTextCommandFailed { .. }
+            | WorkerEvent::InstrumentReadFailed { .. }
             | WorkerEvent::MetakonWriteFailed { .. }
     )
 }

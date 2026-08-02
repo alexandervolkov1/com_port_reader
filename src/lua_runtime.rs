@@ -59,7 +59,7 @@ mod tests {
     use crate::{
         data::SeriesSource,
         instrument::{
-            InstrumentReadRequest,
+            InstrumentReadRequest, InstrumentValue,
             metakon_5x3::{Metakon5x3, Metakon5x3Register},
         },
         protocol::metakon::{WriteRegisterRequest, WriteRegisterValue},
@@ -708,5 +708,163 @@ mod tests {
         ));
 
         assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn adds_metakon_series_by_parameter_key() {
+        let runtime = LuaRuntime::new();
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                    local controller = app.metakon({
+                        device = 15,
+                        channel = 2,
+                        scale = 0.1,
+                    })
+
+                    controller:add(
+                        "measurement",
+                        "temperature"
+                    )
+                "#,
+            )
+            .unwrap();
+
+        let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+            panic!("expected Add command");
+        };
+
+        let (source, name) = new_series.into_source_parts();
+
+        assert_eq!(name.as_deref(), Some("temperature"));
+
+        assert_eq!(
+            source,
+            metakon_source(15, 2, Metakon5x3Register::Measurement, 0.1,),
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_metakon_parameter_key() {
+        let runtime = LuaRuntime::new();
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        let error = runtime
+            .execute(
+                r#"
+                    local controller = app.metakon()
+                    controller:add("unknown")
+                "#,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("Unknown Metakon 5X3 parameter: 'unknown'",),);
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn reads_metakon_parameter_from_lua() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                    controller = app.metakon({
+                        device = 15,
+                        channel = 2,
+                        scale = 0.1,
+                    })
+                "#,
+            )
+            .unwrap();
+
+        let responder = std::thread::spawn(move || {
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::ReadInstrument {
+                request,
+                response_sender,
+            } = command
+            else {
+                panic!("expected instrument read command");
+            };
+
+            assert_eq!(
+                request,
+                InstrumentReadRequest::metakon_5x3(
+                    Metakon5x3::new(15, 2),
+                    Metakon5x3Register::Measurement,
+                    0.1,
+                ),
+            );
+
+            response_sender
+                .send(Ok(InstrumentValue::Number(123.5)))
+                .unwrap();
+        });
+
+        let output = runtime
+            .evaluate_for_repl(r#"controller:read("measurement")"#)
+            .unwrap();
+
+        responder.join().unwrap();
+
+        assert_eq!(output, vec!["123.5"]);
+    }
+
+    #[test]
+    fn returns_boolean_instrument_value_to_lua() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime.execute("controller = app.metakon()").unwrap();
+
+        let responder = std::thread::spawn(move || {
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::ReadInstrument {
+                request,
+                response_sender,
+            } = command
+            else {
+                panic!("expected instrument read command");
+            };
+
+            assert_eq!(
+                request,
+                InstrumentReadRequest::metakon_5x3(
+                    Metakon5x3::default(),
+                    Metakon5x3Register::PwmPositive,
+                    1.0,
+                ),
+            );
+
+            response_sender
+                .send(Ok(InstrumentValue::Boolean(true)))
+                .unwrap();
+        });
+
+        let output = runtime
+            .evaluate_for_repl(r#"controller:read("pwm_positive")"#)
+            .unwrap();
+
+        responder.join().unwrap();
+
+        assert_eq!(output, vec!["true"]);
     }
 }

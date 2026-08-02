@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::instrument::{InstrumentReadRequest, InstrumentValue};
 use crate::protocol::metakon::{RegisterValue, WriteRegisterRequest};
 use crate::serial_connection::SerialConnectionError;
 use crate::{
@@ -45,6 +46,19 @@ pub enum WorkerEvent {
         command: String,
         error: SerialConnectionError,
     },
+
+    InstrumentReadSucceeded {
+        port_name: String,
+        request: InstrumentReadRequest,
+        value: InstrumentValue,
+    },
+
+    InstrumentReadFailed {
+        port_name: String,
+        request: InstrumentReadRequest,
+        error: AcquisitionError,
+    },
+
     MetakonWriteSucceeded {
         port_name: String,
         request: WriteRegisterRequest,
@@ -145,6 +159,30 @@ impl std::fmt::Display for WorkerEvent {
                     formatter,
                     "COM port '{port_name}': command \
                      '{command}' failed: {error}",
+                )
+            }
+
+            Self::InstrumentReadSucceeded {
+                port_name,
+                request,
+                value,
+            } => {
+                write!(
+                    formatter,
+                    "COM port '{port_name}': {request} returned \
+                     {value}.",
+                )
+            }
+
+            Self::InstrumentReadFailed {
+                port_name,
+                request,
+                error,
+            } => {
+                write!(
+                    formatter,
+                    "COM port '{port_name}': failed to read \
+                     {request}: {error}",
                 )
             }
 

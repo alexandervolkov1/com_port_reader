@@ -4,8 +4,40 @@
 ---@field device? integer Device address from 0 to 255. Default: 1.
 ---@field channel? integer Device channel from 0 to 255. Default: 0.
 ---@field scale? number Multiplier applied to measurement, setpoint and comparator threshold series. Default: 1.0.
+
+---@alias Metakon5x3Parameter
+---| '"channel_type"'
+---| '"measurement"'
+---| '"setpoint"'
+---| '"proportional_band"'
+---| '"integral_time"'
+---| '"derivative_time"'
+---| '"output_power"'
+---| '"pwm_positive"'
+---| '"pwm_negative"'
+---| '"upper_setpoint"'
+---| '"upper_hysteresis"'
+---| '"upper_output"'
+---| '"lower_setpoint"'
+---| '"lower_hysteresis"'
+---| '"lower_output"'
+
 ---@class Metakon5x3
 local Metakon5x3 = {}
+
+---Adds a periodically sampled instrument parameter.
+---@param parameter Metakon5x3Parameter
+---@param name? string Optional unique series name.
+function Metakon5x3:add(parameter, name) end
+
+---Reads one instrument parameter immediately.
+---
+---The operation is queued behind any periodic acquisition
+---that is currently due. The result or communication error
+---is also written to the application log.
+---@param parameter Metakon5x3Parameter
+---@return number|boolean
+function Metakon5x3:read(parameter) end
 
 ---Adds the measured-value series to periodic acquisition.
 ---@param name? string Optional unique series name.
@@ -33,44 +65,44 @@ function Metakon5x3:add_pwm_positive(name) end
 ---@param name? string Optional unique series name.
 function Metakon5x3:add_pwm_negative(name) end
 
----Adds the upper-alarm setpoint series.
+---Adds the upper-comparator setpoint series.
 ---@param name? string Optional unique series name.
 function Metakon5x3:add_upper_setpoint(name) end
 
----Adds the upper-alarm hysteresis series.
+---Adds the upper-comparator hysteresis series.
 ---@param name? string Optional unique series name.
 function Metakon5x3:add_upper_hysteresis(name) end
 
----Adds the upper-alarm output-state series.
+---Adds the upper-comparator output-state series.
 ---
 ---The series contains 0 for false and 1 for true.
 ---@param name? string Optional unique series name.
 function Metakon5x3:add_upper_output(name) end
 
----Adds the lower-alarm setpoint series.
+---Adds the lower-comparator setpoint series.
 ---@param name? string Optional unique series name.
 function Metakon5x3:add_lower_setpoint(name) end
 
----Adds the lower-alarm hysteresis series.
+---Adds the lower-comparator hysteresis series.
 ---@param name? string Optional unique series name.
 function Metakon5x3:add_lower_hysteresis(name) end
 
----Adds the lower-alarm output-state series.
+---Adds the lower-comparator output-state series.
 ---
 ---The series contains 0 for false and 1 for true.
 ---@param name? string Optional unique series name.
 function Metakon5x3:add_lower_output(name) end
 
 ---Adds the PID proportional-band series.
----@param name? string
+---@param name? string Optional unique series name.
 function Metakon5x3:add_proportional_band(name) end
 
 ---Adds the PID integral-time series.
----@param name? string
+---@param name? string Optional unique series name.
 function Metakon5x3:add_integral_time(name) end
 
 ---Adds the PID derivative-time series.
----@param name? string
+---@param name? string Optional unique series name.
 function Metakon5x3:add_derivative_time(name) end
 
 ---Changes the output power.
@@ -164,6 +196,10 @@ function app.stop() end
 ---Removes all series and their accumulated samples.
 function app.clear() end
 
+---Writes an informational message to the application log.
+---@param message string
+function app.log(message) end
+
 ---Starts CSV recording and creates a new protocol file.
 function app.start_rec() end
 
@@ -175,10 +211,6 @@ function app.start_emu() end
 
 ---Stops the running device emulator.
 function app.stop_emu() end
-
----Writes an informational message to the application log.
----@param message string
-function app.log(message) end
 
 ---Adds a periodically sampled text-command serial series.
 ---

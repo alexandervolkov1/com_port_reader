@@ -1,8 +1,14 @@
 use std::{path::PathBuf, time::Duration};
 
-use crate::data::{NewSeries, SeriesId};
-use crate::protocol::metakon::WriteRegisterRequest;
-use crate::serial_connection::SerialPortConfig;
+use crossbeam_channel::Sender;
+
+use crate::{
+    acquisition::InstrumentReadResult,
+    data::{NewSeries, SeriesId},
+    instrument::InstrumentReadRequest,
+    protocol::metakon::WriteRegisterRequest,
+    serial_connection::SerialPortConfig,
+};
 
 pub enum WorkerCommand {
     Start,
@@ -28,6 +34,13 @@ pub enum WorkerCommand {
         config: SerialPortConfig,
         command: String,
     },
+
+    ReadInstrument {
+        port_name: String,
+        request: InstrumentReadRequest,
+        response_sender: Sender<InstrumentReadResult>,
+    },
+
     WriteMetakon {
         config: SerialPortConfig,
         request: WriteRegisterRequest,

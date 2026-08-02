@@ -10,9 +10,12 @@ use std::{
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 
 use crate::{
-    acquisition::{AcquisitionError, AcquisitionSource},
+    acquisition::{AcquisitionError, AcquisitionSource, InstrumentReadResult},
     data::{Series, SeriesSample, SeriesStore},
-    instrument::metakon_5x3::{Metakon5x3, Metakon5x3Write},
+    instrument::{
+        InstrumentReadRequest,
+        metakon_5x3::{Metakon5x3, Metakon5x3Write},
+    },
     protocol::metakon::{RegisterValue, WriteRegisterRequest},
     sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError},
     serial_connection::SerialConnectionError,
@@ -416,6 +419,48 @@ impl Worker {
                         let _ = event_sender.send(event);
                     }
 
+                    Ok(WorkerCommand::ReadInstrument {
+                        port_name,
+                        request,
+                        response_sender,
+                    }) => {
+                        let acquisition_running =
+                            matches!(&state, AcquisitionState::Running { .. });
+
+                        let mut result = read_instrument_from_source(source.as_mut(), request);
+
+                        // A one-shot read performed while acquisition is
+                        // stopped must not leave the COM port open.
+                        if !acquisition_running && let Err(stop_error) = source.stop() {
+                            result = match result {
+                                Ok(_) => Err(stop_error),
+
+                                Err(error) => Err(format!(
+                                    "{error}; additionally failed to close \
+                                     the instrument source: {stop_error}",
+                                )
+                                .into()),
+                            };
+                        }
+
+                        let event = match &result {
+                            Ok(value) => WorkerEvent::InstrumentReadSucceeded {
+                                port_name,
+                                request,
+                                value: *value,
+                            },
+
+                            Err(error) => WorkerEvent::InstrumentReadFailed {
+                                port_name,
+                                request,
+                                error: error.clone(),
+                            },
+                        };
+
+                        let _ = event_sender.send(event);
+                        let _ = response_sender.send(result);
+                    }
+
                     Ok(WorkerCommand::WriteMetakon { config, request }) => {
                         let port_name = config.port_name().to_owned();
 
@@ -529,6 +574,18 @@ fn append_series_samples(
     }
 
     Ok(())
+}
+
+fn read_instrument_from_source(
+    source: &mut dyn AcquisitionSource,
+    request: InstrumentReadRequest,
+) -> InstrumentReadResult {
+    source.read_instrument(request)?.ok_or_else(|| {
+        AcquisitionError::from(
+            "No acquisition source supports \
+             instrument reads",
+        )
+    })
 }
 
 fn request_text_from_active_source(
