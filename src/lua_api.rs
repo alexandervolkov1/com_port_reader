@@ -2,8 +2,14 @@ use crossbeam_channel::Sender;
 use mlua::{Lua, Table, UserData, UserDataMethods};
 
 use crate::{
-    data::{DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, NewSeries},
-    instrument::metakon_5x3::{Metakon5x3, Metakon5x3Write},
+    data::{
+        DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, MetakonValueType,
+        NewSeries,
+    },
+    instrument::{
+        ParameterValueType,
+        metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
+    },
     user_command::UserCommand,
 };
 
@@ -161,6 +167,46 @@ impl LuaMetakon5x3 {
         send_application_command(&self.command_sender, UserCommand::Add(new_series))
     }
 
+    fn add_parameter_series(
+        &self,
+        parameter: Metakon5x3Register,
+        scale: f64,
+        name: Option<String>,
+    ) -> mlua::Result<()> {
+        let value_type = match parameter.descriptor().value_type {
+            ParameterValueType::Boolean => MetakonValueType::Bool,
+
+            ParameterValueType::Unsigned8 => MetakonValueType::Ubyte,
+
+            ParameterValueType::Signed8 => MetakonValueType::Byte,
+
+            ParameterValueType::Unsigned16 => MetakonValueType::Uint,
+
+            ParameterValueType::Signed16 => MetakonValueType::Int,
+        };
+
+        let new_series = match name {
+            Some(name) => NewSeries::named_typed_metakon(
+                self.instrument.device(),
+                self.instrument.channel(),
+                parameter.address(),
+                value_type,
+                scale,
+                name,
+            ),
+
+            None => NewSeries::unnamed_typed_metakon(
+                self.instrument.device(),
+                self.instrument.channel(),
+                parameter.address(),
+                value_type,
+                scale,
+            ),
+        };
+
+        self.add_series(new_series)
+    }
+
     fn write(&self, parameter: Metakon5x3Write) -> mlua::Result<()> {
         let request = self
             .instrument
@@ -177,40 +223,32 @@ impl UserData for LuaMetakon5x3 {
         M: UserDataMethods<Self>,
     {
         methods.add_method("add_measurement", |_, controller, name: Option<String>| {
-            controller.add_series(
-                controller
-                    .instrument
-                    .measurement_series(controller.scale, name),
-            )
+            controller.add_parameter_series(Metakon5x3Register::Measurement, controller.scale, name)
         });
 
         methods.add_method("add_setpoint", |_, controller, name: Option<String>| {
-            controller.add_series(
-                controller
-                    .instrument
-                    .setpoint_series(controller.scale, name),
-            )
+            controller.add_parameter_series(Metakon5x3Register::Setpoint, controller.scale, name)
         });
 
         methods.add_method("add_output_power", |_, controller, name: Option<String>| {
-            controller.add_series(controller.instrument.output_power_series(name))
+            controller.add_parameter_series(Metakon5x3Register::OutputPower, 1.0, name)
         });
 
         methods.add_method("add_pwm_positive", |_, controller, name: Option<String>| {
-            controller.add_series(controller.instrument.pwm_positive_series(name))
+            controller.add_parameter_series(Metakon5x3Register::PwmPositive, 1.0, name)
         });
 
         methods.add_method("add_pwm_negative", |_, controller, name: Option<String>| {
-            controller.add_series(controller.instrument.pwm_negative_series(name))
+            controller.add_parameter_series(Metakon5x3Register::PwmNegative, 1.0, name)
         });
 
         methods.add_method(
             "add_upper_setpoint",
             |_, controller, name: Option<String>| {
-                controller.add_series(
-                    controller
-                        .instrument
-                        .upper_setpoint_series(controller.scale, name),
+                controller.add_parameter_series(
+                    Metakon5x3Register::UpperSetpoint,
+                    controller.scale,
+                    name,
                 )
             },
         );
@@ -218,25 +256,25 @@ impl UserData for LuaMetakon5x3 {
         methods.add_method(
             "add_upper_hysteresis",
             |_, controller, name: Option<String>| {
-                controller.add_series(
-                    controller
-                        .instrument
-                        .upper_hysteresis_series(controller.scale, name),
+                controller.add_parameter_series(
+                    Metakon5x3Register::UpperHysteresis,
+                    controller.scale,
+                    name,
                 )
             },
         );
 
         methods.add_method("add_upper_output", |_, controller, name: Option<String>| {
-            controller.add_series(controller.instrument.upper_output_series(name))
+            controller.add_parameter_series(Metakon5x3Register::UpperOutput, 1.0, name)
         });
 
         methods.add_method(
             "add_lower_setpoint",
             |_, controller, name: Option<String>| {
-                controller.add_series(
-                    controller
-                        .instrument
-                        .lower_setpoint_series(controller.scale, name),
+                controller.add_parameter_series(
+                    Metakon5x3Register::LowerSetpoint,
+                    controller.scale,
+                    name,
                 )
             },
         );
@@ -244,43 +282,44 @@ impl UserData for LuaMetakon5x3 {
         methods.add_method(
             "add_lower_hysteresis",
             |_, controller, name: Option<String>| {
-                controller.add_series(
-                    controller
-                        .instrument
-                        .lower_hysteresis_series(controller.scale, name),
+                controller.add_parameter_series(
+                    Metakon5x3Register::LowerHysteresis,
+                    controller.scale,
+                    name,
                 )
             },
         );
 
         methods.add_method("add_lower_output", |_, controller, name: Option<String>| {
-            controller.add_series(controller.instrument.lower_output_series(name))
+            controller.add_parameter_series(Metakon5x3Register::LowerOutput, 1.0, name)
         });
 
         methods.add_method(
             "add_proportional_band",
             |_, controller, name: Option<String>| {
-                controller.add_series(controller.instrument.proportional_band_series(name))
+                controller.add_parameter_series(Metakon5x3Register::ProportionalBand, 1.0, name)
             },
         );
 
         methods.add_method(
             "add_integral_time",
             |_, controller, name: Option<String>| {
-                controller.add_series(controller.instrument.integral_time_series(name))
+                controller.add_parameter_series(Metakon5x3Register::IntegralTime, 1.0, name)
             },
         );
 
         methods.add_method(
             "add_derivative_time",
             |_, controller, name: Option<String>| {
-                controller.add_series(controller.instrument.derivative_time_series(name))
+                controller.add_parameter_series(Metakon5x3Register::DerivativeTime, 1.0, name)
             },
         );
+
         methods.add_method("output_power", |_, controller, value: i64| {
             let value = i8::try_from(value).map_err(|_| {
                 mlua::Error::RuntimeError(
                     "Metakon 5X3 output power does not \
-                         fit into Byte"
+                             fit into Byte"
                         .to_owned(),
                 )
             })?;

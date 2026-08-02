@@ -1,5 +1,4 @@
 use crate::{
-    data::{MetakonValueType, NewSeries},
     protocol::metakon::{
         ReadRegisterError, ReadRegisterRequest, RegisterDataType, RegisterValue,
         WriteRegisterError, WriteRegisterRequest, WriteRegisterValue, read_register,
@@ -23,6 +22,14 @@ pub struct Metakon5x3 {
 impl Metakon5x3 {
     pub const fn new(device: u8, channel: u8) -> Self {
         Self { device, channel }
+    }
+
+    pub const fn device(self) -> u8 {
+        self.device
+    }
+
+    pub const fn channel(self) -> u8 {
+        self.channel
     }
 
     pub const fn read_request(self, register: Metakon5x3Register) -> ReadRegisterRequest {
@@ -91,141 +98,6 @@ impl Metakon5x3 {
             .map_err(|source| Metakon5x3WriteError::VerificationRead { register, source })
     }
 
-    pub fn measurement_series(self, scale: f64, name: Option<String>) -> NewSeries {
-        self.new_series(
-            Metakon5x3Register::Measurement,
-            MetakonValueType::Int,
-            scale,
-            name,
-        )
-    }
-
-    pub fn setpoint_series(self, scale: f64, name: Option<String>) -> NewSeries {
-        self.new_series(
-            Metakon5x3Register::Setpoint,
-            MetakonValueType::Int,
-            scale,
-            name,
-        )
-    }
-
-    pub fn output_power_series(self, name: Option<String>) -> NewSeries {
-        self.new_series(
-            Metakon5x3Register::OutputPower,
-            MetakonValueType::Byte,
-            1.0,
-            name,
-        )
-    }
-
-    pub fn proportional_band_series(self, name: Option<String>) -> NewSeries {
-        self.new_series(
-            Metakon5x3Register::ProportionalBand,
-            MetakonValueType::Uint,
-            1.0,
-            name,
-        )
-    }
-
-    pub fn integral_time_series(self, name: Option<String>) -> NewSeries {
-        self.new_series(
-            Metakon5x3Register::IntegralTime,
-            MetakonValueType::Uint,
-            1.0,
-            name,
-        )
-    }
-
-    pub fn derivative_time_series(self, name: Option<String>) -> NewSeries {
-        self.new_series(
-            Metakon5x3Register::DerivativeTime,
-            MetakonValueType::Ubyte,
-            1.0,
-            name,
-        )
-    }
-
-    pub fn upper_setpoint_series(self, scale: f64, name: Option<String>) -> NewSeries {
-        self.new_series(
-            Metakon5x3Register::UpperSetpoint,
-            MetakonValueType::Int,
-            scale,
-            name,
-        )
-    }
-
-    pub fn upper_hysteresis_series(self, scale: f64, name: Option<String>) -> NewSeries {
-        self.new_series(
-            Metakon5x3Register::UpperHysteresis,
-            MetakonValueType::Ubyte,
-            scale,
-            name,
-        )
-    }
-
-    pub fn upper_output_series(self, name: Option<String>) -> NewSeries {
-        self.new_series(
-            Metakon5x3Register::UpperOutput,
-            MetakonValueType::Bool,
-            1.0,
-            name,
-        )
-    }
-
-    pub fn lower_setpoint_series(self, scale: f64, name: Option<String>) -> NewSeries {
-        self.new_series(
-            Metakon5x3Register::LowerSetpoint,
-            MetakonValueType::Int,
-            scale,
-            name,
-        )
-    }
-
-    pub fn lower_hysteresis_series(self, scale: f64, name: Option<String>) -> NewSeries {
-        self.new_series(
-            Metakon5x3Register::LowerHysteresis,
-            MetakonValueType::Ubyte,
-            scale,
-            name,
-        )
-    }
-
-    pub fn lower_output_series(self, name: Option<String>) -> NewSeries {
-        self.new_series(
-            Metakon5x3Register::LowerOutput,
-            MetakonValueType::Bool,
-            1.0,
-            name,
-        )
-    }
-
-    fn new_series(
-        self,
-        register: Metakon5x3Register,
-        value_type: MetakonValueType,
-        scale: f64,
-        name: Option<String>,
-    ) -> NewSeries {
-        match name {
-            Some(name) => NewSeries::named_typed_metakon(
-                self.device,
-                self.channel,
-                register.address(),
-                value_type,
-                scale,
-                name,
-            ),
-
-            None => NewSeries::unnamed_typed_metakon(
-                self.device,
-                self.channel,
-                register.address(),
-                value_type,
-                scale,
-            ),
-        }
-    }
-
     pub fn write_request(
         self,
         parameter: Metakon5x3Write,
@@ -238,24 +110,6 @@ impl Metakon5x3 {
             parameter.register().address(),
             parameter.value(),
         ))
-    }
-
-    pub fn pwm_positive_series(self, name: Option<String>) -> NewSeries {
-        self.new_series(
-            Metakon5x3Register::PwmPositive,
-            MetakonValueType::Bool,
-            1.0,
-            name,
-        )
-    }
-
-    pub fn pwm_negative_series(self, name: Option<String>) -> NewSeries {
-        self.new_series(
-            Metakon5x3Register::PwmNegative,
-            MetakonValueType::Bool,
-            1.0,
-            name,
-        )
     }
 }
 
