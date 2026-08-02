@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::{
     data::{Sample, SeriesMetadata, SeriesSample, SeriesSource},
     instrument::{
-        InstrumentReadRequest,
+        InstrumentReadRequest, InstrumentValue,
         metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
     },
     protocol::metakon::{RegisterValue, WriteRegisterRequest},
@@ -82,6 +82,60 @@ impl SerialCommandSource {
 
         self.connection()
     }
+
+    fn read_instrument_value(
+        &mut self,
+        request: InstrumentReadRequest,
+    ) -> Result<InstrumentValue, AcquisitionError> {
+        match request {
+            InstrumentReadRequest::Metakon5x3 {
+                instrument,
+                parameter,
+                scale,
+            } => {
+                if !scale.is_finite() || scale <= 0.0 {
+                    return Err(AcquisitionError::from(
+                        "Instrument scale must be finite \
+                             and greater than zero",
+                    ));
+                }
+
+                let connection =
+                    self.verified_metakon_connection(instrument.device(), instrument.channel())?;
+
+                let register_value = instrument
+                    .read(connection, parameter)
+                    .map_err(|error| AcquisitionError::from(error.to_string()))?;
+
+                if parameter == Metakon5x3Register::Measurement
+                    && matches!(
+                        &register_value,
+                        RegisterValue::Int(value)
+                            if *value == i16::MIN
+                    )
+                {
+                    return Err(AcquisitionError::from(
+                        "instrument reported alarm \
+                             value -32768",
+                    ));
+                }
+
+                match register_value {
+                    RegisterValue::Bool(value) => Ok(InstrumentValue::Boolean(value)),
+
+                    value => {
+                        let raw_value = value.into_f64().expect(
+                            "Metakon 5X3 parameters \
+                                 always contain numeric \
+                                 or boolean values",
+                        );
+
+                        Ok(InstrumentValue::Number(raw_value * scale))
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl AcquisitionSource for SerialCommandSource {
@@ -111,59 +165,30 @@ impl AcquisitionSource for SerialCommandSource {
                     })?
                 }
 
-                SeriesSource::Instrument(request) => match request {
-                    InstrumentReadRequest::Metakon5x3 {
-                        instrument,
-                        parameter,
-                        scale,
-                    } => {
-                        let device = instrument.device();
-                        let channel = instrument.channel();
+                SeriesSource::Instrument(request) => {
+                    let value = self.read_instrument_value(*request).map_err(|error| {
+                        AcquisitionError::from(format!(
+                            "{} series '{}': {error}",
+                            request.kind_name(),
+                            series.name,
+                        ))
+                    })?;
 
-                        let connection = self
-                            .verified_metakon_connection(device, channel)
-                            .map_err(|error| {
-                                AcquisitionError::from(format!(
-                                    "Metakon series '{}': \
-                                         {error}",
-                                    series.name,
-                                ))
-                            })?;
-
-                        let register_value =
-                            instrument.read(connection, *parameter).map_err(|error| {
-                                AcquisitionError::from(format!(
-                                    "Metakon series '{}': \
-                                         {error}",
-                                    series.name,
-                                ))
-                            })?;
-
-                        let raw_value = register_value.into_f64().expect(
-                            "Metakon 5X3 parameters always \
-                                     contain numeric or boolean values",
-                        );
-
-                        if *parameter == Metakon5x3Register::Measurement
-                            && raw_value == f64::from(i16::MIN)
-                        {
-                            return Err(AcquisitionError::from(format!(
-                                "Metakon series '{}': \
-                                         instrument reported alarm \
-                                         value -32768",
-                                series.name,
-                            )));
-                        }
-
-                        raw_value * *scale
-                    }
-                },
+                    value.as_f64()
+                }
             };
 
             output.push(SeriesSample::new(series.id, Sample::new(timestamp, value)));
         }
 
         Ok(())
+    }
+
+    fn read_instrument(
+        &mut self,
+        request: InstrumentReadRequest,
+    ) -> Result<Option<InstrumentValue>, AcquisitionError> {
+        self.read_instrument_value(request).map(Some)
     }
 
     fn request_text(&mut self, command: &str) -> Result<Option<String>, AcquisitionError> {

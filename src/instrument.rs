@@ -76,6 +76,12 @@ impl InstrumentReadRequest {
             Self::Metakon5x3 { .. } => "metakon",
         }
     }
+
+    pub(crate) const fn kind_name(&self) -> &'static str {
+        match self {
+            Self::Metakon5x3 { .. } => "Metakon",
+        }
+    }
 }
 
 impl std::fmt::Display for InstrumentReadRequest {
@@ -96,6 +102,38 @@ impl std::fmt::Display for InstrumentReadRequest {
                     scale,
                 )
             }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum InstrumentValue {
+    Boolean(bool),
+    Number(f64),
+}
+
+impl InstrumentValue {
+    pub const fn as_f64(self) -> f64 {
+        match self {
+            Self::Boolean(value) => {
+                if value {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+
+            Self::Number(value) => value,
+        }
+    }
+}
+
+impl std::fmt::Display for InstrumentValue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Boolean(value) => value.fmt(formatter),
+
+            Self::Number(value) => value.fmt(formatter),
         }
     }
 }

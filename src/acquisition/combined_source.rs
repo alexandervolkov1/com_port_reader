@@ -1,5 +1,6 @@
 use crate::{
     data::{SeriesMetadata, SeriesSample},
+    instrument::{InstrumentReadRequest, InstrumentValue},
     protocol::metakon::{RegisterValue, WriteRegisterRequest},
 };
 
@@ -50,6 +51,19 @@ impl AcquisitionSource for CombinedSource {
         }
 
         Ok(())
+    }
+
+    fn read_instrument(
+        &mut self,
+        request: InstrumentReadRequest,
+    ) -> Result<Option<InstrumentValue>, AcquisitionError> {
+        for source in &mut self.sources {
+            if let Some(value) = source.read_instrument(request)? {
+                return Ok(Some(value));
+            }
+        }
+
+        Ok(None)
     }
 
     fn request_text(&mut self, command: &str) -> Result<Option<String>, AcquisitionError> {

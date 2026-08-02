@@ -1,5 +1,6 @@
 use crate::{
     data::{SeriesMetadata, SeriesSample},
+    instrument::{InstrumentReadRequest, InstrumentValue},
     protocol::metakon::{RegisterValue, WriteRegisterRequest},
 };
 
@@ -47,6 +48,13 @@ pub trait AcquisitionSource: Send {
         timestamp: f64,
         output: &mut Vec<SeriesSample>,
     ) -> Result<(), AcquisitionError>;
+
+    fn read_instrument(
+        &mut self,
+        _request: InstrumentReadRequest,
+    ) -> Result<Option<InstrumentValue>, AcquisitionError> {
+        Ok(None)
+    }
 
     fn request_text(&mut self, _command: &str) -> Result<Option<String>, AcquisitionError> {
         Ok(None)
