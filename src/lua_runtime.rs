@@ -681,4 +681,32 @@ mod tests {
 
         assert!(command_receiver.try_recv().is_err());
     }
+
+    #[test]
+    fn exposes_application_log_command() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                app.log(
+                    "Temperature reached setpoint"
+                )
+                "#,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::Log { message }
+                if message
+                    == "Temperature reached setpoint",
+        ));
+
+        assert!(command_receiver.try_recv().is_err());
+    }
 }

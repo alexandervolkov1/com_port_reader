@@ -176,6 +176,10 @@ function app.start_emu() end
 ---Stops the running device emulator.
 function app.stop_emu() end
 
+---Writes an informational message to the application log.
+---@param message string
+function app.log(message) end
+
 ---Adds a periodically sampled text-command serial series.
 ---
 ---The response must contain one finite number.

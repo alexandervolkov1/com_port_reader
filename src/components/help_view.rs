@@ -113,6 +113,13 @@ fn show_lua_reference(ui: &mut egui::Ui) {
          samples.",
     );
 
+    reference(
+        ui,
+        "app.log(message)",
+        "Writes an informational message from Lua to \
+         the application log.",
+    );
+
     ui.separator();
 
     ui.heading("Serial series");

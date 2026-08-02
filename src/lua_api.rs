@@ -51,6 +51,8 @@ pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<(
         stop_emulator_command,
     )?;
 
+    register_log(lua, &app, command_sender.clone())?;
+
     register_add_serial(lua, &app, command_sender.clone())?;
 
     register_metakon_controller(lua, &app, command_sender.clone())?;
@@ -435,6 +437,14 @@ fn register_rename_series(
     })?;
 
     app.set("rename", function)
+}
+
+fn register_log(lua: &Lua, app: &Table, command_sender: Sender<UserCommand>) -> mlua::Result<()> {
+    let function = lua.create_function(move |_, message: String| {
+        send_application_command(&command_sender, UserCommand::Log { message })
+    })?;
+
+    app.set("log", function)
 }
 
 fn register_send_serial(

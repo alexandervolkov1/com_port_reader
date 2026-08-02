@@ -99,6 +99,10 @@ impl CommandModel {
                 device_emulator.stop();
             }
 
+            UserCommand::Log { message } => {
+                self.log.info(message);
+            }
+
             UserCommand::SendSerial { command } => {
                 let Some(config) = serial_settings.serial_config() else {
                     self.log.error(
