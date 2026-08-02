@@ -2,12 +2,9 @@ use crossbeam_channel::Sender;
 use mlua::{Lua, Table, UserData, UserDataMethods};
 
 use crate::{
-    data::{
-        DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, MetakonValueType,
-        NewSeries,
-    },
+    data::{DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, NewSeries},
     instrument::{
-        ParameterValueType,
+        InstrumentReadRequest,
         metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
     },
     user_command::UserCommand,
@@ -173,35 +170,12 @@ impl LuaMetakon5x3 {
         scale: f64,
         name: Option<String>,
     ) -> mlua::Result<()> {
-        let value_type = match parameter.descriptor().value_type {
-            ParameterValueType::Boolean => MetakonValueType::Bool,
-
-            ParameterValueType::Unsigned8 => MetakonValueType::Ubyte,
-
-            ParameterValueType::Signed8 => MetakonValueType::Byte,
-
-            ParameterValueType::Unsigned16 => MetakonValueType::Uint,
-
-            ParameterValueType::Signed16 => MetakonValueType::Int,
-        };
+        let request = InstrumentReadRequest::metakon_5x3(self.instrument, parameter, scale);
 
         let new_series = match name {
-            Some(name) => NewSeries::named_typed_metakon(
-                self.instrument.device(),
-                self.instrument.channel(),
-                parameter.address(),
-                value_type,
-                scale,
-                name,
-            ),
+            Some(name) => NewSeries::named_instrument(request, name),
 
-            None => NewSeries::unnamed_typed_metakon(
-                self.instrument.device(),
-                self.instrument.channel(),
-                parameter.address(),
-                value_type,
-                scale,
-            ),
+            None => NewSeries::unnamed_instrument(request),
         };
 
         self.add_series(new_series)

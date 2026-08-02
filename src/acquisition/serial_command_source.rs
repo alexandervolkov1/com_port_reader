@@ -1,9 +1,12 @@
 use std::collections::HashSet;
 
 use crate::{
-    data::{MetakonValueType, Sample, SeriesMetadata, SeriesSample, SeriesSource},
-    instrument::metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
-    protocol::metakon::{RegisterDataType, RegisterValue, WriteRegisterRequest},
+    data::{Sample, SeriesMetadata, SeriesSample, SeriesSource},
+    instrument::{
+        InstrumentReadRequest,
+        metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
+    },
+    protocol::metakon::{RegisterValue, WriteRegisterRequest},
     serial_connection::{SerialConfigStore, SerialConnection},
 };
 
@@ -108,79 +111,53 @@ impl AcquisitionSource for SerialCommandSource {
                     })?
                 }
 
-                SeriesSource::Metakon {
-                    device,
-                    channel,
-                    register,
-                    value_type,
-                    scale,
-                } => {
-                    let Some(typed_register) = Metakon5x3Register::from_address(*register) else {
-                        return Err(AcquisitionError::from(format!(
-                            "Metakon series '{}': register \
-                             0x{register:02X} does not belong to \
-                             the Metakon 5X3 register model",
-                            series.name,
-                        )));
-                    };
+                SeriesSource::Instrument(request) => match request {
+                    InstrumentReadRequest::Metakon5x3 {
+                        instrument,
+                        parameter,
+                        scale,
+                    } => {
+                        let device = instrument.device();
+                        let channel = instrument.channel();
 
-                    let configured_type = match value_type {
-                        MetakonValueType::Bool => RegisterDataType::Bool,
-                        MetakonValueType::Ubyte => RegisterDataType::Ubyte,
-                        MetakonValueType::Byte => RegisterDataType::Byte,
-                        MetakonValueType::Uint => RegisterDataType::Uint,
-                        MetakonValueType::Int => RegisterDataType::Int,
-                    };
-
-                    let expected_type = typed_register.data_type();
-
-                    if configured_type != expected_type {
-                        return Err(AcquisitionError::from(format!(
-                            "Metakon series '{}': register \
-                             0x{register:02X} has type {:?}, \
-                             but {:?} was configured",
-                            series.name, expected_type, configured_type,
-                        )));
-                    }
-
-                    let instrument = Metakon5x3::new(*device, *channel);
-
-                    let connection = self
-                        .verified_metakon_connection(*device, *channel)
-                        .map_err(|error| {
-                            AcquisitionError::from(format!(
-                                "Metakon series '{}': {error}",
-                                series.name,
-                            ))
-                        })?;
-
-                    let register_value =
-                        instrument
-                            .read(connection, typed_register)
+                        let connection = self
+                            .verified_metakon_connection(device, channel)
                             .map_err(|error| {
                                 AcquisitionError::from(format!(
-                                    "Metakon series '{}': {error}",
+                                    "Metakon series '{}': \
+                                         {error}",
                                     series.name,
                                 ))
                             })?;
 
-                    let raw_value = register_value.into_f64().expect(
-                        "Metakon 5X3 registers always contain \
-                             numeric or boolean values",
-                    );
+                        let register_value =
+                            instrument.read(connection, *parameter).map_err(|error| {
+                                AcquisitionError::from(format!(
+                                    "Metakon series '{}': \
+                                         {error}",
+                                    series.name,
+                                ))
+                            })?;
 
-                    if typed_register == Metakon5x3Register::Measurement
-                        && raw_value == f64::from(i16::MIN)
-                    {
-                        return Err(AcquisitionError::from(format!(
-                            "Metakon series '{}': instrument \
-                             reported alarm value -32768",
-                            series.name,
-                        )));
+                        let raw_value = register_value.into_f64().expect(
+                            "Metakon 5X3 parameters always \
+                                     contain numeric or boolean values",
+                        );
+
+                        if *parameter == Metakon5x3Register::Measurement
+                            && raw_value == f64::from(i16::MIN)
+                        {
+                            return Err(AcquisitionError::from(format!(
+                                "Metakon series '{}': \
+                                         instrument reported alarm \
+                                         value -32768",
+                                series.name,
+                            )));
+                        }
+
+                        raw_value * *scale
                     }
-
-                    raw_value * *scale
-                }
+                },
             };
 
             output.push(SeriesSample::new(series.id, Sample::new(timestamp, value)));
@@ -244,8 +221,11 @@ mod tests {
     use super::{AcquisitionSource, SerialCommandSource};
 
     use crate::{
-        data::{MetakonValueType, SeriesId, SeriesMetadata, SeriesSource},
-        instrument::metakon_5x3::Metakon5x3IdentificationError,
+        data::{SeriesId, SeriesMetadata, SeriesSource},
+        instrument::{
+            InstrumentReadRequest,
+            metakon_5x3::{Metakon5x3, Metakon5x3IdentificationError, Metakon5x3Register},
+        },
         serial_connection::SerialConfigStore,
     };
 
@@ -296,13 +276,11 @@ mod tests {
             id: SeriesId::new(1),
             name: "temperature".to_owned(),
 
-            source: SeriesSource::Metakon {
-                device: 1,
-                channel: 0,
-                value_type: MetakonValueType::Int,
-                register: 0x01,
-                scale: 0.1,
-            },
+            source: SeriesSource::Instrument(InstrumentReadRequest::metakon_5x3(
+                Metakon5x3::new(1, 0),
+                Metakon5x3Register::Measurement,
+                0.1,
+            )),
 
             visible: true,
         }];

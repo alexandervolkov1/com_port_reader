@@ -57,10 +57,27 @@ mod tests {
 
     use super::LuaRuntime;
     use crate::{
-        data::{MetakonValueType, SeriesSource},
+        data::SeriesSource,
+        instrument::{
+            InstrumentReadRequest,
+            metakon_5x3::{Metakon5x3, Metakon5x3Register},
+        },
         protocol::metakon::{WriteRegisterRequest, WriteRegisterValue},
         user_command::UserCommand,
     };
+
+    fn metakon_source(
+        device: u8,
+        channel: u8,
+        parameter: Metakon5x3Register,
+        scale: f64,
+    ) -> SeriesSource {
+        SeriesSource::Instrument(InstrumentReadRequest::metakon_5x3(
+            Metakon5x3::new(device, channel),
+            parameter,
+            scale,
+        ))
+    }
 
     #[test]
     fn evaluates_lua_code() {
@@ -200,7 +217,10 @@ mod tests {
 
         let error = result.unwrap_err().to_string();
 
-        assert!(error.contains("application command channel is disconnected",));
+        assert!(error.contains(
+            "application command channel \
+                 is disconnected",
+        ),);
     }
 
     #[test]
@@ -245,7 +265,7 @@ mod tests {
 
         let (source, name) = new_series.into_source_parts();
 
-        assert_eq!(name.as_deref(), Some("sine"));
+        assert_eq!(name.as_deref(), Some("sine"),);
 
         assert_eq!(
             source,
@@ -272,7 +292,8 @@ mod tests {
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
             UserCommand::SendSerial { command }
-                if command == "set amplitude 25",
+                if command
+                    == "set amplitude 25",
         ));
 
         assert!(command_receiver.try_recv().is_err());
@@ -336,24 +357,38 @@ mod tests {
                     scale = 1.0
                 })
 
-                controller:add_measurement("temperature")
-                controller:add_setpoint("setpoint")
-                controller:add_output_power("power")
-                controller:add_pwm_positive("pwm_positive")
-                controller:add_pwm_negative("pwm_negative")
+                controller:add_measurement(
+                    "temperature"
+                )
+
+                controller:add_setpoint(
+                    "setpoint"
+                )
+
+                controller:add_output_power(
+                    "power"
+                )
+
+                controller:add_pwm_positive(
+                    "pwm_positive"
+                )
+
+                controller:add_pwm_negative(
+                    "pwm_negative"
+                )
                 "#,
             )
             .unwrap();
 
         let expected = [
-            ("temperature", 0x01, MetakonValueType::Int),
-            ("setpoint", 0x02, MetakonValueType::Int),
-            ("power", 0x06, MetakonValueType::Byte),
-            ("pwm_positive", 0x07, MetakonValueType::Bool),
-            ("pwm_negative", 0x08, MetakonValueType::Bool),
+            ("temperature", Metakon5x3Register::Measurement),
+            ("setpoint", Metakon5x3Register::Setpoint),
+            ("power", Metakon5x3Register::OutputPower),
+            ("pwm_positive", Metakon5x3Register::PwmPositive),
+            ("pwm_negative", Metakon5x3Register::PwmNegative),
         ];
 
-        for (expected_name, register, value_type) in expected {
+        for (expected_name, expected_parameter) in expected {
             let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
                 panic!("expected Add command");
             };
@@ -362,16 +397,7 @@ mod tests {
 
             assert_eq!(name.as_deref(), Some(expected_name),);
 
-            assert_eq!(
-                source,
-                SeriesSource::Metakon {
-                    device: 15,
-                    channel: 0,
-                    register,
-                    value_type,
-                    scale: 1.0,
-                },
-            );
+            assert_eq!(source, metakon_source(15, 0, expected_parameter, 1.0,),);
         }
 
         assert!(command_receiver.try_recv().is_err());
@@ -410,9 +436,14 @@ mod tests {
 
         for expected_request in expected {
             assert!(matches!(
-                command_receiver.try_recv().unwrap(),
-                UserCommand::WriteMetakon { request }
-                    if request == expected_request,
+                command_receiver
+                    .try_recv()
+                    .unwrap(),
+                UserCommand::WriteMetakon {
+                    request
+                }
+                    if request
+                        == expected_request,
             ));
         }
 
@@ -438,7 +469,10 @@ mod tests {
             .unwrap_err()
             .to_string();
 
-        assert!(error.contains("unknown app.metakon option 'devcie'",),);
+        assert!(error.contains(
+            "unknown app.metakon option \
+                 'devcie'",
+        ),);
 
         assert!(command_receiver.try_recv().is_err());
     }
@@ -459,38 +493,37 @@ mod tests {
                     channel = 2,
                 })
 
-                controller:add_proportional_band("pid_p")
-                controller:add_integral_time("pid_i")
-                controller:add_derivative_time("pid_d")
+                controller:add_proportional_band(
+                    "pid_p"
+                )
+
+                controller:add_integral_time(
+                    "pid_i"
+                )
+
+                controller:add_derivative_time(
+                    "pid_d"
+                )
                 "#,
             )
             .unwrap();
 
         let expected = [
-            ("pid_p", 0x03, MetakonValueType::Uint),
-            ("pid_i", 0x04, MetakonValueType::Uint),
-            ("pid_d", 0x05, MetakonValueType::Ubyte),
+            ("pid_p", Metakon5x3Register::ProportionalBand),
+            ("pid_i", Metakon5x3Register::IntegralTime),
+            ("pid_d", Metakon5x3Register::DerivativeTime),
         ];
 
-        for (expected_name, expected_register, expected_type) in expected {
+        for (expected_name, expected_parameter) in expected {
             let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
                 panic!("expected Add command");
             };
 
             let (source, name) = new_series.into_source_parts();
 
-            assert_eq!(name.as_deref(), Some(expected_name));
+            assert_eq!(name.as_deref(), Some(expected_name),);
 
-            assert_eq!(
-                source,
-                SeriesSource::Metakon {
-                    device: 15,
-                    channel: 2,
-                    register: expected_register,
-                    value_type: expected_type,
-                    scale: 1.0,
-                },
-            );
+            assert_eq!(source, metakon_source(15, 2, expected_parameter, 1.0,),);
         }
 
         assert!(command_receiver.try_recv().is_err());
@@ -513,27 +546,43 @@ mod tests {
                     scale = 0.1,
                 })
 
-                controller:add_upper_setpoint("high")
-                controller:add_upper_hysteresis("high_hyst")
-                controller:add_upper_output("high_active")
+                controller:add_upper_setpoint(
+                    "high"
+                )
 
-                controller:add_lower_setpoint("low")
-                controller:add_lower_hysteresis("low_hyst")
-                controller:add_lower_output("low_active")
+                controller:add_upper_hysteresis(
+                    "high_hyst"
+                )
+
+                controller:add_upper_output(
+                    "high_active"
+                )
+
+                controller:add_lower_setpoint(
+                    "low"
+                )
+
+                controller:add_lower_hysteresis(
+                    "low_hyst"
+                )
+
+                controller:add_lower_output(
+                    "low_active"
+                )
                 "#,
             )
             .unwrap();
 
         let expected = [
-            ("high", 0x09, MetakonValueType::Int, 0.1),
-            ("high_hyst", 0x0A, MetakonValueType::Ubyte, 0.1),
-            ("high_active", 0x0B, MetakonValueType::Bool, 1.0),
-            ("low", 0x0C, MetakonValueType::Int, 0.1),
-            ("low_hyst", 0x0D, MetakonValueType::Ubyte, 0.1),
-            ("low_active", 0x0E, MetakonValueType::Bool, 1.0),
+            ("high", Metakon5x3Register::UpperSetpoint, 0.1),
+            ("high_hyst", Metakon5x3Register::UpperHysteresis, 0.1),
+            ("high_active", Metakon5x3Register::UpperOutput, 1.0),
+            ("low", Metakon5x3Register::LowerSetpoint, 0.1),
+            ("low_hyst", Metakon5x3Register::LowerHysteresis, 0.1),
+            ("low_active", Metakon5x3Register::LowerOutput, 1.0),
         ];
 
-        for (expected_name, expected_register, expected_type, expected_scale) in expected {
+        for (expected_name, expected_parameter, expected_scale) in expected {
             let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
                 panic!("expected Add command");
             };
@@ -544,13 +593,7 @@ mod tests {
 
             assert_eq!(
                 source,
-                SeriesSource::Metakon {
-                    device: 15,
-                    channel: 2,
-                    register: expected_register,
-                    value_type: expected_type,
-                    scale: expected_scale,
-                },
+                metakon_source(15, 2, expected_parameter, expected_scale,),
             );
         }
 
@@ -598,9 +641,14 @@ mod tests {
 
         for expected_request in expected {
             assert!(matches!(
-                command_receiver.try_recv().unwrap(),
-                UserCommand::WriteMetakon { request }
-                    if request == expected_request,
+                command_receiver
+                    .try_recv()
+                    .unwrap(),
+                UserCommand::WriteMetakon {
+                    request
+                }
+                    if request
+                        == expected_request,
             ));
         }
 
@@ -626,7 +674,10 @@ mod tests {
             .unwrap_err()
             .to_string();
 
-        assert!(error.contains("output power must be between -100 and 100",));
+        assert!(error.contains(
+            "output power must be between \
+                 -100 and 100",
+        ),);
 
         assert!(command_receiver.try_recv().is_err());
     }

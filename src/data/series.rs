@@ -1,31 +1,10 @@
+use crate::instrument::InstrumentReadRequest;
+
 use super::Sample;
 
 pub const DEFAULT_METAKON_DEVICE: u8 = 1;
 pub const DEFAULT_METAKON_CHANNEL: u8 = 0;
 pub const DEFAULT_METAKON_SCALE: f64 = 1.0;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MetakonValueType {
-    Bool,
-    Ubyte,
-    Byte,
-    Uint,
-    Int,
-}
-
-impl std::fmt::Display for MetakonValueType {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let name = match self {
-            Self::Bool => "Bool",
-            Self::Ubyte => "Ubyte",
-            Self::Byte => "Byte",
-            Self::Uint => "Uint",
-            Self::Int => "Int",
-        };
-
-        formatter.write_str(name)
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SeriesId(u64);
@@ -44,24 +23,17 @@ impl std::fmt::Display for SeriesId {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SeriesSource {
-    SerialCommand {
-        command: String,
-    },
+    SerialCommand { command: String },
 
-    Metakon {
-        device: u8,
-        channel: u8,
-        register: u8,
-        value_type: MetakonValueType,
-        scale: f64,
-    },
+    Instrument(InstrumentReadRequest),
 }
 
 impl SeriesSource {
     pub(crate) fn default_name_prefix(&self) -> &str {
         match self {
             Self::SerialCommand { .. } => "serial",
-            Self::Metakon { .. } => "metakon",
+
+            Self::Instrument(request) => request.default_name_prefix(),
         }
     }
 }
@@ -70,23 +42,10 @@ impl std::fmt::Display for SeriesSource {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::SerialCommand { command } => {
-                write!(formatter, "COM command: {command}")
+                write!(formatter, "COM command: {command}",)
             }
 
-            Self::Metakon {
-                device,
-                channel,
-                register,
-                value_type,
-                scale,
-            } => {
-                write!(
-                    formatter,
-                    "Metakon: device {device}, channel {channel}, \
-                     register 0x{register:02X}, type {value_type}, \
-                     scale {scale}",
-                )
-            }
+            Self::Instrument(request) => request.fmt(formatter),
         }
     }
 }
@@ -116,41 +75,16 @@ impl NewSeries {
         }
     }
 
-    pub fn unnamed_typed_metakon(
-        device: u8,
-        channel: u8,
-        register: u8,
-        value_type: MetakonValueType,
-        scale: f64,
-    ) -> Self {
+    pub fn unnamed_instrument(request: InstrumentReadRequest) -> Self {
         Self {
-            source: SeriesSource::Metakon {
-                device,
-                channel,
-                register,
-                value_type,
-                scale,
-            },
+            source: SeriesSource::Instrument(request),
             name: None,
         }
     }
 
-    pub fn named_typed_metakon(
-        device: u8,
-        channel: u8,
-        register: u8,
-        value_type: MetakonValueType,
-        scale: f64,
-        name: impl Into<String>,
-    ) -> Self {
+    pub fn named_instrument(request: InstrumentReadRequest, name: impl Into<String>) -> Self {
         Self {
-            source: SeriesSource::Metakon {
-                device,
-                channel,
-                register,
-                value_type,
-                scale,
-            },
+            source: SeriesSource::Instrument(request),
             name: Some(name.into()),
         }
     }

@@ -18,7 +18,7 @@ pub enum AddSeriesError {
     InvalidName(SeriesNameError),
     EmptySerialCommand,
     SerialCommandContainsLineBreak,
-    InvalidMetakonScale,
+    InvalidInstrumentScale,
 }
 
 impl std::fmt::Display for AddSeriesError {
@@ -32,9 +32,10 @@ impl std::fmt::Display for AddSeriesError {
                 formatter.write_str("Serial command cannot contain a line break")
             }
 
-            Self::InvalidMetakonScale => {
-                formatter.write_str("Metakon scale must be finite and greater than zero")
-            }
+            Self::InvalidInstrumentScale => formatter.write_str(
+                "Instrument series scale must be finite \
+                     and greater than zero",
+            ),
         }
     }
 }
@@ -46,7 +47,7 @@ impl std::error::Error for AddSeriesError {
 
             Self::EmptySerialCommand
             | Self::SerialCommandContainsLineBreak
-            | Self::InvalidMetakonScale => None,
+            | Self::InvalidInstrumentScale => None,
         }
     }
 }
@@ -250,24 +251,14 @@ fn normalize_series_source(source: SeriesSource) -> Result<SeriesSource, AddSeri
             })
         }
 
-        SeriesSource::Metakon {
-            device,
-            channel,
-            register,
-            value_type,
-            scale,
-        } => {
+        SeriesSource::Instrument(request) => {
+            let scale = request.scale();
+
             if !scale.is_finite() || scale <= 0.0 {
-                return Err(AddSeriesError::InvalidMetakonScale);
+                return Err(AddSeriesError::InvalidInstrumentScale);
             }
 
-            Ok(SeriesSource::Metakon {
-                device,
-                channel,
-                register,
-                value_type,
-                scale,
-            })
+            Ok(SeriesSource::Instrument(request))
         }
     }
 }
@@ -300,8 +291,12 @@ fn generate_default_name(series: &[Series], prefix: &str, id: SeriesId) -> Strin
 mod tests {
     use super::{RenameSeriesError, SeriesStore};
 
-    use crate::data::{
-        AddSeriesError, MetakonValueType, NewSeries, SeriesId, SeriesNameError, SeriesSource,
+    use crate::{
+        data::{AddSeriesError, NewSeries, SeriesId, SeriesNameError, SeriesSource},
+        instrument::{
+            InstrumentReadRequest,
+            metakon_5x3::{Metakon5x3, Metakon5x3Register},
+        },
     };
 
     fn add_unnamed(store: &SeriesStore) -> SeriesId {
@@ -639,70 +634,58 @@ mod tests {
     fn stores_metakon_series() {
         let store = SeriesStore::new();
 
+        let request = InstrumentReadRequest::metakon_5x3(
+            Metakon5x3::new(1, 0),
+            Metakon5x3Register::Measurement,
+            0.1,
+        );
+
         store
-            .add_series(NewSeries::named_typed_metakon(
-                1,
-                0,
-                0x01,
-                MetakonValueType::Int,
-                0.1,
-                "temperature",
-            ))
+            .add_series(NewSeries::named_instrument(request, "temperature"))
             .unwrap();
 
         let metadata = store.metadata();
 
         assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0].name, "temperature");
 
-        assert_eq!(metadata[0].name, "temperature",);
-
-        assert_eq!(
-            metadata[0].source,
-            SeriesSource::Metakon {
-                device: 1,
-                channel: 0,
-                value_type: MetakonValueType::Int,
-                register: 0x01,
-                scale: 0.1,
-            },
-        );
+        assert_eq!(metadata[0].source, SeriesSource::Instrument(request),);
     }
 
     #[test]
     fn generates_name_for_metakon_series() {
         let store = SeriesStore::new();
 
+        let request = InstrumentReadRequest::metakon_5x3(
+            Metakon5x3::new(1, 0),
+            Metakon5x3Register::Measurement,
+            0.1,
+        );
+
         store
-            .add_series(NewSeries::unnamed_typed_metakon(
-                1,
-                0,
-                0x01,
-                MetakonValueType::Int,
-                0.1,
-            ))
+            .add_series(NewSeries::unnamed_instrument(request))
             .unwrap();
 
         let metadata = store.metadata();
 
         assert_eq!(metadata.len(), 1);
-
-        assert_eq!(metadata[0].name, "metakon1",);
+        assert_eq!(metadata[0].name, "metakon1");
     }
 
     #[test]
-    fn rejects_invalid_metakon_scale() {
+    fn rejects_invalid_instrument_scale() {
         let store = SeriesStore::new();
 
         for scale in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-            let result = store.add_series(NewSeries::unnamed_typed_metakon(
-                1,
-                0,
-                0x01,
-                MetakonValueType::Int,
+            let request = InstrumentReadRequest::metakon_5x3(
+                Metakon5x3::new(1, 0),
+                Metakon5x3Register::Measurement,
                 scale,
-            ));
+            );
 
-            assert_eq!(result, Err(AddSeriesError::InvalidMetakonScale,),);
+            let result = store.add_series(NewSeries::unnamed_instrument(request));
+
+            assert_eq!(result, Err(AddSeriesError::InvalidInstrumentScale,),);
         }
     }
 }
