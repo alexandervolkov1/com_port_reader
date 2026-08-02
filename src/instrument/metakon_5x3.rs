@@ -8,6 +8,8 @@ use crate::{
     serial_connection::SerialConnection,
 };
 
+use super::{ParameterAccess, ParameterDescriptor, ParameterRange, ParameterValueType};
+
 pub const DEFAULT_DEVICE: u8 = 1;
 pub const DEFAULT_CHANNEL: u8 = 0;
 pub const CHANNEL_TYPE_CODE: u8 = 0x03;
@@ -283,6 +285,115 @@ pub enum Metakon5x3Register {
 }
 
 impl Metakon5x3Register {
+    pub const fn descriptor(self) -> ParameterDescriptor {
+        match self {
+            Self::ChannelType => ParameterDescriptor {
+                name: "channel type",
+                access: ParameterAccess::ReadOnly,
+                value_type: ParameterValueType::Unsigned8,
+                range: ParameterRange::new(3, 3),
+            },
+
+            Self::Measurement => ParameterDescriptor {
+                name: "measurement",
+                access: ParameterAccess::ReadOnly,
+                value_type: ParameterValueType::Signed16,
+                range: ParameterRange::new(-999, 9_999),
+            },
+
+            Self::Setpoint => ParameterDescriptor {
+                name: "setpoint",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Signed16,
+                range: ParameterRange::new(-999, 9_999),
+            },
+
+            Self::ProportionalBand => ParameterDescriptor {
+                name: "proportional band",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Unsigned16,
+                range: ParameterRange::new(1, 9_999),
+            },
+
+            Self::IntegralTime => ParameterDescriptor {
+                name: "integral time",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Unsigned16,
+                range: ParameterRange::new(1, 30_000),
+            },
+
+            Self::DerivativeTime => ParameterDescriptor {
+                name: "derivative time",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Unsigned8,
+                range: ParameterRange::new(0, 255),
+            },
+
+            Self::OutputPower => ParameterDescriptor {
+                name: "output power",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Signed8,
+                range: ParameterRange::new(-100, 100),
+            },
+
+            Self::PwmPositive => ParameterDescriptor {
+                name: "PWM positive output",
+                access: ParameterAccess::ReadOnly,
+                value_type: ParameterValueType::Boolean,
+                range: ParameterRange::new(0, 1),
+            },
+
+            Self::PwmNegative => ParameterDescriptor {
+                name: "PWM negative output",
+                access: ParameterAccess::ReadOnly,
+                value_type: ParameterValueType::Boolean,
+                range: ParameterRange::new(0, 1),
+            },
+
+            Self::UpperSetpoint => ParameterDescriptor {
+                name: "upper setpoint",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Signed16,
+                range: ParameterRange::new(-999, 9_999),
+            },
+
+            Self::UpperHysteresis => ParameterDescriptor {
+                name: "upper hysteresis",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Unsigned8,
+                range: ParameterRange::new(0, 255),
+            },
+
+            Self::UpperOutput => ParameterDescriptor {
+                name: "upper output",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Boolean,
+                range: ParameterRange::new(0, 1),
+            },
+
+            Self::LowerSetpoint => ParameterDescriptor {
+                name: "lower setpoint",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Signed16,
+                range: ParameterRange::new(-999, 9_999),
+            },
+
+            Self::LowerHysteresis => ParameterDescriptor {
+                name: "lower hysteresis",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Unsigned8,
+                range: ParameterRange::new(0, 255),
+            },
+
+            Self::LowerOutput => ParameterDescriptor {
+                name: "lower output",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Boolean,
+                range: ParameterRange::new(0, 1),
+            },
+        }
+    }
+
     pub const fn from_address(address: u8) -> Option<Self> {
         match address {
             0x00 => Some(Self::ChannelType),
@@ -325,55 +436,27 @@ impl Metakon5x3Register {
     }
 
     pub const fn data_type(self) -> RegisterDataType {
-        match self {
-            Self::ChannelType
-            | Self::DerivativeTime
-            | Self::UpperHysteresis
-            | Self::LowerHysteresis => RegisterDataType::Ubyte,
+        match self.descriptor().value_type {
+            ParameterValueType::Boolean => RegisterDataType::Bool,
 
-            Self::Measurement | Self::Setpoint | Self::UpperSetpoint | Self::LowerSetpoint => {
-                RegisterDataType::Int
-            }
+            ParameterValueType::Unsigned8 => RegisterDataType::Ubyte,
 
-            Self::ProportionalBand | Self::IntegralTime => RegisterDataType::Uint,
+            ParameterValueType::Signed8 => RegisterDataType::Byte,
 
-            Self::OutputPower => RegisterDataType::Byte,
+            ParameterValueType::Unsigned16 => RegisterDataType::Uint,
 
-            Self::PwmPositive | Self::PwmNegative | Self::UpperOutput | Self::LowerOutput => {
-                RegisterDataType::Bool
-            }
+            ParameterValueType::Signed16 => RegisterDataType::Int,
         }
     }
 
     pub const fn writable(self) -> bool {
-        !matches!(
-            self,
-            Self::ChannelType | Self::Measurement | Self::PwmPositive | Self::PwmNegative
-        )
+        self.descriptor().access.writable()
     }
 }
 
 impl std::fmt::Display for Metakon5x3Register {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let name = match self {
-            Self::ChannelType => "channel type",
-            Self::Measurement => "measurement",
-            Self::Setpoint => "setpoint",
-            Self::ProportionalBand => "proportional band",
-            Self::IntegralTime => "integral time",
-            Self::DerivativeTime => "derivative time",
-            Self::OutputPower => "output power",
-            Self::PwmPositive => "PWM positive output",
-            Self::PwmNegative => "PWM negative output",
-            Self::UpperSetpoint => "upper setpoint",
-            Self::UpperHysteresis => "upper hysteresis",
-            Self::UpperOutput => "upper output",
-            Self::LowerSetpoint => "lower setpoint",
-            Self::LowerHysteresis => "lower hysteresis",
-            Self::LowerOutput => "lower output",
-        };
-
-        formatter.write_str(name)
+        formatter.write_str(self.descriptor().name)
     }
 }
 
@@ -440,29 +523,32 @@ impl Metakon5x3Write {
     }
 
     fn validate(self) -> Result<(), Metakon5x3ValueError> {
-        match self {
+        let value = match self {
             Self::Setpoint(value) | Self::UpperSetpoint(value) | Self::LowerSetpoint(value) => {
-                validate_range(self.register(), i64::from(value), -999, 9_999)
+                i64::from(value)
             }
 
-            Self::ProportionalBand(value) => {
-                validate_range(self.register(), i64::from(value), 1, 9_999)
-            }
+            Self::ProportionalBand(value) | Self::IntegralTime(value) => i64::from(value),
 
-            Self::IntegralTime(value) => {
-                validate_range(self.register(), i64::from(value), 1, 30_000)
-            }
+            Self::DerivativeTime(value)
+            | Self::UpperHysteresis(value)
+            | Self::LowerHysteresis(value) => i64::from(value),
 
-            Self::OutputPower(value) => {
-                validate_range(self.register(), i64::from(value), -100, 100)
-            }
+            Self::OutputPower(value) => i64::from(value),
 
-            Self::DerivativeTime(_)
-            | Self::UpperHysteresis(_)
-            | Self::UpperOutput(_)
-            | Self::LowerHysteresis(_)
-            | Self::LowerOutput(_) => Ok(()),
-        }
+            Self::UpperOutput(value) | Self::LowerOutput(value) => {
+                if value {
+                    1
+                } else {
+                    0
+                }
+            }
+        };
+
+        let register = self.register();
+        let range = register.descriptor().range;
+
+        validate_range(register, value, range.minimum, range.maximum)
     }
 }
 
