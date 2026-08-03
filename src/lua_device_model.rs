@@ -185,4 +185,73 @@ mod tests {
 
         assert!(error.to_string().contains("Lua execution exceeded"),);
     }
+
+    #[test]
+    fn runs_mutable_sine_generator_model() {
+        let mut model =
+            LuaDeviceModel::from_source(include_str!("../emulator_scripts/sine_generator.lua"))
+                .unwrap();
+
+        assert_eq!(
+            model
+                .handle_command("define first 2 300 0", Duration::ZERO,)
+                .unwrap(),
+            "ok",
+        );
+
+        assert_eq!(
+            model
+                .handle_command("define second 7 300 0", Duration::ZERO,)
+                .unwrap(),
+            "ok",
+        );
+
+        let quarter_period = Duration::from_secs(75);
+
+        let first_value = model
+            .handle_command("read first", quarter_period)
+            .unwrap()
+            .parse::<f64>()
+            .unwrap();
+
+        assert!((first_value - 2.0).abs() < 1.0e-9);
+
+        assert_eq!(
+            model
+                .handle_command("set first amplitude 5.5", Duration::ZERO,)
+                .unwrap(),
+            "ok",
+        );
+
+        let amplitude = model
+            .handle_command("get first amplitude", Duration::ZERO)
+            .unwrap()
+            .parse::<f64>()
+            .unwrap();
+
+        assert_eq!(amplitude, 5.5);
+
+        let changed_value = model
+            .handle_command("read first", quarter_period)
+            .unwrap()
+            .parse::<f64>()
+            .unwrap();
+
+        assert!((changed_value - 5.5).abs() < 1.0e-9);
+
+        let second_value = model
+            .handle_command("read second", quarter_period)
+            .unwrap()
+            .parse::<f64>()
+            .unwrap();
+
+        assert!((second_value - 7.0).abs() < 1.0e-9);
+
+        assert_eq!(
+            model
+                .handle_command("set first period 0", Duration::ZERO,)
+                .unwrap(),
+            "error period must be positive",
+        );
+    }
 }
