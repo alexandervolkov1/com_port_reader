@@ -210,31 +210,30 @@ impl AcquisitionSource for SerialCommandSource {
             SeriesSource::SerialCommand { command } => {
                 let connection = self.connection().map_err(|error| {
                     AcquisitionError::from(format!(
-                        "Cannot acquire serial \
-                                     series: {error}",
+                        "Cannot acquire serial series: \
+                             {error}",
                     ))
                 })?;
 
                 connection.request_f64(command).map_err(|error| {
                     AcquisitionError::from(format!(
-                        "COM series '{}': \
-                                 request '{}' failed: \
-                                 {error}",
+                        "COM series '{}': request '{}' \
+                             failed: {error}",
                         series.name, command,
                     ))
                 })?
             }
 
             SeriesSource::Instrument(request) => {
-                let Some(value) = self.read_instrument_value(*request).map_err(|error| {
+                let value = self.read_instrument_value(*request).map_err(|error| {
                     AcquisitionError::from(format!(
-                        "{} series '{}': \
-                                 {error}",
+                        "{} series '{}': {error}",
                         request.kind_name(),
                         series.name,
                     ))
-                })?
-                else {
+                })?;
+
+                let Some(value) = value else {
                     return Ok(None);
                 };
 

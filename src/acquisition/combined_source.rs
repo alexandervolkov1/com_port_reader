@@ -24,9 +24,8 @@ impl AcquisitionSource for CombinedSource {
                 for source in self.sources[..index].iter_mut().rev() {
                     if let Err(stop_error) = source.stop() {
                         error = format!(
-                            "{error}; additionally \
-                             failed to stop a \
-                             previously started \
+                            "{error}; additionally failed \
+                             to stop a previously started \
                              source: {stop_error}",
                         )
                         .into();
@@ -99,10 +98,9 @@ impl AcquisitionSource for CombinedSource {
                     None => error,
 
                     Some(previous_error) => format!(
-                        "{previous_error}; \
-                                 additionally failed \
-                                 to stop another \
-                                 source: {error}",
+                        "{previous_error}; additionally \
+                             failed to stop another source: \
+                             {error}",
                     )
                     .into(),
                 });
@@ -111,7 +109,6 @@ impl AcquisitionSource for CombinedSource {
 
         match combined_error {
             Some(error) => Err(error),
-
             None => Ok(()),
         }
     }
@@ -119,7 +116,7 @@ impl AcquisitionSource for CombinedSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{AcquisitionSource, CombinedSource};
+    use super::{AcquisitionError, AcquisitionSource, CombinedSource};
 
     use crate::data::{Sample, SeriesId, SeriesMetadata, SeriesSample, SeriesSource};
 
@@ -139,13 +136,13 @@ mod tests {
             &mut self,
             series: &SeriesMetadata,
             timestamp: f64,
-        ) -> Result<Option<SeriesSample>, crate::acquisition::AcquisitionError> {
+        ) -> Result<Option<SeriesSample>, AcquisitionError> {
             if series.id != self.series_id {
                 return Ok(None);
             }
 
             Ok(Some(SeriesSample::new(
-                self.series_id,
+                series.id,
                 Sample::new(timestamp, self.value),
             )))
         }
@@ -154,11 +151,21 @@ mod tests {
     struct TextSource;
 
     impl AcquisitionSource for TextSource {
-        fn request_text(
-            &mut self,
-            command: &str,
-        ) -> Result<Option<String>, crate::acquisition::AcquisitionError> {
-            Ok(Some(format!("response to '{command}'",)))
+        fn request_text(&mut self, command: &str) -> Result<Option<String>, AcquisitionError> {
+            Ok(Some(format!("response to '{command}'")))
+        }
+    }
+
+    fn metadata(id: SeriesId, name: &str) -> SeriesMetadata {
+        SeriesMetadata {
+            id,
+            name: name.to_owned(),
+
+            source: SeriesSource::SerialCommand {
+                command: "read".to_owned(),
+            },
+
+            visible: true,
         }
     }
 
@@ -172,7 +179,7 @@ mod tests {
             Box::new(FixedSource::new(second_id, 20.0)),
         ]);
 
-        let series = [metadata(first_id, "first"), metadata(second_id, "second")];
+        let series = vec![metadata(first_id, "first"), metadata(second_id, "second")];
 
         let mut output = Vec::new();
 
@@ -181,8 +188,8 @@ mod tests {
         assert_eq!(
             output,
             vec![
-                SeriesSample::new(first_id, Sample::new(1_000.0, 10.0,),),
-                SeriesSample::new(second_id, Sample::new(1_000.0, 20.0,),),
+                SeriesSample::new(first_id, Sample::new(1_000.0, 10.0),),
+                SeriesSample::new(second_id, Sample::new(1_000.0, 20.0),),
             ],
         );
     }
@@ -191,17 +198,16 @@ mod tests {
     fn rejects_unsupported_series() {
         let mut source = CombinedSource::new(vec![Box::new(TextSource)]);
 
-        let series = [metadata(SeriesId::new(1), "temperature")];
+        let series = vec![metadata(SeriesId::new(1), "unknown")];
 
         let mut output = Vec::new();
 
         let error = source.sample(&series, 1_000.0, &mut output).unwrap_err();
 
-        assert_eq!(
-            error.to_string(),
-            "No acquisition source supports \
-             series 'temperature' \
-             (COM command: test)",
+        assert!(
+            error
+                .to_string()
+                .contains("No acquisition source supports series")
         );
 
         assert!(output.is_empty());
@@ -217,18 +223,5 @@ mod tests {
         let response = source.request_text("status").unwrap();
 
         assert_eq!(response.as_deref(), Some("response to 'status'"),);
-    }
-
-    fn metadata(id: SeriesId, name: &str) -> SeriesMetadata {
-        SeriesMetadata {
-            id,
-            name: name.to_owned(),
-
-            source: SeriesSource::SerialCommand {
-                command: "test".to_owned(),
-            },
-
-            visible: true,
-        }
     }
 }

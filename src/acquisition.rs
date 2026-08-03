@@ -59,16 +59,31 @@ pub trait AcquisitionSource: Send {
         timestamp: f64,
         output: &mut Vec<SeriesSample>,
     ) -> Result<(), AcquisitionError> {
-        for metadata in series {
-            let sample = self.sample_series(metadata, timestamp)?.ok_or_else(|| {
-                AcquisitionError::from(format!(
-                    "No acquisition source \
-                             supports series '{}' ({})",
-                    metadata.name, metadata.source,
-                ))
-            })?;
+        let original_length = output.len();
 
-            output.push(sample);
+        for series in series {
+            match self.sample_series(series, timestamp) {
+                Ok(Some(sample)) => {
+                    output.push(sample);
+                }
+
+                Ok(None) => {
+                    output.truncate(original_length);
+
+                    return Err(format!(
+                        "No acquisition source supports \
+                         series '{}' ({})",
+                        series.name, series.source,
+                    )
+                    .into());
+                }
+
+                Err(error) => {
+                    output.truncate(original_length);
+
+                    return Err(error);
+                }
+            }
         }
 
         Ok(())
