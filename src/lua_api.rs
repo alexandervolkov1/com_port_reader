@@ -193,13 +193,21 @@ impl LuaMetakon5x3 {
         self.add_series(new_series)
     }
 
-    fn write_request(&self, parameter: Metakon5x3Write) -> mlua::Result<InstrumentWriteRequest> {
-        InstrumentWriteRequest::metakon_5x3(self.instrument, parameter)
+    fn write_request(
+        &self,
+        parameter: Metakon5x3Write,
+        scale: f64,
+    ) -> mlua::Result<InstrumentWriteRequest> {
+        InstrumentWriteRequest::metakon_5x3(self.instrument, parameter, scale)
             .map_err(|error| mlua::Error::RuntimeError(error.to_string()))
     }
 
-    fn write_and_wait(&self, parameter: Metakon5x3Write) -> mlua::Result<InstrumentValue> {
-        let request = self.write_request(parameter)?;
+    fn write_and_wait(
+        &self,
+        parameter: Metakon5x3Write,
+        scale: f64,
+    ) -> mlua::Result<InstrumentValue> {
+        let request = self.write_request(parameter, scale)?;
 
         let (response_sender, response_receiver) = bounded(1);
 
@@ -349,42 +357,43 @@ fn metakon_write_from_lua(
     lua: &Lua,
     parameter: Metakon5x3Register,
     value: Value,
+    scale: f64,
 ) -> mlua::Result<Metakon5x3Write> {
     if !parameter.writable() {
         return Err(mlua::Error::RuntimeError(format!(
-            "Metakon 5X3 parameter \
-                     '{}' is read-only",
+            "Metakon 5X3 parameter '{}' \
+                 is read-only",
             parameter.descriptor().key,
         )));
     }
 
     match parameter {
-        Metakon5x3Register::Setpoint => Ok(Metakon5x3Write::Setpoint(integer_parameter_value(
-            lua, parameter, value,
-        )?)),
+        Metakon5x3Register::Setpoint => Ok(Metakon5x3Write::Setpoint(
+            scaled_integer_parameter_value(lua, parameter, value, scale)?,
+        )),
 
         Metakon5x3Register::ProportionalBand => Ok(Metakon5x3Write::ProportionalBand(
-            integer_parameter_value(lua, parameter, value)?,
+            scaled_integer_parameter_value(lua, parameter, value, scale)?,
         )),
 
         Metakon5x3Register::IntegralTime => Ok(Metakon5x3Write::IntegralTime(
-            integer_parameter_value(lua, parameter, value)?,
+            scaled_integer_parameter_value(lua, parameter, value, scale)?,
         )),
 
         Metakon5x3Register::DerivativeTime => Ok(Metakon5x3Write::DerivativeTime(
-            integer_parameter_value(lua, parameter, value)?,
+            scaled_integer_parameter_value(lua, parameter, value, scale)?,
         )),
 
         Metakon5x3Register::OutputPower => Ok(Metakon5x3Write::OutputPower(
-            integer_parameter_value(lua, parameter, value)?,
+            scaled_integer_parameter_value(lua, parameter, value, scale)?,
         )),
 
         Metakon5x3Register::UpperSetpoint => Ok(Metakon5x3Write::UpperSetpoint(
-            integer_parameter_value(lua, parameter, value)?,
+            scaled_integer_parameter_value(lua, parameter, value, scale)?,
         )),
 
         Metakon5x3Register::UpperHysteresis => Ok(Metakon5x3Write::UpperHysteresis(
-            integer_parameter_value(lua, parameter, value)?,
+            scaled_integer_parameter_value(lua, parameter, value, scale)?,
         )),
 
         Metakon5x3Register::UpperOutput => Ok(Metakon5x3Write::UpperOutput(
@@ -392,11 +401,11 @@ fn metakon_write_from_lua(
         )),
 
         Metakon5x3Register::LowerSetpoint => Ok(Metakon5x3Write::LowerSetpoint(
-            integer_parameter_value(lua, parameter, value)?,
+            scaled_integer_parameter_value(lua, parameter, value, scale)?,
         )),
 
         Metakon5x3Register::LowerHysteresis => Ok(Metakon5x3Write::LowerHysteresis(
-            integer_parameter_value(lua, parameter, value)?,
+            scaled_integer_parameter_value(lua, parameter, value, scale)?,
         )),
 
         Metakon5x3Register::LowerOutput => Ok(Metakon5x3Write::LowerOutput(
@@ -407,34 +416,56 @@ fn metakon_write_from_lua(
         | Metakon5x3Register::Measurement
         | Metakon5x3Register::PwmPositive
         | Metakon5x3Register::PwmNegative => {
-            unreachable!(
-                "read-only parameters were \
-                 rejected above"
-            )
+            unreachable!("read-only parameters were rejected above")
         }
     }
 }
 
-fn integer_parameter_value<T>(
+fn scaled_integer_parameter_value<T>(
     lua: &Lua,
     parameter: Metakon5x3Register,
     value: Value,
+    scale: f64,
 ) -> mlua::Result<T>
 where
     T: TryFrom<i64>,
 {
-    let value = i64::from_lua(value, lua).map_err(|_| {
+    let engineering_value = f64::from_lua(value, lua).map_err(|_| {
         mlua::Error::RuntimeError(format!(
-            "Metakon 5X3 parameter \
-                         '{}' expects an integer \
-                         value",
+            "Metakon 5X3 parameter '{}' \
+                 expects a numeric value",
             parameter.descriptor().key,
         ))
     })?;
 
-    T::try_from(value).map_err(|_| {
+    if !engineering_value.is_finite() {
+        return Err(mlua::Error::RuntimeError(format!(
+            "Metakon 5X3 parameter '{}' \
+                 must be finite",
+            parameter.descriptor().key,
+        )));
+    }
+
+    let raw_value = engineering_value / scale;
+
+    let rounded_value = raw_value.round();
+
+    let tolerance = raw_value.abs().max(1.0) * 1.0e-9;
+
+    if (raw_value - rounded_value).abs() > tolerance {
+        return Err(mlua::Error::RuntimeError(format!(
+            "Value {engineering_value} cannot \
+                 be represented by Metakon 5X3 \
+                 parameter '{}' with scale {scale}",
+            parameter.descriptor().key,
+        )));
+    }
+
+    let raw_value = rounded_value as i64;
+
+    T::try_from(raw_value).map_err(|_| {
         mlua::Error::RuntimeError(format!(
-            "Value {value} does not fit \
+            "Raw value {raw_value} does not fit \
              Metakon 5X3 parameter '{}'",
             parameter.descriptor().key,
         ))
@@ -499,9 +530,11 @@ impl UserData for LuaMetakon5x3 {
             |lua, controller, (parameter_key, value): (String, Value)| {
                 let parameter = metakon_parameter_from_key(&parameter_key)?;
 
-                let write = metakon_write_from_lua(lua, parameter, value)?;
+                let scale = controller.parameter_scale(parameter);
 
-                let actual_value = controller.write_and_wait(write)?;
+                let write = metakon_write_from_lua(lua, parameter, value, scale)?;
+
+                let actual_value = controller.write_and_wait(write, scale)?;
 
                 Ok(instrument_value_to_lua(actual_value))
             },

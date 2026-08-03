@@ -120,20 +120,9 @@ impl SerialCommandSource {
                     ));
                 }
 
-                match register_value {
-                    RegisterValue::Bool(value) => Ok(InstrumentValue::Boolean(value)),
+                let value = register_value_to_instrument_value(register_value)?;
 
-                    value if scale == 1.0 => register_value_to_instrument_value(value),
-
-                    value => {
-                        let raw_value = value.into_f64().expect(
-                            "Metakon 5X3 parameters always contain \
-                             numeric or boolean values",
-                        );
-
-                        Ok(InstrumentValue::Number(raw_value * scale))
-                    }
-                }
+                Ok(scale_instrument_value(value, scale))
             }
         }
     }
@@ -146,7 +135,15 @@ impl SerialCommandSource {
             InstrumentWriteRequest::Metakon5x3 {
                 instrument,
                 parameter,
+                scale,
             } => {
+                if !scale.is_finite() || scale <= 0.0 {
+                    return Err(AcquisitionError::from(
+                        "Instrument scale must be finite \
+                         and greater than zero",
+                    ));
+                }
+
                 let connection =
                     self.verified_metakon_connection(instrument.device(), instrument.channel())?;
 
@@ -154,7 +151,9 @@ impl SerialCommandSource {
                     .write(connection, parameter)
                     .map_err(|error| AcquisitionError::from(error.to_string()))?;
 
-                register_value_to_instrument_value(actual_value)
+                let actual_value = register_value_to_instrument_value(actual_value)?;
+
+                Ok(scale_instrument_value(actual_value, scale))
             }
         }
     }
@@ -186,6 +185,18 @@ fn register_value_to_instrument_value(
             "Instrument operation returned an \
                  unexpected ASCII value",
         )),
+    }
+}
+
+fn scale_instrument_value(value: InstrumentValue, scale: f64) -> InstrumentValue {
+    match value {
+        InstrumentValue::Boolean(value) => InstrumentValue::Boolean(value),
+
+        InstrumentValue::Integer(value) if scale == 1.0 => InstrumentValue::Integer(value),
+
+        InstrumentValue::Integer(value) => InstrumentValue::Number(value as f64 * scale),
+
+        InstrumentValue::Number(value) => InstrumentValue::Number(value * scale),
     }
 }
 

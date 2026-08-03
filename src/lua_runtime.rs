@@ -82,8 +82,10 @@ mod tests {
         device: u8,
         channel: u8,
         parameter: Metakon5x3Write,
+        scale: f64,
     ) -> InstrumentWriteRequest {
-        InstrumentWriteRequest::metakon_5x3(Metakon5x3::new(device, channel), parameter).unwrap()
+        InstrumentWriteRequest::metakon_5x3(Metakon5x3::new(device, channel), parameter, scale)
+            .unwrap()
     }
 
     #[test]
@@ -631,7 +633,7 @@ mod tests {
     }
 
     #[test]
-    fn writes_metakon_parameter_by_key() {
+    fn writes_scaled_metakon_parameter_by_key() {
         let runtime = LuaRuntime::new();
 
         let (command_sender, command_receiver) = unbounded();
@@ -641,10 +643,11 @@ mod tests {
         runtime
             .execute(
                 r#"
-                    controller = app.metakon({
-                        device = 15,
-                        channel = 2,
-                    })
+                controller = app.metakon({
+                    device = 15,
+                    channel = 2,
+                    scale = 0.1,
+                })
                 "#,
             )
             .unwrap();
@@ -662,21 +665,26 @@ mod tests {
 
             assert_eq!(
                 request,
-                metakon_write_request(15, 2, Metakon5x3Write::Setpoint(150),),
+                metakon_write_request(15, 2, Metakon5x3Write::Setpoint(150,), 0.1,),
             );
 
             response_sender
-                .send(Ok(InstrumentValue::Integer(150)))
+                .send(Ok(InstrumentValue::Number(15.0)))
                 .unwrap();
         });
 
         let output = runtime
-            .evaluate_for_repl(r#"controller:write("setpoint", 150)"#)
+            .evaluate_for_repl(
+                r#"controller:write(
+                    "setpoint",
+                    15.0
+                )"#,
+            )
             .unwrap();
 
         responder.join().unwrap();
 
-        assert_eq!(output, vec!["150"]);
+        assert_eq!(output, vec!["15"]);
     }
 
     #[test]
@@ -851,6 +859,39 @@ mod tests {
                 "#,
             )
             .unwrap();
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn rejects_scaled_value_that_cannot_be_represented() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                controller = app.metakon({
+                    scale = 0.1,
+                })
+                "#,
+            )
+            .unwrap();
+
+        let error = runtime
+            .evaluate_for_repl(
+                r#"controller:write(
+                    "setpoint",
+                    15.05
+                )"#,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("cannot be represented",));
 
         assert!(command_receiver.try_recv().is_err());
     }

@@ -151,11 +151,12 @@ impl std::fmt::Display for InstrumentReadRequest {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InstrumentWriteRequest {
     Metakon5x3 {
         instrument: Metakon5x3,
         parameter: Metakon5x3Write,
+        scale: f64,
     },
 }
 
@@ -163,12 +164,14 @@ impl InstrumentWriteRequest {
     pub fn metakon_5x3(
         instrument: Metakon5x3,
         parameter: Metakon5x3Write,
+        scale: f64,
     ) -> Result<Self, metakon_5x3::Metakon5x3ValueError> {
         parameter.validate()?;
 
         Ok(Self::Metakon5x3 {
             instrument,
             parameter,
+            scale,
         })
     }
 }
@@ -179,15 +182,17 @@ impl std::fmt::Display for InstrumentWriteRequest {
             Self::Metakon5x3 {
                 instrument,
                 parameter,
+                scale,
             } => {
                 write!(
                     formatter,
                     "Metakon 5X3 device {}, channel {}, \
-                     parameter {} = {}",
+                     parameter {} = {}, scale {}",
                     instrument.device(),
                     instrument.channel(),
                     parameter.register(),
                     parameter.value(),
+                    scale,
                 )
             }
         }
