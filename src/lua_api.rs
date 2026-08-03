@@ -247,6 +247,28 @@ impl LuaMetakon5x3 {
         }
     }
 
+    fn parameters(&self, lua: &Lua) -> mlua::Result<Table> {
+        let parameters = lua.create_table_with_capacity(Metakon5x3Register::ALL.len(), 0)?;
+
+        for (index, parameter) in Metakon5x3Register::ALL.into_iter().enumerate() {
+            let descriptor = parameter.descriptor();
+
+            let entry = lua.create_table_with_capacity(0, 7)?;
+
+            entry.set("key", descriptor.key)?;
+            entry.set("name", descriptor.name)?;
+            entry.set("access", descriptor.access.as_str())?;
+            entry.set("value_type", descriptor.value_type.as_str())?;
+            entry.set("minimum", descriptor.range.minimum)?;
+            entry.set("maximum", descriptor.range.maximum)?;
+            entry.set("scale", self.parameter_scale(parameter))?;
+
+            parameters.raw_set((index + 1) as i64, entry)?;
+        }
+
+        Ok(parameters)
+    }
+
     fn read_parameter(&self, parameter: Metakon5x3Register) -> mlua::Result<InstrumentValue> {
         let scale = self.parameter_scale(parameter);
 
@@ -408,6 +430,10 @@ impl UserData for LuaMetakon5x3 {
     where
         M: UserDataMethods<Self>,
     {
+        methods.add_method("parameters", |lua, controller, ()| {
+            controller.parameters(lua)
+        });
+
         methods.add_method(
             "add",
             |_, controller, (parameter_key, name): (String, Option<String>)| {

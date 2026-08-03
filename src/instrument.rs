@@ -12,6 +12,13 @@ impl ParameterAccess {
     pub const fn writable(self) -> bool {
         matches!(self, Self::ReadWrite)
     }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read_only",
+            Self::ReadWrite => "read_write",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,6 +34,18 @@ pub enum ParameterValueType {
 pub struct ParameterRange {
     pub minimum: i64,
     pub maximum: i64,
+}
+
+impl ParameterValueType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Boolean => "boolean",
+            Self::Unsigned8 => "u8",
+            Self::Signed8 => "i8",
+            Self::Unsigned16 => "u16",
+            Self::Signed16 => "i16",
+        }
+    }
 }
 
 impl ParameterRange {

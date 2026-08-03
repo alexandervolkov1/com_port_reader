@@ -703,4 +703,70 @@ mod tests {
 
         assert!(command_receiver.try_recv().is_err());
     }
+
+    #[test]
+    fn exposes_metakon_parameter_descriptors() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                local controller = app.metakon({
+                    device = 15,
+                    channel = 2,
+                    scale = 0.1,
+                })
+
+                local parameters = controller:parameters()
+
+                assert(#parameters == 15)
+
+                local by_key = {}
+
+                for _, parameter in ipairs(parameters) do
+                    by_key[parameter.key] = parameter
+                end
+
+                local measurement = by_key.measurement
+
+                assert(measurement.name == "measurement")
+                assert(measurement.access == "read_only")
+                assert(measurement.value_type == "i16")
+                assert(measurement.minimum == -32767)
+                assert(measurement.maximum == 32767)
+                assert(measurement.scale == 0.1)
+
+                local setpoint = by_key.setpoint
+
+                assert(setpoint.access == "read_write")
+                assert(setpoint.value_type == "i16")
+                assert(setpoint.minimum == -999)
+                assert(setpoint.maximum == 9999)
+                assert(setpoint.scale == 0.1)
+
+                local output_power = by_key.output_power
+
+                assert(output_power.access == "read_write")
+                assert(output_power.value_type == "i8")
+                assert(output_power.minimum == -100)
+                assert(output_power.maximum == 100)
+                assert(output_power.scale == 1.0)
+
+                local pwm_positive = by_key.pwm_positive
+
+                assert(pwm_positive.access == "read_only")
+                assert(pwm_positive.value_type == "boolean")
+                assert(pwm_positive.minimum == 0)
+                assert(pwm_positive.maximum == 1)
+                assert(pwm_positive.scale == 1.0)
+                "#,
+            )
+            .unwrap();
+
+        assert!(command_receiver.try_recv().is_err());
+    }
 }
