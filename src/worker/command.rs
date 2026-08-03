@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use crossbeam_channel::Sender;
 
 use crate::{
-    acquisition::{InstrumentReadResult, InstrumentWriteResult},
+    acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
     data::{NewSeries, SeriesId},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     serial_connection::SerialPortConfig,
@@ -44,5 +44,9 @@ pub enum WorkerCommand {
         port_name: String,
         request: InstrumentWriteRequest,
         response_sender: Sender<InstrumentWriteResult>,
+    },
+
+    DescribeVirtualInstruments {
+        response_sender: Sender<VirtualInstrumentDescribeResult>,
     },
 }

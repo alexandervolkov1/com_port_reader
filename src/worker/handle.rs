@@ -3,7 +3,7 @@ use std::{error::Error, fmt, path::PathBuf, time::Duration};
 use crossbeam_channel::Sender;
 
 use crate::{
-    acquisition::{InstrumentReadResult, InstrumentWriteResult},
+    acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
     data::{NewSeries, SeriesId},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     serial_connection::SerialPortConfig,
@@ -116,6 +116,13 @@ impl WorkerHandle {
             request,
             response_sender,
         })
+    }
+
+    pub fn describe_virtual_instruments(
+        &self,
+        response_sender: Sender<VirtualInstrumentDescribeResult>,
+    ) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::DescribeVirtualInstruments { response_sender })
     }
 }
 

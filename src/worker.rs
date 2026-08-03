@@ -10,7 +10,9 @@ use std::{
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 
 use crate::{
-    acquisition::{AcquisitionError, AcquisitionSource, InstrumentReadResult},
+    acquisition::{
+        AcquisitionError, AcquisitionSource, InstrumentReadResult, VirtualInstrumentDescribeResult,
+    },
     data::{Series, SeriesSample, SeriesStore},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError},
@@ -497,6 +499,29 @@ impl Worker {
                         let _ = response_sender.send(result);
                     }
 
+                    Ok(WorkerCommand::DescribeVirtualInstruments { response_sender }) => {
+                        let acquisition_running =
+                            matches!(&state, AcquisitionState::Running { .. });
+
+                        let mut result = describe_virtual_instruments_from_source(source.as_mut());
+
+                        // Если опрос остановлен, describe является разовой
+                        // операцией и не должен оставлять COM-порт открытым.
+                        if !acquisition_running && let Err(stop_error) = source.stop() {
+                            result = match result {
+                                Ok(_) => Err(stop_error),
+
+                                Err(error) => Err(format!(
+                                    "{error}; additionally failed to close \
+                                     the instrument source: {stop_error}",
+                                )
+                                .into()),
+                            };
+                        }
+
+                        let _ = response_sender.send(result);
+                    }
+
                     Err(RecvTimeoutError::Timeout) => {}
 
                     Err(RecvTimeoutError::Disconnected) => {
@@ -621,6 +646,17 @@ fn write_instrument_to_source(
         AcquisitionError::from(
             "No acquisition source supports \
              instrument writes",
+        )
+    })
+}
+
+fn describe_virtual_instruments_from_source(
+    source: &mut dyn AcquisitionSource,
+) -> VirtualInstrumentDescribeResult {
+    source.describe_virtual_instruments()?.ok_or_else(|| {
+        AcquisitionError::from(
+            "No acquisition source supports \
+                 virtual instrument discovery",
         )
     })
 }
