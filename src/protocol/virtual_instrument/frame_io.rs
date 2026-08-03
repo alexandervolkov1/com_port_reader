@@ -1,7 +1,8 @@
 use std::io::{Read, Write};
 
 use super::{
-    CRC_LENGTH, HEADER_LENGTH, VirtualFrameError, VirtualInstrumentFrame, decode_frame_header,
+    CRC_LENGTH, HEADER_LENGTH, MAGIC, VirtualFrameError, VirtualInstrumentFrame,
+    decode_frame_header,
 };
 
 pub fn read_frame<R>(reader: &mut R) -> Result<VirtualInstrumentFrame, VirtualFrameIoError>
@@ -42,6 +43,81 @@ where
     writer.flush()?;
 
     Ok(())
+}
+
+#[derive(Default)]
+pub struct VirtualFrameDecoder {
+    buffer: Vec<u8>,
+}
+
+impl VirtualFrameDecoder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(&mut self, bytes: &[u8]) {
+        self.buffer.extend_from_slice(bytes);
+    }
+
+    pub fn next_frame(&mut self) -> Result<Option<VirtualInstrumentFrame>, VirtualFrameError> {
+        if !self.align_to_magic() {
+            return Ok(None);
+        }
+
+        if self.buffer.len() < HEADER_LENGTH {
+            return Ok(None);
+        }
+
+        let payload_length = match decode_frame_header(&self.buffer[..HEADER_LENGTH]) {
+            Ok((_, payload_length)) => payload_length,
+
+            Err(error) => {
+                self.buffer.drain(..1);
+
+                return Err(error);
+            }
+        };
+
+        let frame_length = HEADER_LENGTH + payload_length + CRC_LENGTH;
+
+        if self.buffer.len() < frame_length {
+            return Ok(None);
+        }
+
+        let encoded = self.buffer.drain(..frame_length).collect::<Vec<_>>();
+
+        VirtualInstrumentFrame::decode(&encoded).map(Some)
+    }
+
+    fn align_to_magic(&mut self) -> bool {
+        if self.buffer.len() < MAGIC.len() {
+            return false;
+        }
+
+        if self.buffer.starts_with(&MAGIC) {
+            return true;
+        }
+
+        if let Some(position) = self
+            .buffer
+            .windows(MAGIC.len())
+            .position(|window| window == MAGIC)
+        {
+            self.buffer.drain(..position);
+
+            return true;
+        }
+
+        let keep_first_magic_byte = self.buffer.last() == Some(&MAGIC[0]);
+
+        self.buffer.clear();
+
+        if keep_first_magic_byte {
+            self.buffer.push(MAGIC[0]);
+        }
+
+        false
+    }
 }
 
 #[derive(Debug)]
@@ -91,7 +167,7 @@ impl From<VirtualFrameError> for VirtualFrameIoError {
 mod tests {
     use std::io::Cursor;
 
-    use super::{VirtualFrameIoError, read_frame, write_frame};
+    use super::{VirtualFrameDecoder, VirtualFrameIoError, read_frame, write_frame};
 
     use crate::protocol::virtual_instrument::{MessageKind, VirtualInstrumentFrame};
 
@@ -172,5 +248,62 @@ mod tests {
         let result = read_frame(&mut input);
 
         assert!(matches!(result, Err(VirtualFrameIoError::Frame(_)),));
+    }
+
+    #[test]
+    fn decodes_fragmented_frame() {
+        let expected =
+            VirtualInstrumentFrame::new(MessageKind::ReadRequest, vec![1, 0, 2, 0]).unwrap();
+
+        let encoded = expected.encode();
+
+        let mut decoder = VirtualFrameDecoder::new();
+
+        for &byte in &encoded[..encoded.len() - 1] {
+            decoder.push(&[byte]);
+
+            assert!(decoder.next_frame().unwrap().is_none(),);
+        }
+
+        decoder.push(&encoded[encoded.len() - 1..]);
+
+        assert_eq!(decoder.next_frame().unwrap(), Some(expected),);
+    }
+
+    #[test]
+    fn decodes_multiple_buffered_frames() {
+        let first = VirtualInstrumentFrame::new(MessageKind::DescribeRequest, Vec::new()).unwrap();
+
+        let second =
+            VirtualInstrumentFrame::new(MessageKind::ReadRequest, vec![1, 0, 1, 0]).unwrap();
+
+        let mut bytes = first.encode();
+        bytes.extend_from_slice(&second.encode());
+
+        let mut decoder = VirtualFrameDecoder::new();
+
+        decoder.push(&bytes);
+
+        assert_eq!(decoder.next_frame().unwrap(), Some(first),);
+
+        assert_eq!(decoder.next_frame().unwrap(), Some(second),);
+
+        assert!(decoder.next_frame().unwrap().is_none(),);
+    }
+
+    #[test]
+    fn skips_bytes_before_frame_magic() {
+        let expected =
+            VirtualInstrumentFrame::new(MessageKind::DescribeRequest, Vec::new()).unwrap();
+
+        let mut bytes = vec![0x00, 0x11, 0x22, 0x33];
+
+        bytes.extend_from_slice(&expected.encode());
+
+        let mut decoder = VirtualFrameDecoder::new();
+
+        decoder.push(&bytes);
+
+        assert_eq!(decoder.next_frame().unwrap(), Some(expected),);
     }
 }

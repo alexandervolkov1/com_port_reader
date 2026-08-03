@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{Read, Write},
+    io::Read,
     path::PathBuf,
     sync::{
         Arc,
@@ -14,12 +14,15 @@ use std::{
 use serialport::{ClearBuffer, DataBits, FlowControl, Parity, SerialPort, StopBits};
 
 use crate::{
-    device_model::{DeviceModel, DeviceModelError},
-    lua_device_model::LuaDeviceModel,
+    lua_virtual_instrument_model::LuaVirtualInstrumentModel,
+    protocol::virtual_instrument::{
+        VirtualFrameDecoder, VirtualFrameError, VirtualFrameIoError, VirtualInstrumentMessage,
+        VirtualInstrumentModelError, VirtualInstrumentServer, VirtualMessageCodecError,
+        write_frame,
+    },
 };
 
 const READ_TIMEOUT: Duration = Duration::from_millis(100);
-const MAX_COMMAND_LENGTH: usize = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceEmulatorPortConfig {
@@ -144,7 +147,7 @@ fn run_emulator(
     script_path: PathBuf,
     startup_sender: SyncSender<Result<(), DeviceEmulatorHandleError>>,
 ) -> Result<(), DeviceEmulatorHandleError> {
-    let mut model = match create_device_model(script_path) {
+    let model = match create_device_model(script_path) {
         Ok(model) => model,
 
         Err(error) => {
@@ -154,53 +157,37 @@ fn run_emulator(
         }
     };
 
+    let mut server = VirtualInstrumentServer::new(model);
+
     let started_at = Instant::now();
 
     if startup_sender.send(Ok(())).is_err() {
         return Ok(());
     }
 
-    let mut command_buffer = Vec::new();
-    let mut read_buffer = [0_u8; 64];
+    let mut decoder = VirtualFrameDecoder::new();
+
+    let mut read_buffer = [0_u8; 256];
 
     while !stop_requested.load(Ordering::Acquire) {
         match port.read(&mut read_buffer) {
             Ok(0) => {}
 
             Ok(bytes_read) => {
-                for &byte in &read_buffer[..bytes_read] {
-                    match byte {
-                        b'\n' => {
-                            let command =
-                                String::from_utf8_lossy(&command_buffer).trim().to_owned();
+                decoder.push(&read_buffer[..bytes_read]);
 
-                            command_buffer.clear();
+                loop {
+                    let Some(frame) = decoder.next_frame()? else {
+                        break;
+                    };
 
-                            let response = model.handle_command(&command, started_at.elapsed())?;
+                    let request = VirtualInstrumentMessage::decode_frame(&frame)?;
 
-                            writeln!(port, "{response}",)?;
+                    let response = server.handle(request, started_at.elapsed());
 
-                            port.flush()?;
-                        }
+                    let response_frame = response.encode_frame()?;
 
-                        b'\r' => {}
-
-                        value => {
-                            if command_buffer.len() >= MAX_COMMAND_LENGTH {
-                                command_buffer.clear();
-
-                                writeln!(
-                                    port,
-                                    "error command is \
-                                     too long",
-                                )?;
-
-                                port.flush()?;
-                            } else {
-                                command_buffer.push(value);
-                            }
-                        }
-                    }
+                    write_frame(port.as_mut(), &response_frame)?;
                 }
             }
 
@@ -215,24 +202,24 @@ fn run_emulator(
     Ok(())
 }
 
-fn create_device_model(path: PathBuf) -> Result<Box<dyn DeviceModel>, DeviceEmulatorHandleError> {
+fn create_device_model(
+    path: PathBuf,
+) -> Result<LuaVirtualInstrumentModel, DeviceEmulatorHandleError> {
     let script = fs::read_to_string(&path).map_err(|error| {
         DeviceEmulatorHandleError::from(format!(
-            "Failed to read Lua device script \
-                 '{}': {error}",
+            "Failed to read Lua device \
+                         script '{}': {error}",
             path.display(),
         ))
     })?;
 
-    let model = LuaDeviceModel::from_source(&script).map_err(|error| {
+    LuaVirtualInstrumentModel::from_source(&script).map_err(|error| {
         DeviceEmulatorHandleError::from(format!(
-            "Failed to initialize Lua device \
-                     script '{}': {error}",
+            "Failed to initialize Lua virtual \
+                 instrument script '{}': {error}",
             path.display(),
         ))
-    })?;
-
-    Ok(Box::new(model))
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -248,8 +235,32 @@ impl std::fmt::Display for DeviceEmulatorHandleError {
 
 impl std::error::Error for DeviceEmulatorHandleError {}
 
-impl From<DeviceModelError> for DeviceEmulatorHandleError {
-    fn from(error: DeviceModelError) -> Self {
+impl From<VirtualInstrumentModelError> for DeviceEmulatorHandleError {
+    fn from(error: VirtualInstrumentModelError) -> Self {
+        Self {
+            message: error.to_string(),
+        }
+    }
+}
+
+impl From<VirtualFrameError> for DeviceEmulatorHandleError {
+    fn from(error: VirtualFrameError) -> Self {
+        Self {
+            message: error.to_string(),
+        }
+    }
+}
+
+impl From<VirtualFrameIoError> for DeviceEmulatorHandleError {
+    fn from(error: VirtualFrameIoError) -> Self {
+        Self {
+            message: error.to_string(),
+        }
+    }
+}
+
+impl From<VirtualMessageCodecError> for DeviceEmulatorHandleError {
+    fn from(error: VirtualMessageCodecError) -> Self {
         Self {
             message: error.to_string(),
         }

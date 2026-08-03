@@ -1,7 +1,6 @@
 use self::metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write};
 
 pub mod metakon_5x3;
-
 pub mod virtual_instrument;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

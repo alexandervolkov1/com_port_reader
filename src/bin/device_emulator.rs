@@ -1,15 +1,3 @@
-#[path = "../device_model.rs"]
-mod device_model;
-
-#[path = "../lua_device_model.rs"]
-mod lua_device_model;
-
-#[path = "../lua_execution.rs"]
-mod lua_execution;
-
-#[path = "../device_emulator_handle.rs"]
-mod device_emulator_handle;
-
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 use std::{
     env,
@@ -21,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use device_emulator_handle::{DeviceEmulatorHandle, DeviceEmulatorPortConfig};
+use com_port_reader::device_emulator_handle::{DeviceEmulatorHandle, DeviceEmulatorPortConfig};
 
 const DEFAULT_BAUD_RATE: u32 = 9_600;
 

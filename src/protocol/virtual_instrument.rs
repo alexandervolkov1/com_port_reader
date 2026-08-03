@@ -1,6 +1,13 @@
+#[path = "virtual_instrument/client.rs"]
 mod client;
+
+#[path = "virtual_instrument/frame_io.rs"]
 mod frame_io;
+
+#[path = "virtual_instrument/message.rs"]
 mod message;
+
+#[path = "virtual_instrument/server.rs"]
 mod server;
 
 pub use client::{
@@ -8,8 +15,7 @@ pub use client::{
 };
 pub use server::{VirtualInstrumentModel, VirtualInstrumentModelError, VirtualInstrumentServer};
 
-pub use frame_io::{VirtualFrameIoError, read_frame, write_frame};
-
+pub use frame_io::{VirtualFrameDecoder, VirtualFrameIoError, read_frame, write_frame};
 pub use message::{VirtualInstrumentMessage, VirtualMessageCodecError};
 
 pub const MAGIC: [u8; 2] = *b"VI";
