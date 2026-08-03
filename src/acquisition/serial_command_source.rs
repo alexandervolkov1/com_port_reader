@@ -6,7 +6,7 @@ use crate::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
         metakon_5x3::{Metakon5x3, Metakon5x3Register},
     },
-    protocol::metakon::RegisterValue,
+    protocol::{metakon::RegisterValue, virtual_instrument::VirtualInstrumentClient},
     serial_connection::{SerialConfigStore, SerialConnection},
 };
 
@@ -124,6 +124,21 @@ impl SerialCommandSource {
 
                 Ok(Some(scale_instrument_value(value, scale)))
             }
+
+            InstrumentReadRequest::VirtualInstrument {
+                instrument,
+                parameter,
+            } => {
+                let connection = self.connection()?;
+
+                let mut client = VirtualInstrumentClient::new(connection);
+
+                let value = client
+                    .read(instrument, parameter)
+                    .map_err(|error| AcquisitionError::from(error.to_string()))?;
+
+                Ok(Some(value))
+            }
         }
     }
 
@@ -154,6 +169,22 @@ impl SerialCommandSource {
                 let actual_value = register_value_to_instrument_value(actual_value)?;
 
                 Ok(Some(scale_instrument_value(actual_value, scale)))
+            }
+
+            InstrumentWriteRequest::VirtualInstrument {
+                instrument,
+                parameter,
+                value,
+            } => {
+                let connection = self.connection()?;
+
+                let mut client = VirtualInstrumentClient::new(connection);
+
+                let actual_value = client
+                    .write(instrument, parameter, value)
+                    .map_err(|error| AcquisitionError::from(error.to_string()))?;
+
+                Ok(Some(actual_value))
             }
         }
     }
@@ -296,6 +327,7 @@ mod tests {
         instrument::{
             InstrumentReadRequest,
             metakon_5x3::{Metakon5x3, Metakon5x3IdentificationError, Metakon5x3Register},
+            virtual_instrument::{VirtualInstrumentId, VirtualParameterId},
         },
         serial_connection::SerialConfigStore,
     };
@@ -381,5 +413,34 @@ mod tests {
             "unexpected Metakon channel type 0x04; \
              expected Metakon 5X3 type 0x03",
         );
+    }
+
+    #[test]
+    fn reports_missing_config_for_virtual_series() {
+        let mut source = SerialCommandSource::new(SerialConfigStore::new());
+
+        let request = InstrumentReadRequest::virtual_instrument(
+            VirtualInstrumentId::new(1),
+            VirtualParameterId::new(1),
+        );
+
+        let series = vec![SeriesMetadata {
+            id: SeriesId::new(1),
+            name: "signal".to_owned(),
+            source: SeriesSource::Instrument(request),
+            visible: true,
+        }];
+
+        let mut output = Vec::new();
+
+        let error = source.sample(&series, 1_000.0, &mut output).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Virtual instrument series 'signal': \
+             COM port is not selected",
+        );
+
+        assert!(output.is_empty());
     }
 }

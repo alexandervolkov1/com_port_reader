@@ -296,6 +296,7 @@ mod tests {
         instrument::{
             InstrumentReadRequest,
             metakon_5x3::{Metakon5x3, Metakon5x3Register},
+            virtual_instrument::{VirtualInstrumentId, VirtualParameterId},
         },
     };
 
@@ -687,5 +688,26 @@ mod tests {
 
             assert_eq!(result, Err(AddSeriesError::InvalidInstrumentScale,),);
         }
+    }
+
+    #[test]
+    fn stores_virtual_instrument_series() {
+        let store = SeriesStore::new();
+
+        let request = InstrumentReadRequest::virtual_instrument(
+            VirtualInstrumentId::new(1),
+            VirtualParameterId::new(2),
+        );
+
+        store
+            .add_series(NewSeries::unnamed_instrument(request))
+            .unwrap();
+
+        let metadata = store.metadata();
+
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0].name, "virtual1");
+
+        assert_eq!(metadata[0].source, SeriesSource::Instrument(request),);
     }
 }

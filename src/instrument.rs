@@ -1,4 +1,5 @@
 use self::metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write};
+use self::virtual_instrument::{VirtualInstrumentId, VirtualParameterId};
 
 pub mod metakon_5x3;
 pub mod virtual_instrument;
@@ -102,6 +103,11 @@ pub enum InstrumentReadRequest {
         parameter: Metakon5x3Register,
         scale: f64,
     },
+
+    VirtualInstrument {
+        instrument: VirtualInstrumentId,
+        parameter: VirtualParameterId,
+    },
 }
 
 impl InstrumentReadRequest {
@@ -117,21 +123,37 @@ impl InstrumentReadRequest {
         }
     }
 
+    pub const fn virtual_instrument(
+        instrument: VirtualInstrumentId,
+        parameter: VirtualParameterId,
+    ) -> Self {
+        Self::VirtualInstrument {
+            instrument,
+            parameter,
+        }
+    }
+
     pub const fn scale(&self) -> f64 {
         match self {
             Self::Metakon5x3 { scale, .. } => *scale,
+
+            Self::VirtualInstrument { .. } => 1.0,
         }
     }
 
     pub(crate) const fn default_name_prefix(&self) -> &'static str {
         match self {
             Self::Metakon5x3 { .. } => "metakon",
+
+            Self::VirtualInstrument { .. } => "virtual",
         }
     }
 
     pub(crate) const fn kind_name(&self) -> &'static str {
         match self {
             Self::Metakon5x3 { .. } => "Metakon",
+
+            Self::VirtualInstrument { .. } => "Virtual instrument",
         }
     }
 }
@@ -146,12 +168,24 @@ impl std::fmt::Display for InstrumentReadRequest {
             } => {
                 write!(
                     formatter,
-                    "Metakon 5X3: device {}, channel {}, \
-                     parameter {}, scale {}",
+                    "Metakon 5X3: device {}, channel \
+                     {}, parameter {}, scale {}",
                     instrument.device(),
                     instrument.channel(),
                     parameter,
                     scale,
+                )
+            }
+
+            Self::VirtualInstrument {
+                instrument,
+                parameter,
+            } => {
+                write!(
+                    formatter,
+                    "Virtual instrument {}, \
+                     parameter {}",
+                    instrument, parameter,
                 )
             }
         }
@@ -164,6 +198,12 @@ pub enum InstrumentWriteRequest {
         instrument: Metakon5x3,
         parameter: Metakon5x3Write,
         scale: f64,
+    },
+
+    VirtualInstrument {
+        instrument: VirtualInstrumentId,
+        parameter: VirtualParameterId,
+        value: InstrumentValue,
     },
 }
 
@@ -181,6 +221,18 @@ impl InstrumentWriteRequest {
             scale,
         })
     }
+
+    pub const fn virtual_instrument(
+        instrument: VirtualInstrumentId,
+        parameter: VirtualParameterId,
+        value: InstrumentValue,
+    ) -> Self {
+        Self::VirtualInstrument {
+            instrument,
+            parameter,
+            value,
+        }
+    }
 }
 
 impl std::fmt::Display for InstrumentWriteRequest {
@@ -193,13 +245,26 @@ impl std::fmt::Display for InstrumentWriteRequest {
             } => {
                 write!(
                     formatter,
-                    "Metakon 5X3 device {}, channel {}, \
-                     parameter {} = {}, scale {}",
+                    "Metakon 5X3 device {}, channel \
+                     {}, parameter {} = {}, scale {}",
                     instrument.device(),
                     instrument.channel(),
                     parameter.register(),
                     parameter.value(),
                     scale,
+                )
+            }
+
+            Self::VirtualInstrument {
+                instrument,
+                parameter,
+                value,
+            } => {
+                write!(
+                    formatter,
+                    "Virtual instrument {}, parameter \
+                     {} = {}",
+                    instrument, parameter, value,
                 )
             }
         }
