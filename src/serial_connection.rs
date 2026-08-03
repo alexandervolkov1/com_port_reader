@@ -90,6 +90,12 @@ pub struct SerialConnection {
 }
 
 impl SerialConnection {
+    pub fn clear_input(&mut self) -> Result<(), SerialConnectionError> {
+        self.port.clear(ClearBuffer::Input)?;
+
+        Ok(())
+    }
+
     pub fn exchange_exact(
         &mut self,
         request: &[u8],
@@ -107,12 +113,10 @@ impl SerialConnection {
             ));
         }
 
-        self.port.clear(ClearBuffer::Input)?;
-
-        self.port.write_all(request)?;
-        self.port.flush()?;
-
-        self.port.read_exact(response)?;
+        self.clear_input()?;
+        self.write_all(request)?;
+        self.flush()?;
+        self.read_exact(response)?;
 
         Ok(())
     }
@@ -130,18 +134,17 @@ impl SerialConnection {
             ));
         }
 
-        self.port.clear(ClearBuffer::Input)?;
-
-        self.port.write_all(command.as_bytes())?;
-        self.port.write_all(b"\n")?;
-        self.port.flush()?;
+        self.clear_input()?;
+        self.write_all(command.as_bytes())?;
+        self.write_all(b"\n")?;
+        self.flush()?;
 
         let mut response = Vec::with_capacity(32);
 
         loop {
             let mut byte = [0_u8; 1];
 
-            self.port.read_exact(&mut byte)?;
+            self.read_exact(&mut byte)?;
 
             match byte[0] {
                 b'\n' => break,
@@ -165,6 +168,22 @@ impl SerialConnection {
         let response = self.request_text(command.trim())?;
 
         parse_f64_response(&response)
+    }
+}
+
+impl Read for SerialConnection {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.port.read(buffer)
+    }
+}
+
+impl Write for SerialConnection {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.port.write(buffer)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.port.flush()
     }
 }
 

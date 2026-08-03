@@ -1,4 +1,7 @@
+mod frame_io;
 mod message;
+
+pub use frame_io::{VirtualFrameIoError, read_frame, write_frame};
 
 pub use message::{VirtualInstrumentMessage, VirtualMessageCodecError};
 
@@ -111,33 +114,7 @@ impl VirtualInstrumentFrame {
             });
         }
 
-        let actual_magic = [frame[0], frame[1]];
-
-        if actual_magic != MAGIC {
-            return Err(VirtualFrameError::InvalidMagic {
-                actual: actual_magic,
-            });
-        }
-
-        let actual_version = frame[2];
-
-        if actual_version != VERSION {
-            return Err(VirtualFrameError::UnsupportedVersion {
-                actual: actual_version,
-            });
-        }
-
-        let kind = MessageKind::from_code(frame[3])
-            .ok_or(VirtualFrameError::UnknownMessageKind(frame[3]))?;
-
-        let payload_length = usize::from(u16::from_le_bytes([frame[4], frame[5]]));
-
-        if payload_length > MAX_PAYLOAD_LENGTH {
-            return Err(VirtualFrameError::PayloadTooLong {
-                length: payload_length,
-                maximum: MAX_PAYLOAD_LENGTH,
-            });
-        }
+        let (kind, payload_length) = decode_frame_header(&frame[..HEADER_LENGTH])?;
 
         let expected_frame_length = HEADER_LENGTH + payload_length + CRC_LENGTH;
 
@@ -166,6 +143,47 @@ impl VirtualInstrumentFrame {
             payload: frame[HEADER_LENGTH..payload_end].to_vec(),
         })
     }
+}
+
+pub(crate) fn decode_frame_header(
+    header: &[u8],
+) -> Result<(MessageKind, usize), VirtualFrameError> {
+    if header.len() < HEADER_LENGTH {
+        return Err(VirtualFrameError::FrameTooShort {
+            length: header.len(),
+            minimum: HEADER_LENGTH,
+        });
+    }
+
+    let actual_magic = [header[0], header[1]];
+
+    if actual_magic != MAGIC {
+        return Err(VirtualFrameError::InvalidMagic {
+            actual: actual_magic,
+        });
+    }
+
+    let actual_version = header[2];
+
+    if actual_version != VERSION {
+        return Err(VirtualFrameError::UnsupportedVersion {
+            actual: actual_version,
+        });
+    }
+
+    let kind = MessageKind::from_code(header[3])
+        .ok_or(VirtualFrameError::UnknownMessageKind(header[3]))?;
+
+    let payload_length = usize::from(u16::from_le_bytes([header[4], header[5]]));
+
+    if payload_length > MAX_PAYLOAD_LENGTH {
+        return Err(VirtualFrameError::PayloadTooLong {
+            length: payload_length,
+            maximum: MAX_PAYLOAD_LENGTH,
+        });
+    }
+
+    Ok((kind, payload_length))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
