@@ -13,6 +13,7 @@ mod lua_api;
 pub mod lua_device_model;
 mod lua_execution;
 pub mod lua_runtime;
+pub mod lua_virtual_instrument_model;
 pub mod lua_worker;
 pub mod protocol;
 mod sample_sink;
