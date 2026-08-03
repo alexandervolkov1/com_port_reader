@@ -457,7 +457,11 @@ impl Worker {
                         let _ = response_sender.send(result);
                     }
 
-                    Ok(WorkerCommand::WriteInstrument { port_name, request }) => {
+                    Ok(WorkerCommand::WriteInstrument {
+                        port_name,
+                        request,
+                        response_sender,
+                    }) => {
                         let acquisition_running =
                             matches!(&state, AcquisitionState::Running { .. });
 
@@ -475,21 +479,22 @@ impl Worker {
                             };
                         }
 
-                        let event = match result {
+                        let event = match &result {
                             Ok(actual_value) => WorkerEvent::InstrumentWriteSucceeded {
                                 port_name,
                                 request,
-                                actual_value,
+                                actual_value: *actual_value,
                             },
 
                             Err(error) => WorkerEvent::InstrumentWriteFailed {
                                 port_name,
                                 request,
-                                error,
+                                error: error.clone(),
                             },
                         };
 
                         let _ = event_sender.send(event);
+                        let _ = response_sender.send(result);
                     }
 
                     Err(RecvTimeoutError::Timeout) => {}

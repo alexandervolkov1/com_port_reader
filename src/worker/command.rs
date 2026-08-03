@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use crossbeam_channel::Sender;
 
 use crate::{
-    acquisition::InstrumentReadResult,
+    acquisition::{InstrumentReadResult, InstrumentWriteResult},
     data::{NewSeries, SeriesId},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     serial_connection::SerialPortConfig,
@@ -43,5 +43,6 @@ pub enum WorkerCommand {
     WriteInstrument {
         port_name: String,
         request: InstrumentWriteRequest,
+        response_sender: Sender<InstrumentWriteResult>,
     },
 }

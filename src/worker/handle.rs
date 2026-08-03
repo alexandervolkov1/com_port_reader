@@ -3,7 +3,7 @@ use std::{error::Error, fmt, path::PathBuf, time::Duration};
 use crossbeam_channel::Sender;
 
 use crate::{
-    acquisition::InstrumentReadResult,
+    acquisition::{InstrumentReadResult, InstrumentWriteResult},
     data::{NewSeries, SeriesId},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     serial_connection::SerialPortConfig,
@@ -109,8 +109,13 @@ impl WorkerHandle {
         &self,
         port_name: String,
         request: InstrumentWriteRequest,
+        response_sender: Sender<InstrumentWriteResult>,
     ) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::WriteInstrument { port_name, request })
+        self.send(WorkerCommand::WriteInstrument {
+            port_name,
+            request,
+            response_sender,
+        })
     }
 }
 

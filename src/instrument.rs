@@ -153,6 +153,7 @@ impl std::fmt::Display for InstrumentWriteRequest {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InstrumentValue {
     Boolean(bool),
+    Integer(i64),
     Number(f64),
 }
 
@@ -167,6 +168,8 @@ impl InstrumentValue {
                 }
             }
 
+            Self::Integer(value) => value as f64,
+
             Self::Number(value) => value,
         }
     }
@@ -176,6 +179,8 @@ impl std::fmt::Display for InstrumentValue {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Boolean(value) => value.fmt(formatter),
+
+            Self::Integer(value) => value.fmt(formatter),
 
             Self::Number(value) => value.fmt(formatter),
         }

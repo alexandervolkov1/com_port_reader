@@ -1,7 +1,7 @@
 use crossbeam_channel::Sender;
 
 use crate::{
-    acquisition::InstrumentReadResult,
+    acquisition::{InstrumentReadResult, InstrumentWriteResult},
     data::NewSeries,
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
 };
@@ -44,5 +44,6 @@ pub enum UserCommand {
 
     WriteInstrument {
         request: InstrumentWriteRequest,
+        response_sender: Sender<InstrumentWriteResult>,
     },
 }

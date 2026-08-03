@@ -165,21 +165,26 @@ fn register_value_to_instrument_value(
     match value {
         RegisterValue::Bool(value) => Ok(InstrumentValue::Boolean(value)),
 
+        RegisterValue::Ubyte(value) => Ok(InstrumentValue::Integer(i64::from(value))),
+
+        RegisterValue::Byte(value) => Ok(InstrumentValue::Integer(i64::from(value))),
+
+        RegisterValue::Uint(value) => Ok(InstrumentValue::Integer(i64::from(value))),
+
+        RegisterValue::Int(value) => Ok(InstrumentValue::Integer(i64::from(value))),
+
+        RegisterValue::Ulong(value) => Ok(InstrumentValue::Integer(i64::from(value))),
+
+        RegisterValue::Long(value) => Ok(InstrumentValue::Integer(i64::from(value))),
+
+        RegisterValue::Float(value) => Ok(InstrumentValue::Number(f64::from(value))),
+
+        RegisterValue::Double(value) => Ok(InstrumentValue::Number(value)),
+
         RegisterValue::Ascii(_) => Err(AcquisitionError::from(
-            "Instrument write returned an \
+            "Instrument operation returned an \
                  unexpected ASCII value",
         )),
-
-        value => {
-            let value = value.into_f64().ok_or_else(|| {
-                AcquisitionError::from(
-                    "Instrument write returned a \
-                     non-numeric value",
-                )
-            })?;
-
-            Ok(InstrumentValue::Number(value))
-        }
     }
 }
 

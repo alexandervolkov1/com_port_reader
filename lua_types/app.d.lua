@@ -39,6 +39,15 @@ function Metakon5x3:add(parameter, name) end
 ---@return number|boolean
 function Metakon5x3:read(parameter) end
 
+---Writes one instrument parameter and reads it back.
+---
+---Returns the actual value reported by the instrument
+---after writing.
+---@param parameter Metakon5x3Parameter
+---@param value integer|boolean
+---@return integer|boolean
+function Metakon5x3:write(parameter, value) end
+
 ---Changes the output power.
 ---
 ---The value must be an integer from -100 to 100.

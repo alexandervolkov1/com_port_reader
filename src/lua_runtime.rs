@@ -381,7 +381,10 @@ mod tests {
         for parameter in expected {
             assert!(matches!(
                 command_receiver.try_recv().unwrap(),
-                UserCommand::WriteInstrument { request }
+                UserCommand::WriteInstrument {
+                    request,
+                    ..
+                }
                     if request
                         == metakon_write_request(
                             15,
@@ -436,7 +439,10 @@ mod tests {
         for parameter in expected {
             assert!(matches!(
                 command_receiver.try_recv().unwrap(),
-                UserCommand::WriteInstrument { request }
+                UserCommand::WriteInstrument {
+                    request,
+                    ..
+                }
                     if request
                         == metakon_write_request(
                             15,
@@ -757,5 +763,79 @@ mod tests {
         responder.join().unwrap();
 
         assert_eq!(output, vec!["true"]);
+    }
+
+    #[test]
+    fn writes_metakon_parameter_by_key() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                    controller = app.metakon({
+                        device = 15,
+                        channel = 2,
+                    })
+                "#,
+            )
+            .unwrap();
+
+        let responder = std::thread::spawn(move || {
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::WriteInstrument {
+                request,
+                response_sender,
+            } = command
+            else {
+                panic!("expected instrument write");
+            };
+
+            assert_eq!(
+                request,
+                metakon_write_request(15, 2, Metakon5x3Write::Setpoint(150),),
+            );
+
+            response_sender
+                .send(Ok(InstrumentValue::Integer(150)))
+                .unwrap();
+        });
+
+        let output = runtime
+            .evaluate_for_repl(r#"controller:write("setpoint", 150)"#)
+            .unwrap();
+
+        responder.join().unwrap();
+
+        assert_eq!(output, vec!["150"]);
+    }
+
+    #[test]
+    fn rejects_writing_read_only_parameter() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime.execute("controller = app.metakon()").unwrap();
+
+        let error = runtime
+            .evaluate_for_repl(
+                r#"controller:write(
+                    "measurement",
+                    100
+                )"#,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("parameter 'measurement' is read-only",),);
+
+        assert!(command_receiver.try_recv().is_err());
     }
 }

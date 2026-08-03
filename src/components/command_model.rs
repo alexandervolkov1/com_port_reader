@@ -155,21 +155,38 @@ impl CommandModel {
                 }
             }
 
-            UserCommand::WriteInstrument { request } => {
+            UserCommand::WriteInstrument {
+                request,
+                response_sender,
+            } => {
                 let Some(config) = serial_settings.serial_config() else {
-                    self.log.error(
+                    let error = AcquisitionError::from(
                         "Cannot write instrument: select a COM \
-                         port in Settings.",
+                         port in Settings",
                     );
+
+                    self.log.error(error.to_string());
+
+                    let _ = response_sender.send(Err(error));
 
                     return;
                 };
 
-                if let Err(error) = self
-                    .worker_handle
-                    .write_instrument(config.port_name().to_owned(), request)
-                {
-                    self.set_worker_error(error);
+                let send_result = self.worker_handle.write_instrument(
+                    config.port_name().to_owned(),
+                    request,
+                    response_sender.clone(),
+                );
+
+                if let Err(send_error) = send_result {
+                    let error = AcquisitionError::from(format!(
+                        "Failed to request instrument write: \
+                         {send_error}",
+                    ));
+
+                    self.log.error(error.to_string());
+
+                    let _ = response_sender.send(Err(error));
                 }
             }
         }

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crossbeam_channel::{RecvTimeoutError, Sender, bounded};
-use mlua::{Lua, Table, UserData, UserDataMethods, Value};
+use mlua::{FromLua, Lua, Table, UserData, UserDataMethods, Value};
 
 use crate::{
     data::{DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, NewSeries},
@@ -13,6 +13,7 @@ use crate::{
 };
 
 const INSTRUMENT_READ_TIMEOUT: Duration = Duration::from_secs(10);
+const INSTRUMENT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<()> {
     let app = lua.create_table()?;
@@ -188,14 +189,55 @@ impl LuaMetakon5x3 {
         self.add_series(new_series)
     }
 
+    fn write_request(&self, parameter: Metakon5x3Write) -> mlua::Result<InstrumentWriteRequest> {
+        InstrumentWriteRequest::metakon_5x3(self.instrument, parameter)
+            .map_err(|error| mlua::Error::RuntimeError(error.to_string()))
+    }
+
     fn write(&self, parameter: Metakon5x3Write) -> mlua::Result<()> {
-        let request = InstrumentWriteRequest::metakon_5x3(self.instrument, parameter)
-            .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+        let request = self.write_request(parameter)?;
+
+        let (response_sender, _response_receiver) = bounded(1);
 
         send_application_command(
             &self.command_sender,
-            UserCommand::WriteInstrument { request },
+            UserCommand::WriteInstrument {
+                request,
+                response_sender,
+            },
         )
+    }
+
+    fn write_and_wait(&self, parameter: Metakon5x3Write) -> mlua::Result<InstrumentValue> {
+        let request = self.write_request(parameter)?;
+
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::WriteInstrument {
+                request,
+                response_sender,
+            },
+        )?;
+
+        match response_receiver.recv_timeout(INSTRUMENT_WRITE_TIMEOUT) {
+            Ok(Ok(value)) => Ok(value),
+
+            Ok(Err(error)) => Err(mlua::Error::RuntimeError(format!(
+                "Instrument write failed: {error}",
+            ))),
+
+            Err(RecvTimeoutError::Timeout) => Err(mlua::Error::RuntimeError(
+                "Timed out waiting for instrument write".to_owned(),
+            )),
+
+            Err(RecvTimeoutError::Disconnected) => Err(mlua::Error::RuntimeError(
+                "Instrument write response channel is \
+                     disconnected"
+                    .to_owned(),
+            )),
+        }
     }
 
     fn parameter_scale(&self, parameter: Metakon5x3Register) -> f64 {
@@ -260,6 +302,121 @@ fn metakon_parameter_from_key(key: &str) -> mlua::Result<Metakon5x3Register> {
     })
 }
 
+fn metakon_write_from_lua(
+    lua: &Lua,
+    parameter: Metakon5x3Register,
+    value: Value,
+) -> mlua::Result<Metakon5x3Write> {
+    if !parameter.writable() {
+        return Err(mlua::Error::RuntimeError(format!(
+            "Metakon 5X3 parameter '{}' is read-only",
+            parameter.descriptor().key,
+        )));
+    }
+
+    match parameter {
+        Metakon5x3Register::Setpoint => Ok(Metakon5x3Write::Setpoint(integer_parameter_value(
+            lua, parameter, value,
+        )?)),
+
+        Metakon5x3Register::ProportionalBand => Ok(Metakon5x3Write::ProportionalBand(
+            integer_parameter_value(lua, parameter, value)?,
+        )),
+
+        Metakon5x3Register::IntegralTime => Ok(Metakon5x3Write::IntegralTime(
+            integer_parameter_value(lua, parameter, value)?,
+        )),
+
+        Metakon5x3Register::DerivativeTime => Ok(Metakon5x3Write::DerivativeTime(
+            integer_parameter_value(lua, parameter, value)?,
+        )),
+
+        Metakon5x3Register::OutputPower => Ok(Metakon5x3Write::OutputPower(
+            integer_parameter_value(lua, parameter, value)?,
+        )),
+
+        Metakon5x3Register::UpperSetpoint => Ok(Metakon5x3Write::UpperSetpoint(
+            integer_parameter_value(lua, parameter, value)?,
+        )),
+
+        Metakon5x3Register::UpperHysteresis => Ok(Metakon5x3Write::UpperHysteresis(
+            integer_parameter_value(lua, parameter, value)?,
+        )),
+
+        Metakon5x3Register::UpperOutput => Ok(Metakon5x3Write::UpperOutput(
+            boolean_parameter_value(lua, parameter, value)?,
+        )),
+
+        Metakon5x3Register::LowerSetpoint => Ok(Metakon5x3Write::LowerSetpoint(
+            integer_parameter_value(lua, parameter, value)?,
+        )),
+
+        Metakon5x3Register::LowerHysteresis => Ok(Metakon5x3Write::LowerHysteresis(
+            integer_parameter_value(lua, parameter, value)?,
+        )),
+
+        Metakon5x3Register::LowerOutput => Ok(Metakon5x3Write::LowerOutput(
+            boolean_parameter_value(lua, parameter, value)?,
+        )),
+
+        Metakon5x3Register::ChannelType
+        | Metakon5x3Register::Measurement
+        | Metakon5x3Register::PwmPositive
+        | Metakon5x3Register::PwmNegative => {
+            unreachable!("read-only parameters were rejected above")
+        }
+    }
+}
+
+fn integer_parameter_value<T>(
+    lua: &Lua,
+    parameter: Metakon5x3Register,
+    value: Value,
+) -> mlua::Result<T>
+where
+    T: TryFrom<i64>,
+{
+    let value = i64::from_lua(value, lua).map_err(|_| {
+        mlua::Error::RuntimeError(format!(
+            "Metakon 5X3 parameter '{}' expects \
+                 an integer value",
+            parameter.descriptor().key,
+        ))
+    })?;
+
+    T::try_from(value).map_err(|_| {
+        mlua::Error::RuntimeError(format!(
+            "Value {value} does not fit Metakon 5X3 \
+             parameter '{}'",
+            parameter.descriptor().key,
+        ))
+    })
+}
+
+fn boolean_parameter_value(
+    lua: &Lua,
+    parameter: Metakon5x3Register,
+    value: Value,
+) -> mlua::Result<bool> {
+    bool::from_lua(value, lua).map_err(|_| {
+        mlua::Error::RuntimeError(format!(
+            "Metakon 5X3 parameter '{}' expects a \
+             Boolean value",
+            parameter.descriptor().key,
+        ))
+    })
+}
+
+fn instrument_value_to_lua(value: InstrumentValue) -> Value {
+    match value {
+        InstrumentValue::Boolean(value) => Value::Boolean(value),
+
+        InstrumentValue::Integer(value) => Value::Integer(value),
+
+        InstrumentValue::Number(value) => Value::Number(value),
+    }
+}
+
 impl UserData for LuaMetakon5x3 {
     fn add_methods<M>(methods: &mut M)
     where
@@ -279,12 +436,23 @@ impl UserData for LuaMetakon5x3 {
         methods.add_method("read", |_, controller, parameter_key: String| {
             let parameter = metakon_parameter_from_key(&parameter_key)?;
 
-            match controller.read_parameter(parameter)? {
-                InstrumentValue::Boolean(value) => Ok(Value::Boolean(value)),
+            let value = controller.read_parameter(parameter)?;
 
-                InstrumentValue::Number(value) => Ok(Value::Number(value)),
-            }
+            Ok(instrument_value_to_lua(value))
         });
+
+        methods.add_method(
+            "write",
+            |lua, controller, (parameter_key, value): (String, Value)| {
+                let parameter = metakon_parameter_from_key(&parameter_key)?;
+
+                let write = metakon_write_from_lua(lua, parameter, value)?;
+
+                let actual_value = controller.write_and_wait(write)?;
+
+                Ok(instrument_value_to_lua(actual_value))
+            },
+        );
 
         methods.add_method("output_power", |_, controller, value: i64| {
             let value = i8::try_from(value).map_err(|_| {
