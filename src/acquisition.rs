@@ -1,6 +1,9 @@
 use crate::{
     data::{SeriesMetadata, SeriesSample},
-    instrument::{InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest},
+    instrument::{
+        InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
+        virtual_instrument::VirtualInstrumentDescriptor,
+    },
 };
 
 mod combined_source;
@@ -37,8 +40,9 @@ impl From<&str> for AcquisitionError {
 }
 
 pub type InstrumentReadResult = Result<InstrumentValue, AcquisitionError>;
-
 pub type InstrumentWriteResult = Result<InstrumentValue, AcquisitionError>;
+pub type VirtualInstrumentDescribeResult =
+    Result<Vec<VirtualInstrumentDescriptor>, AcquisitionError>;
 
 pub trait AcquisitionSource: Send {
     fn start(&mut self) -> Result<(), AcquisitionError> {
@@ -87,6 +91,12 @@ pub trait AcquisitionSource: Send {
         }
 
         Ok(())
+    }
+
+    fn describe_virtual_instruments(
+        &mut self,
+    ) -> Result<Option<Vec<VirtualInstrumentDescriptor>>, AcquisitionError> {
+        Ok(None)
     }
 
     fn read_instrument(

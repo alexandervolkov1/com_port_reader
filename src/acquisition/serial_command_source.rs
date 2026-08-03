@@ -5,6 +5,7 @@ use crate::{
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
         metakon_5x3::{Metakon5x3, Metakon5x3Register},
+        virtual_instrument::VirtualInstrumentDescriptor,
     },
     protocol::{metakon::RegisterValue, virtual_instrument::VirtualInstrumentClient},
     serial_connection::{SerialConfigStore, SerialConnection},
@@ -278,6 +279,22 @@ impl AcquisitionSource for SerialCommandSource {
         )))
     }
 
+    fn describe_virtual_instruments(
+        &mut self,
+    ) -> Result<Option<Vec<VirtualInstrumentDescriptor>>, AcquisitionError> {
+        let connection = self.connection().map_err(|error| {
+            AcquisitionError::from(format!("Cannot describe virtual instruments: {error}",))
+        })?;
+
+        let mut client = VirtualInstrumentClient::new(connection);
+
+        let descriptors = client.describe().map_err(|error| {
+            AcquisitionError::from(format!("Failed to describe virtual instruments: {error}",))
+        })?;
+
+        Ok(Some(descriptors))
+    }
+
     fn read_instrument(
         &mut self,
         request: InstrumentReadRequest,
@@ -442,5 +459,18 @@ mod tests {
         );
 
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn reports_missing_config_when_describing_virtual_instruments() {
+        let mut source = SerialCommandSource::new(SerialConfigStore::new());
+
+        let error = source.describe_virtual_instruments().unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Cannot describe virtual instruments: \
+             COM port is not selected",
+        );
     }
 }

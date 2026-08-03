@@ -1,6 +1,9 @@
 use crate::{
     data::{SeriesMetadata, SeriesSample},
-    instrument::{InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest},
+    instrument::{
+        InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
+        virtual_instrument::VirtualInstrumentDescriptor,
+    },
 };
 
 use super::{AcquisitionError, AcquisitionSource};
@@ -47,6 +50,18 @@ impl AcquisitionSource for CombinedSource {
         for source in &mut self.sources {
             if let Some(sample) = source.sample_series(series, timestamp)? {
                 return Ok(Some(sample));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn describe_virtual_instruments(
+        &mut self,
+    ) -> Result<Option<Vec<VirtualInstrumentDescriptor>>, AcquisitionError> {
+        for source in &mut self.sources {
+            if let Some(descriptors) = source.describe_virtual_instruments()? {
+                return Ok(Some(descriptors));
             }
         }
 
