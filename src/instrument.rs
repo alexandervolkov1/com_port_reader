@@ -2,20 +2,28 @@ use self::metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write};
 
 pub mod metakon_5x3;
 
+pub mod virtual_instrument;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParameterAccess {
     ReadOnly,
+    WriteOnly,
     ReadWrite,
 }
 
 impl ParameterAccess {
+    pub const fn readable(self) -> bool {
+        matches!(self, Self::ReadOnly | Self::ReadWrite)
+    }
+
     pub const fn writable(self) -> bool {
-        matches!(self, Self::ReadWrite)
+        matches!(self, Self::WriteOnly | Self::ReadWrite)
     }
 
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ReadOnly => "read_only",
+            Self::WriteOnly => "write_only",
             Self::ReadWrite => "read_write",
         }
     }
