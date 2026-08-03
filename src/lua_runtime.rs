@@ -341,69 +341,6 @@ mod tests {
     }
 
     #[test]
-    fn exposes_metakon_controller_series() {
-        let runtime = LuaRuntime::new();
-
-        let (command_sender, command_receiver) = unbounded();
-
-        runtime.install_application_api(command_sender).unwrap();
-
-        runtime
-            .execute(
-                r#"
-                controller = app.metakon({
-                    device = 15,
-                    channel = 0,
-                    scale = 1.0
-                })
-
-                controller:add_measurement(
-                    "temperature"
-                )
-
-                controller:add_setpoint(
-                    "setpoint"
-                )
-
-                controller:add_output_power(
-                    "power"
-                )
-
-                controller:add_pwm_positive(
-                    "pwm_positive"
-                )
-
-                controller:add_pwm_negative(
-                    "pwm_negative"
-                )
-                "#,
-            )
-            .unwrap();
-
-        let expected = [
-            ("temperature", Metakon5x3Register::Measurement),
-            ("setpoint", Metakon5x3Register::Setpoint),
-            ("power", Metakon5x3Register::OutputPower),
-            ("pwm_positive", Metakon5x3Register::PwmPositive),
-            ("pwm_negative", Metakon5x3Register::PwmNegative),
-        ];
-
-        for (expected_name, expected_parameter) in expected {
-            let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
-                panic!("expected Add command");
-            };
-
-            let (source, name) = new_series.into_source_parts();
-
-            assert_eq!(name.as_deref(), Some(expected_name),);
-
-            assert_eq!(source, metakon_source(15, 0, expected_parameter, 1.0,),);
-        }
-
-        assert!(command_receiver.try_recv().is_err());
-    }
-
-    #[test]
     fn exposes_metakon_controller_pid_commands() {
         let runtime = LuaRuntime::new();
 
@@ -473,129 +410,6 @@ mod tests {
             "unknown app.metakon option \
                  'devcie'",
         ),);
-
-        assert!(command_receiver.try_recv().is_err());
-    }
-
-    #[test]
-    fn exposes_metakon_controller_parameter_series() {
-        let runtime = LuaRuntime::new();
-
-        let (command_sender, command_receiver) = unbounded();
-
-        runtime.install_application_api(command_sender).unwrap();
-
-        runtime
-            .execute(
-                r#"
-                local controller = app.metakon({
-                    device = 15,
-                    channel = 2,
-                })
-
-                controller:add_proportional_band(
-                    "pid_p"
-                )
-
-                controller:add_integral_time(
-                    "pid_i"
-                )
-
-                controller:add_derivative_time(
-                    "pid_d"
-                )
-                "#,
-            )
-            .unwrap();
-
-        let expected = [
-            ("pid_p", Metakon5x3Register::ProportionalBand),
-            ("pid_i", Metakon5x3Register::IntegralTime),
-            ("pid_d", Metakon5x3Register::DerivativeTime),
-        ];
-
-        for (expected_name, expected_parameter) in expected {
-            let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
-                panic!("expected Add command");
-            };
-
-            let (source, name) = new_series.into_source_parts();
-
-            assert_eq!(name.as_deref(), Some(expected_name),);
-
-            assert_eq!(source, metakon_source(15, 2, expected_parameter, 1.0,),);
-        }
-
-        assert!(command_receiver.try_recv().is_err());
-    }
-
-    #[test]
-    fn exposes_metakon_controller_alarm_series() {
-        let runtime = LuaRuntime::new();
-
-        let (command_sender, command_receiver) = unbounded();
-
-        runtime.install_application_api(command_sender).unwrap();
-
-        runtime
-            .execute(
-                r#"
-                local controller = app.metakon({
-                    device = 15,
-                    channel = 2,
-                    scale = 0.1,
-                })
-
-                controller:add_upper_setpoint(
-                    "high"
-                )
-
-                controller:add_upper_hysteresis(
-                    "high_hyst"
-                )
-
-                controller:add_upper_output(
-                    "high_active"
-                )
-
-                controller:add_lower_setpoint(
-                    "low"
-                )
-
-                controller:add_lower_hysteresis(
-                    "low_hyst"
-                )
-
-                controller:add_lower_output(
-                    "low_active"
-                )
-                "#,
-            )
-            .unwrap();
-
-        let expected = [
-            ("high", Metakon5x3Register::UpperSetpoint, 0.1),
-            ("high_hyst", Metakon5x3Register::UpperHysteresis, 0.1),
-            ("high_active", Metakon5x3Register::UpperOutput, 1.0),
-            ("low", Metakon5x3Register::LowerSetpoint, 0.1),
-            ("low_hyst", Metakon5x3Register::LowerHysteresis, 0.1),
-            ("low_active", Metakon5x3Register::LowerOutput, 1.0),
-        ];
-
-        for (expected_name, expected_parameter, expected_scale) in expected {
-            let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
-                panic!("expected Add command");
-            };
-
-            let (source, name) = new_series.into_source_parts();
-
-            assert_eq!(name.as_deref(), Some(expected_name),);
-
-            assert_eq!(
-                source,
-                metakon_source(15, 2, expected_parameter, expected_scale,),
-            );
-        }
 
         assert!(command_receiver.try_recv().is_err());
     }
@@ -713,6 +527,7 @@ mod tests {
     #[test]
     fn adds_metakon_series_by_parameter_key() {
         let runtime = LuaRuntime::new();
+
         let (command_sender, command_receiver) = unbounded();
 
         runtime.install_application_api(command_sender).unwrap();
@@ -727,25 +542,121 @@ mod tests {
                     })
 
                     controller:add(
+                        "channel_type",
+                        "channel_type"
+                    )
+
+                    controller:add(
                         "measurement",
-                        "temperature"
+                        "measurement"
+                    )
+
+                    controller:add(
+                        "setpoint",
+                        "setpoint"
+                    )
+
+                    controller:add(
+                        "proportional_band",
+                        "proportional_band"
+                    )
+
+                    controller:add(
+                        "integral_time",
+                        "integral_time"
+                    )
+
+                    controller:add(
+                        "derivative_time",
+                        "derivative_time"
+                    )
+
+                    controller:add(
+                        "output_power",
+                        "output_power"
+                    )
+
+                    controller:add(
+                        "pwm_positive",
+                        "pwm_positive"
+                    )
+
+                    controller:add(
+                        "pwm_negative",
+                        "pwm_negative"
+                    )
+
+                    controller:add(
+                        "upper_setpoint",
+                        "upper_setpoint"
+                    )
+
+                    controller:add(
+                        "upper_hysteresis",
+                        "upper_hysteresis"
+                    )
+
+                    controller:add(
+                        "upper_output",
+                        "upper_output"
+                    )
+
+                    controller:add(
+                        "lower_setpoint",
+                        "lower_setpoint"
+                    )
+
+                    controller:add(
+                        "lower_hysteresis",
+                        "lower_hysteresis"
+                    )
+
+                    controller:add(
+                        "lower_output",
+                        "lower_output"
                     )
                 "#,
             )
             .unwrap();
 
-        let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
-            panic!("expected Add command");
-        };
+        let expected = [
+            ("channel_type", Metakon5x3Register::ChannelType, 1.0),
+            ("measurement", Metakon5x3Register::Measurement, 0.1),
+            ("setpoint", Metakon5x3Register::Setpoint, 0.1),
+            (
+                "proportional_band",
+                Metakon5x3Register::ProportionalBand,
+                1.0,
+            ),
+            ("integral_time", Metakon5x3Register::IntegralTime, 1.0),
+            ("derivative_time", Metakon5x3Register::DerivativeTime, 1.0),
+            ("output_power", Metakon5x3Register::OutputPower, 1.0),
+            ("pwm_positive", Metakon5x3Register::PwmPositive, 1.0),
+            ("pwm_negative", Metakon5x3Register::PwmNegative, 1.0),
+            ("upper_setpoint", Metakon5x3Register::UpperSetpoint, 0.1),
+            ("upper_hysteresis", Metakon5x3Register::UpperHysteresis, 0.1),
+            ("upper_output", Metakon5x3Register::UpperOutput, 1.0),
+            ("lower_setpoint", Metakon5x3Register::LowerSetpoint, 0.1),
+            ("lower_hysteresis", Metakon5x3Register::LowerHysteresis, 0.1),
+            ("lower_output", Metakon5x3Register::LowerOutput, 1.0),
+        ];
 
-        let (source, name) = new_series.into_source_parts();
+        for (expected_name, expected_parameter, expected_scale) in expected {
+            let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+                panic!("expected Add command");
+            };
 
-        assert_eq!(name.as_deref(), Some("temperature"));
+            let (source, name) = new_series.into_source_parts();
 
-        assert_eq!(
-            source,
-            metakon_source(15, 2, Metakon5x3Register::Measurement, 0.1,),
-        );
+            assert_eq!(name.as_deref(), Some(expected_name),);
+
+            assert_eq!(
+                source,
+                metakon_source(15, 2, expected_parameter, expected_scale,),
+            );
+        }
+
+        assert!(command_receiver.try_recv().is_err());
     }
 
     #[test]

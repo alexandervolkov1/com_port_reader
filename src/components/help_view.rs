@@ -221,7 +221,7 @@ fn show_lua_reference(ui: &mut egui::Ui) {
 
     ui.separator();
 
-    ui.heading("Generic Metakon parameters");
+    ui.heading("Metakon parameters");
 
     reference(
         ui,
@@ -242,9 +242,9 @@ fn show_lua_reference(ui: &mut egui::Ui) {
         ui,
         "controller:read(parameter)",
         "Reads one instrument parameter immediately \
-         and returns a number or Boolean value to \
-         Lua. The result or communication error is \
-         also written to the application log.",
+         and returns a number or Boolean value to Lua. \
+         The result or communication error is also \
+         written to the application log.",
     );
 
     ui.monospace(
@@ -265,12 +265,6 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     ui.add_space(8.0);
 
     ui.label(
-        "Parameter names are stable Lua identifiers. \
-         Register addresses and wire data types remain \
-         inside the Rust driver.",
-    );
-
-    ui.label(
         "Available parameters: channel_type, \
          measurement, setpoint, proportional_band, \
          integral_time, derivative_time, output_power, \
@@ -280,181 +274,37 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     );
 
     ui.label(
+        "The controller scale is applied to measurement, \
+         setpoint and comparator threshold values.",
+    );
+
+    ui.label(
+        "Boolean parameters return true or false from \
+         read(). In periodic series they are stored as \
+         1 or 0.",
+    );
+
+    ui.label(
+        "Output power ranges from -100 to 100. PWM states \
+         show the instantaneous output state at the \
+         polling moment.",
+    );
+
+    ui.label(
+        "Parameter names are stable Lua identifiers. \
+         Register addresses and wire data types remain \
+         inside the Rust driver.",
+    );
+
+    ui.label(
         "Periodic acquisition has priority over an \
          immediate read request.",
     );
 
     ui.label(
-        "When acquisition is stopped, an immediate \
-         read opens the selected COM port temporarily \
-         and closes it after the operation.",
-    );
-
-    ui.separator();
-
-    ui.heading("Primary Metakon series");
-
-    reference(
-        ui,
-        "controller:add_measurement(name)",
-        "Adds the measured-value series. The name is \
-         optional.",
-    );
-
-    reference(
-        ui,
-        "controller:add_setpoint(name)",
-        "Adds the current PID setpoint series.",
-    );
-
-    reference(
-        ui,
-        "controller:add_output_power(name)",
-        "Adds the calculated output-power series. \
-         Values range from -100 to 100 percent.",
-    );
-
-    ui.monospace(
-        "controller:add_measurement(\"temperature\")\n\
-         controller:add_setpoint(\"setpoint\")\n\
-         controller:add_output_power(\"power\")",
-    );
-
-    ui.add_space(8.0);
-
-    ui.label(
-        "The controller scale is applied to measured \
-         values and setpoint values before they are \
-         returned or stored.",
-    );
-
-    ui.separator();
-
-    ui.heading("PID parameter series");
-
-    reference(
-        ui,
-        "controller:add_proportional_band(name)",
-        "Adds the current PID proportional-band \
-         series.",
-    );
-
-    reference(
-        ui,
-        "controller:add_integral_time(name)",
-        "Adds the current PID integral-time series.",
-    );
-
-    reference(
-        ui,
-        "controller:add_derivative_time(name)",
-        "Adds the current PID derivative-time series.",
-    );
-
-    ui.monospace(
-        "controller:add_proportional_band(\"pid_p\")\n\
-         controller:add_integral_time(\"pid_i\")\n\
-         controller:add_derivative_time(\"pid_d\")",
-    );
-
-    ui.separator();
-
-    ui.heading("PWM output states");
-
-    reference(
-        ui,
-        "controller:add_pwm_positive(name)",
-        "Adds the positive PWM-output state series. \
-         This output normally controls the heater.",
-    );
-
-    reference(
-        ui,
-        "controller:add_pwm_negative(name)",
-        "Adds the negative PWM-output state series. \
-         This output normally controls the cooler.",
-    );
-
-    ui.monospace(
-        "controller:add_pwm_positive(\"heater_pwm\")\n\
-         controller:add_pwm_negative(\"cooler_pwm\")",
-    );
-
-    ui.add_space(8.0);
-
-    ui.label(
-        "PWM states are read-only Boolean values. \
-         False is stored as 0 and true as 1.",
-    );
-
-    ui.label(
-        "They show the instantaneous state at the \
-         polling moment, not the average output \
-         power. Use add_output_power() for the \
-         calculated power value.",
-    );
-
-    ui.separator();
-
-    ui.heading("Comparator series");
-
-    reference(
-        ui,
-        "controller:add_upper_setpoint(name)",
-        "Adds the upper-comparator setpoint series.",
-    );
-
-    reference(
-        ui,
-        "controller:add_upper_hysteresis(name)",
-        "Adds the upper-comparator hysteresis series.",
-    );
-
-    reference(
-        ui,
-        "controller:add_upper_output(name)",
-        "Adds the upper-comparator output-state \
-         series.",
-    );
-
-    reference(
-        ui,
-        "controller:add_lower_setpoint(name)",
-        "Adds the lower-comparator setpoint series.",
-    );
-
-    reference(
-        ui,
-        "controller:add_lower_hysteresis(name)",
-        "Adds the lower-comparator hysteresis series.",
-    );
-
-    reference(
-        ui,
-        "controller:add_lower_output(name)",
-        "Adds the lower-comparator output-state \
-         series.",
-    );
-
-    ui.monospace(
-        "controller:add_upper_setpoint(\"high\")\n\
-         controller:add_upper_hysteresis(\"high_hyst\")\n\
-         controller:add_upper_output(\"high_active\")\n\n\
-         controller:add_lower_setpoint(\"low\")\n\
-         controller:add_lower_hysteresis(\"low_hyst\")\n\
-         controller:add_lower_output(\"low_active\")",
-    );
-
-    ui.add_space(8.0);
-
-    ui.label(
-        "The controller scale is applied to comparator \
-         setpoints and hysteresis values.",
-    );
-
-    ui.label(
-        "Comparator output states are stored as 0 or \
-         1.",
+        "When acquisition is stopped, an immediate read \
+         opens the selected COM port temporarily and \
+         closes it after the operation.",
     );
 
     ui.separator();
