@@ -1,3 +1,7 @@
+mod message;
+
+pub use message::{VirtualInstrumentMessage, VirtualMessageCodecError};
+
 pub const MAGIC: [u8; 2] = *b"VI";
 pub const VERSION: u8 = 1;
 
