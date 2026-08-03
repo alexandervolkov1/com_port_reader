@@ -189,6 +189,36 @@ impl CommandModel {
                     let _ = response_sender.send(Err(error));
                 }
             }
+
+            UserCommand::DescribeVirtualInstruments { response_sender } => {
+                if serial_settings.serial_config().is_none() {
+                    let error = AcquisitionError::from(
+                        "Cannot describe virtual instruments: \
+                         select a COM port in Settings",
+                    );
+
+                    self.log.error(error.to_string());
+
+                    let _ = response_sender.send(Err(error));
+
+                    return;
+                }
+
+                let send_result = self
+                    .worker_handle
+                    .describe_virtual_instruments(response_sender.clone());
+
+                if let Err(send_error) = send_result {
+                    let error = AcquisitionError::from(format!(
+                        "Failed to request virtual instrument \
+                         discovery: {send_error}",
+                    ));
+
+                    self.log.error(error.to_string());
+
+                    let _ = response_sender.send(Err(error));
+                }
+            }
         }
     }
 
