@@ -684,7 +684,7 @@ mod tests {
 
         responder.join().unwrap();
 
-        assert_eq!(output, vec!["15"]);
+        assert_eq!(output, vec!["15.0"]);
     }
 
     #[test]

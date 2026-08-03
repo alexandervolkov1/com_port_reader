@@ -37,6 +37,7 @@ impl From<&str> for AcquisitionError {
 }
 
 pub type InstrumentReadResult = Result<InstrumentValue, AcquisitionError>;
+
 pub type InstrumentWriteResult = Result<InstrumentValue, AcquisitionError>;
 
 pub trait AcquisitionSource: Send {
@@ -44,12 +45,34 @@ pub trait AcquisitionSource: Send {
         Ok(())
     }
 
+    fn sample_series(
+        &mut self,
+        _series: &SeriesMetadata,
+        _timestamp: f64,
+    ) -> Result<Option<SeriesSample>, AcquisitionError> {
+        Ok(None)
+    }
+
     fn sample(
         &mut self,
         series: &[SeriesMetadata],
         timestamp: f64,
         output: &mut Vec<SeriesSample>,
-    ) -> Result<(), AcquisitionError>;
+    ) -> Result<(), AcquisitionError> {
+        for metadata in series {
+            let sample = self.sample_series(metadata, timestamp)?.ok_or_else(|| {
+                AcquisitionError::from(format!(
+                    "No acquisition source \
+                             supports series '{}' ({})",
+                    metadata.name, metadata.source,
+                ))
+            })?;
+
+            output.push(sample);
+        }
+
+        Ok(())
+    }
 
     fn read_instrument(
         &mut self,

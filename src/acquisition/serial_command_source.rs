@@ -86,7 +86,7 @@ impl SerialCommandSource {
     fn read_instrument_value(
         &mut self,
         request: InstrumentReadRequest,
-    ) -> Result<InstrumentValue, AcquisitionError> {
+    ) -> Result<Option<InstrumentValue>, AcquisitionError> {
         match request {
             InstrumentReadRequest::Metakon5x3 {
                 instrument,
@@ -122,7 +122,7 @@ impl SerialCommandSource {
 
                 let value = register_value_to_instrument_value(register_value)?;
 
-                Ok(scale_instrument_value(value, scale))
+                Ok(Some(scale_instrument_value(value, scale)))
             }
         }
     }
@@ -130,7 +130,7 @@ impl SerialCommandSource {
     fn write_instrument_value(
         &mut self,
         request: InstrumentWriteRequest,
-    ) -> Result<InstrumentValue, AcquisitionError> {
+    ) -> Result<Option<InstrumentValue>, AcquisitionError> {
         match request {
             InstrumentWriteRequest::Metakon5x3 {
                 instrument,
@@ -153,7 +153,7 @@ impl SerialCommandSource {
 
                 let actual_value = register_value_to_instrument_value(actual_value)?;
 
-                Ok(scale_instrument_value(actual_value, scale))
+                Ok(Some(scale_instrument_value(actual_value, scale)))
             }
         }
     }
@@ -201,56 +201,58 @@ fn scale_instrument_value(value: InstrumentValue, scale: f64) -> InstrumentValue
 }
 
 impl AcquisitionSource for SerialCommandSource {
-    fn sample(
+    fn sample_series(
         &mut self,
-        series: &[SeriesMetadata],
+        series: &SeriesMetadata,
         timestamp: f64,
-        output: &mut Vec<SeriesSample>,
-    ) -> Result<(), AcquisitionError> {
-        if series.is_empty() {
-            return Ok(());
-        }
+    ) -> Result<Option<SeriesSample>, AcquisitionError> {
+        let value = match &series.source {
+            SeriesSource::SerialCommand { command } => {
+                let connection = self.connection().map_err(|error| {
+                    AcquisitionError::from(format!(
+                        "Cannot acquire serial \
+                                     series: {error}",
+                    ))
+                })?;
 
-        for series in series {
-            let value = match &series.source {
-                SeriesSource::SerialCommand { command } => {
-                    let connection = self.connection().map_err(|error| {
-                        AcquisitionError::from(format!("Cannot acquire serial series: {error}",))
-                    })?;
+                connection.request_f64(command).map_err(|error| {
+                    AcquisitionError::from(format!(
+                        "COM series '{}': \
+                                 request '{}' failed: \
+                                 {error}",
+                        series.name, command,
+                    ))
+                })?
+            }
 
-                    connection.request_f64(command).map_err(|error| {
-                        AcquisitionError::from(format!(
-                            "COM series '{}': request '{}' failed: \
-                             {error}",
-                            series.name, command,
-                        ))
-                    })?
-                }
+            SeriesSource::Instrument(request) => {
+                let Some(value) = self.read_instrument_value(*request).map_err(|error| {
+                    AcquisitionError::from(format!(
+                        "{} series '{}': \
+                                 {error}",
+                        request.kind_name(),
+                        series.name,
+                    ))
+                })?
+                else {
+                    return Ok(None);
+                };
 
-                SeriesSource::Instrument(request) => {
-                    let value = self.read_instrument_value(*request).map_err(|error| {
-                        AcquisitionError::from(format!(
-                            "{} series '{}': {error}",
-                            request.kind_name(),
-                            series.name,
-                        ))
-                    })?;
+                value.as_f64()
+            }
+        };
 
-                    value.as_f64()
-                }
-            };
-
-            output.push(SeriesSample::new(series.id, Sample::new(timestamp, value)));
-        }
-
-        Ok(())
+        Ok(Some(SeriesSample::new(
+            series.id,
+            Sample::new(timestamp, value),
+        )))
     }
 
     fn read_instrument(
         &mut self,
         request: InstrumentReadRequest,
     ) -> Result<Option<InstrumentValue>, AcquisitionError> {
-        self.read_instrument_value(request).map(Some)
+        self.read_instrument_value(request)
     }
 
     fn request_text(&mut self, command: &str) -> Result<Option<String>, AcquisitionError> {
@@ -275,7 +277,7 @@ impl AcquisitionSource for SerialCommandSource {
         &mut self,
         request: InstrumentWriteRequest,
     ) -> Result<Option<InstrumentValue>, AcquisitionError> {
-        self.write_instrument_value(request).map(Some)
+        self.write_instrument_value(request)
     }
 
     fn stop(&mut self) -> Result<(), AcquisitionError> {
