@@ -181,7 +181,7 @@ impl Metakon5x3Register {
 
                 // -32768 is reserved as the
                 // measurement-alarm value.
-                range: ParameterRange::integer(-32_767, 32_767),
+                range: ParameterRange::integer(-999, 9_999),
             },
 
             Self::Setpoint => ParameterDescriptor {

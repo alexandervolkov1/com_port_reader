@@ -245,13 +245,13 @@ impl LuaMetakon5x3 {
         match parameter {
             Metakon5x3Register::Measurement
             | Metakon5x3Register::Setpoint
+            | Metakon5x3Register::ProportionalBand
             | Metakon5x3Register::UpperSetpoint
             | Metakon5x3Register::UpperHysteresis
             | Metakon5x3Register::LowerSetpoint
             | Metakon5x3Register::LowerHysteresis => self.scale,
 
             Metakon5x3Register::ChannelType
-            | Metakon5x3Register::ProportionalBand
             | Metakon5x3Register::IntegralTime
             | Metakon5x3Register::DerivativeTime
             | Metakon5x3Register::OutputPower

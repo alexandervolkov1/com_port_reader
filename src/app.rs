@@ -35,10 +35,14 @@ pub struct MyApp {
     device_emulator: DeviceEmulatorModel,
     help: HelpModel,
     config: AppConfig,
-    _lua_worker: LuaWorker,
     lua_console: LuaConsoleModel,
     lua_command_receiver: crossbeam_channel::Receiver<UserCommand>,
     log_panel_open: bool,
+
+    // Must be dropped after the application-command
+    // receiver so pending synchronous Lua operations
+    // are disconnected before the Lua thread is joined.
+    _lua_worker: LuaWorker,
 }
 
 impl MyApp {
@@ -112,10 +116,10 @@ impl MyApp {
             log_handle,
             device_emulator,
             help: HelpModel::default(),
-            _lua_worker: lua_worker,
             lua_console,
             lua_command_receiver,
             log_panel_open: false,
+            _lua_worker: lua_worker,
         }
     }
 

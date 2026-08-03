@@ -479,7 +479,7 @@ mod tests {
             (
                 "proportional_band",
                 Metakon5x3Register::ProportionalBand,
-                1.0,
+                0.1,
             ),
             ("integral_time", Metakon5x3Register::IntegralTime, 1.0),
             ("derivative_time", Metakon5x3Register::DerivativeTime, 1.0),
@@ -761,14 +761,14 @@ mod tests {
                 assert(
                     math.abs(
                         measurement.minimum
-                            - (-3276.7)
+                            - (-99.9)
                     ) < 0.000001
                 )
 
                 assert(
                     math.abs(
                         measurement.maximum
-                            - 3276.7
+                            - 999.9
                     ) < 0.000001
                 )
 
@@ -805,6 +805,37 @@ mod tests {
 
                 assert(
                     setpoint.scale == 0.1
+                )
+
+                local proportional_band =
+                    by_key.proportional_band
+
+                assert(
+                    proportional_band.access
+                        == "read_write"
+                )
+
+                assert(
+                    proportional_band.value_type
+                        == "number"
+                )
+
+                assert(
+                    math.abs(
+                        proportional_band.minimum
+                            - 0.1
+                    ) < 0.000001
+                )
+
+                assert(
+                    math.abs(
+                        proportional_band.maximum
+                            - 999.9
+                    ) < 0.000001
+                )
+
+                assert(
+                    proportional_band.scale == 0.1
                 )
 
                 local output_power =
