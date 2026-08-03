@@ -60,6 +60,24 @@ pub enum VirtualInstrumentMessage {
 }
 
 impl VirtualInstrumentMessage {
+    pub const fn kind(&self) -> MessageKind {
+        match self {
+            Self::DescribeRequest => MessageKind::DescribeRequest,
+
+            Self::DescribeResponse { .. } => MessageKind::DescribeResponse,
+
+            Self::ReadRequest { .. } => MessageKind::ReadRequest,
+
+            Self::ReadResponse { .. } => MessageKind::ReadResponse,
+
+            Self::WriteRequest { .. } => MessageKind::WriteRequest,
+
+            Self::WriteResponse { .. } => MessageKind::WriteResponse,
+
+            Self::ErrorResponse { .. } => MessageKind::ErrorResponse,
+        }
+    }
+
     pub fn encode_frame(&self) -> Result<VirtualInstrumentFrame, VirtualMessageCodecError> {
         let mut encoder = Encoder::new();
 

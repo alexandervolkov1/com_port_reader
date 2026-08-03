@@ -1,5 +1,10 @@
+mod client;
 mod frame_io;
 mod message;
+
+pub use client::{
+    VirtualInstrumentClient, VirtualInstrumentClientError, VirtualInstrumentTransport,
+};
 
 pub use frame_io::{VirtualFrameIoError, read_frame, write_frame};
 
