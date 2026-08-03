@@ -6,13 +6,14 @@ use mlua::{FromLua, Lua, Table, UserData, UserDataMethods, Value};
 use crate::{
     data::{DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, NewSeries},
     instrument::{
-        InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
+        InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterRange,
         metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
     },
     user_command::UserCommand,
 };
 
 const INSTRUMENT_READ_TIMEOUT: Duration = Duration::from_secs(10);
+
 const INSTRUMENT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<()> {
@@ -70,6 +71,7 @@ pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<(
 
     lua.globals().set("app", app)
 }
+
 fn register_command(
     lua: &Lua,
     app: &Table,
@@ -110,6 +112,7 @@ fn register_metakon_controller(
     let function = lua.create_function(move |lua, options: Option<Table>| {
         let options = match options {
             Some(options) => options,
+
             None => lua.create_table()?,
         };
 
@@ -129,14 +132,15 @@ fn register_metakon_controller(
 
         if !scale.is_finite() || scale <= 0.0 {
             return Err(mlua::Error::RuntimeError(
-                "app.metakon scale must be finite and \
-                     greater than zero"
+                "app.metakon scale must be \
+                         finite and greater than zero"
                     .to_owned(),
             ));
         }
 
         lua.create_userdata(LuaMetakon5x3 {
             instrument: Metakon5x3::new(device, channel),
+
             scale,
             command_sender: command_sender.clone(),
         })
@@ -151,7 +155,8 @@ fn validate_metakon_controller_options(options: &Table) -> mlua::Result<()> {
 
         if !matches!(key.as_str(), "device" | "channel" | "scale") {
             return Err(mlua::Error::RuntimeError(format!(
-                "unknown app.metakon option '{key}'",
+                "unknown app.metakon \
+                         option '{key}'",
             )));
         }
     }
@@ -160,7 +165,6 @@ fn validate_metakon_controller_options(options: &Table) -> mlua::Result<()> {
 }
 
 #[derive(Clone)]
-
 struct LuaMetakon5x3 {
     instrument: Metakon5x3,
     scale: f64,
@@ -211,16 +215,19 @@ impl LuaMetakon5x3 {
             Ok(Ok(value)) => Ok(value),
 
             Ok(Err(error)) => Err(mlua::Error::RuntimeError(format!(
-                "Instrument write failed: {error}",
+                "Instrument write failed: \
+                         {error}",
             ))),
 
             Err(RecvTimeoutError::Timeout) => Err(mlua::Error::RuntimeError(
-                "Timed out waiting for instrument write".to_owned(),
+                "Timed out waiting for \
+                     instrument write"
+                    .to_owned(),
             )),
 
             Err(RecvTimeoutError::Disconnected) => Err(mlua::Error::RuntimeError(
-                "Instrument write response channel is \
-                     disconnected"
+                "Instrument write response \
+                     channel is disconnected"
                     .to_owned(),
             )),
         }
@@ -253,15 +260,37 @@ impl LuaMetakon5x3 {
         for (index, parameter) in Metakon5x3Register::ALL.into_iter().enumerate() {
             let descriptor = parameter.descriptor();
 
+            let scale = self.parameter_scale(parameter);
+
+            let value_type = descriptor.value_type.scaled(scale);
+
+            let range = descriptor.range.scaled(scale);
+
             let entry = lua.create_table_with_capacity(0, 7)?;
 
             entry.set("key", descriptor.key)?;
+
             entry.set("name", descriptor.name)?;
+
             entry.set("access", descriptor.access.as_str())?;
-            entry.set("value_type", descriptor.value_type.as_str())?;
-            entry.set("minimum", descriptor.range.minimum)?;
-            entry.set("maximum", descriptor.range.maximum)?;
-            entry.set("scale", self.parameter_scale(parameter))?;
+
+            entry.set("value_type", value_type.as_str())?;
+
+            match range {
+                ParameterRange::Integer { minimum, maximum } => {
+                    entry.set("minimum", minimum)?;
+
+                    entry.set("maximum", maximum)?;
+                }
+
+                ParameterRange::Number { minimum, maximum } => {
+                    entry.set("minimum", minimum)?;
+
+                    entry.set("maximum", maximum)?;
+                }
+            }
+
+            entry.set("scale", scale)?;
 
             parameters.raw_set((index + 1) as i64, entry)?;
         }
@@ -288,16 +317,19 @@ impl LuaMetakon5x3 {
             Ok(Ok(value)) => Ok(value),
 
             Ok(Err(error)) => Err(mlua::Error::RuntimeError(format!(
-                "Instrument read failed: {error}",
+                "Instrument read failed: \
+                         {error}",
             ))),
 
             Err(RecvTimeoutError::Timeout) => Err(mlua::Error::RuntimeError(
-                "Timed out waiting for instrument read".to_owned(),
+                "Timed out waiting for \
+                     instrument read"
+                    .to_owned(),
             )),
 
             Err(RecvTimeoutError::Disconnected) => Err(mlua::Error::RuntimeError(
-                "Instrument read response channel \
-                     is disconnected"
+                "Instrument read response \
+                     channel is disconnected"
                     .to_owned(),
             )),
         }
@@ -306,7 +338,10 @@ impl LuaMetakon5x3 {
 
 fn metakon_parameter_from_key(key: &str) -> mlua::Result<Metakon5x3Register> {
     Metakon5x3Register::from_key(key).ok_or_else(|| {
-        mlua::Error::RuntimeError(format!("Unknown Metakon 5X3 parameter: '{key}'",))
+        mlua::Error::RuntimeError(format!(
+            "Unknown Metakon 5X3 \
+                     parameter: '{key}'",
+        ))
     })
 }
 
@@ -317,7 +352,8 @@ fn metakon_write_from_lua(
 ) -> mlua::Result<Metakon5x3Write> {
     if !parameter.writable() {
         return Err(mlua::Error::RuntimeError(format!(
-            "Metakon 5X3 parameter '{}' is read-only",
+            "Metakon 5X3 parameter \
+                     '{}' is read-only",
             parameter.descriptor().key,
         )));
     }
@@ -371,7 +407,10 @@ fn metakon_write_from_lua(
         | Metakon5x3Register::Measurement
         | Metakon5x3Register::PwmPositive
         | Metakon5x3Register::PwmNegative => {
-            unreachable!("read-only parameters were rejected above")
+            unreachable!(
+                "read-only parameters were \
+                 rejected above"
+            )
         }
     }
 }
@@ -386,16 +425,17 @@ where
 {
     let value = i64::from_lua(value, lua).map_err(|_| {
         mlua::Error::RuntimeError(format!(
-            "Metakon 5X3 parameter '{}' expects \
-                 an integer value",
+            "Metakon 5X3 parameter \
+                         '{}' expects an integer \
+                         value",
             parameter.descriptor().key,
         ))
     })?;
 
     T::try_from(value).map_err(|_| {
         mlua::Error::RuntimeError(format!(
-            "Value {value} does not fit Metakon 5X3 \
-             parameter '{}'",
+            "Value {value} does not fit \
+             Metakon 5X3 parameter '{}'",
             parameter.descriptor().key,
         ))
     })
@@ -408,8 +448,9 @@ fn boolean_parameter_value(
 ) -> mlua::Result<bool> {
     bool::from_lua(value, lua).map_err(|_| {
         mlua::Error::RuntimeError(format!(
-            "Metakon 5X3 parameter '{}' expects a \
-             Boolean value",
+            "Metakon 5X3 parameter \
+                     '{}' expects a Boolean \
+                     value",
             parameter.descriptor().key,
         ))
     })
@@ -525,7 +566,7 @@ fn send_application_command(
     command_sender.send(command).map_err(|_| {
         mlua::Error::RuntimeError(
             "application command channel \
-             is disconnected"
+                 is disconnected"
                 .to_owned(),
         )
     })

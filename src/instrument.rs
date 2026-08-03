@@ -24,37 +24,62 @@ impl ParameterAccess {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParameterValueType {
     Boolean,
-    Unsigned8,
-    Signed8,
-    Unsigned16,
-    Signed16,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ParameterRange {
-    pub minimum: i64,
-    pub maximum: i64,
+    Integer,
+    Number,
 }
 
 impl ParameterValueType {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Boolean => "boolean",
-            Self::Unsigned8 => "u8",
-            Self::Signed8 => "i8",
-            Self::Unsigned16 => "u16",
-            Self::Signed16 => "i16",
+            Self::Integer => "integer",
+            Self::Number => "number",
+        }
+    }
+
+    pub fn scaled(self, scale: f64) -> Self {
+        match self {
+            Self::Boolean => Self::Boolean,
+
+            Self::Integer if scale == 1.0 => Self::Integer,
+
+            Self::Integer | Self::Number => Self::Number,
         }
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ParameterRange {
+    Integer { minimum: i64, maximum: i64 },
+
+    Number { minimum: f64, maximum: f64 },
+}
+
 impl ParameterRange {
-    pub const fn new(minimum: i64, maximum: i64) -> Self {
-        Self { minimum, maximum }
+    pub const fn integer(minimum: i64, maximum: i64) -> Self {
+        Self::Integer { minimum, maximum }
+    }
+
+    pub fn scaled(self, scale: f64) -> Self {
+        match self {
+            Self::Integer { minimum, maximum } if scale == 1.0 => {
+                Self::Integer { minimum, maximum }
+            }
+
+            Self::Integer { minimum, maximum } => Self::Number {
+                minimum: minimum as f64 * scale,
+                maximum: maximum as f64 * scale,
+            },
+
+            Self::Number { minimum, maximum } => Self::Number {
+                minimum: minimum * scale,
+                maximum: maximum * scale,
+            },
+        }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ParameterDescriptor {
     pub key: &'static str,
     pub name: &'static str,

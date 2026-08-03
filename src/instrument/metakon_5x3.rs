@@ -169,57 +169,59 @@ impl Metakon5x3Register {
                 key: "channel_type",
                 name: "channel type",
                 access: ParameterAccess::ReadOnly,
-                value_type: ParameterValueType::Unsigned8,
-                range: ParameterRange::new(0, 255),
+                value_type: ParameterValueType::Integer,
+                range: ParameterRange::integer(0, 255),
             },
 
             Self::Measurement => ParameterDescriptor {
                 key: "measurement",
                 name: "measurement",
                 access: ParameterAccess::ReadOnly,
-                value_type: ParameterValueType::Signed16,
-                // -32768 is reserved as the measurement-alarm value.
-                range: ParameterRange::new(-32_767, 32_767),
+                value_type: ParameterValueType::Integer,
+
+                // -32768 is reserved as the
+                // measurement-alarm value.
+                range: ParameterRange::integer(-32_767, 32_767),
             },
 
             Self::Setpoint => ParameterDescriptor {
                 key: "setpoint",
                 name: "setpoint",
                 access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Signed16,
-                range: ParameterRange::new(-999, 9_999),
+                value_type: ParameterValueType::Integer,
+                range: ParameterRange::integer(-999, 9_999),
             },
 
             Self::ProportionalBand => ParameterDescriptor {
                 key: "proportional_band",
                 name: "proportional band",
                 access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Unsigned16,
-                range: ParameterRange::new(1, 9_999),
+                value_type: ParameterValueType::Integer,
+                range: ParameterRange::integer(1, 9_999),
             },
 
             Self::IntegralTime => ParameterDescriptor {
                 key: "integral_time",
                 name: "integral time",
                 access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Unsigned16,
-                range: ParameterRange::new(1, 30_000),
+                value_type: ParameterValueType::Integer,
+                range: ParameterRange::integer(1, 30_000),
             },
 
             Self::DerivativeTime => ParameterDescriptor {
                 key: "derivative_time",
                 name: "derivative time",
                 access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Unsigned8,
-                range: ParameterRange::new(0, 255),
+                value_type: ParameterValueType::Integer,
+                range: ParameterRange::integer(0, 255),
             },
 
             Self::OutputPower => ParameterDescriptor {
                 key: "output_power",
                 name: "output power",
                 access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Signed8,
-                range: ParameterRange::new(-100, 100),
+                value_type: ParameterValueType::Integer,
+                range: ParameterRange::integer(-100, 100),
             },
 
             Self::PwmPositive => ParameterDescriptor {
@@ -227,7 +229,7 @@ impl Metakon5x3Register {
                 name: "PWM positive output",
                 access: ParameterAccess::ReadOnly,
                 value_type: ParameterValueType::Boolean,
-                range: ParameterRange::new(0, 1),
+                range: ParameterRange::integer(0, 1),
             },
 
             Self::PwmNegative => ParameterDescriptor {
@@ -235,23 +237,23 @@ impl Metakon5x3Register {
                 name: "PWM negative output",
                 access: ParameterAccess::ReadOnly,
                 value_type: ParameterValueType::Boolean,
-                range: ParameterRange::new(0, 1),
+                range: ParameterRange::integer(0, 1),
             },
 
             Self::UpperSetpoint => ParameterDescriptor {
                 key: "upper_setpoint",
                 name: "upper setpoint",
                 access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Signed16,
-                range: ParameterRange::new(-999, 9_999),
+                value_type: ParameterValueType::Integer,
+                range: ParameterRange::integer(-999, 9_999),
             },
 
             Self::UpperHysteresis => ParameterDescriptor {
                 key: "upper_hysteresis",
                 name: "upper hysteresis",
                 access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Unsigned8,
-                range: ParameterRange::new(0, 255),
+                value_type: ParameterValueType::Integer,
+                range: ParameterRange::integer(0, 255),
             },
 
             Self::UpperOutput => ParameterDescriptor {
@@ -259,23 +261,23 @@ impl Metakon5x3Register {
                 name: "upper output",
                 access: ParameterAccess::ReadWrite,
                 value_type: ParameterValueType::Boolean,
-                range: ParameterRange::new(0, 1),
+                range: ParameterRange::integer(0, 1),
             },
 
             Self::LowerSetpoint => ParameterDescriptor {
                 key: "lower_setpoint",
                 name: "lower setpoint",
                 access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Signed16,
-                range: ParameterRange::new(-999, 9_999),
+                value_type: ParameterValueType::Integer,
+                range: ParameterRange::integer(-999, 9_999),
             },
 
             Self::LowerHysteresis => ParameterDescriptor {
                 key: "lower_hysteresis",
                 name: "lower hysteresis",
                 access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Unsigned8,
-                range: ParameterRange::new(0, 255),
+                value_type: ParameterValueType::Integer,
+                range: ParameterRange::integer(0, 255),
             },
 
             Self::LowerOutput => ParameterDescriptor {
@@ -283,7 +285,7 @@ impl Metakon5x3Register {
                 name: "lower output",
                 access: ParameterAccess::ReadWrite,
                 value_type: ParameterValueType::Boolean,
-                range: ParameterRange::new(0, 1),
+                range: ParameterRange::integer(0, 1),
             },
         }
     }
@@ -330,16 +332,23 @@ impl Metakon5x3Register {
     }
 
     pub const fn data_type(self) -> RegisterDataType {
-        match self.descriptor().value_type {
-            ParameterValueType::Boolean => RegisterDataType::Bool,
+        match self {
+            Self::ChannelType
+            | Self::DerivativeTime
+            | Self::UpperHysteresis
+            | Self::LowerHysteresis => RegisterDataType::Ubyte,
 
-            ParameterValueType::Unsigned8 => RegisterDataType::Ubyte,
+            Self::Measurement | Self::Setpoint | Self::UpperSetpoint | Self::LowerSetpoint => {
+                RegisterDataType::Int
+            }
 
-            ParameterValueType::Signed8 => RegisterDataType::Byte,
+            Self::ProportionalBand | Self::IntegralTime => RegisterDataType::Uint,
 
-            ParameterValueType::Unsigned16 => RegisterDataType::Uint,
+            Self::OutputPower => RegisterDataType::Byte,
 
-            ParameterValueType::Signed16 => RegisterDataType::Int,
+            Self::PwmPositive | Self::PwmNegative | Self::UpperOutput | Self::LowerOutput => {
+                RegisterDataType::Bool
+            }
         }
     }
 
@@ -440,9 +449,15 @@ impl Metakon5x3Write {
         };
 
         let register = self.register();
-        let range = register.descriptor().range;
 
-        validate_range(register, value, range.minimum, range.maximum)
+        let ParameterRange::Integer { minimum, maximum } = register.descriptor().range else {
+            unreachable!(
+                "Metakon 5X3 writable registers \
+                 have integer ranges"
+            );
+        };
+
+        validate_range(register, value, minimum, maximum)
     }
 }
 
@@ -511,7 +526,10 @@ impl TryFrom<(u8, WriteRegisterValue)> for Metakon5x3Write {
                 Self::LowerOutput(value)
             }
 
-            _ => unreachable!("register access and value type were checked above"),
+            _ => unreachable!(
+                "register access and value type \
+                 were checked above"
+            ),
         };
 
         parameter.validate()?;
@@ -533,8 +551,8 @@ impl std::fmt::Display for Metakon5x3IdentificationError {
             Self::Read(error) => {
                 write!(
                     formatter,
-                    "failed to read Metakon channel type: \
-                     {error}",
+                    "failed to read Metakon channel \
+                     type: {error}",
                 )
             }
 
@@ -542,8 +560,8 @@ impl std::fmt::Display for Metakon5x3IdentificationError {
                 write!(
                     formatter,
                     "unexpected Metakon channel type \
-                     0x{actual:02X}; expected Metakon 5X3 \
-                     type 0x{expected:02X}",
+                     0x{actual:02X}; expected Metakon \
+                     5X3 type 0x{expected:02X}",
                 )
             }
         }
@@ -572,8 +590,8 @@ impl std::fmt::Display for Metakon5x3ReadError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "Metakon 5X3 device {}, channel {}, {} \
-             register 0x{:02X} read failed: {}",
+            "Metakon 5X3 device {}, channel {}, \
+             {} register 0x{:02X} read failed: {}",
             self.device,
             self.channel,
             self.register,
@@ -610,16 +628,17 @@ impl std::fmt::Display for Metakon5x3WriteConversionError {
             Self::UnknownRegister(address) => {
                 write!(
                     formatter,
-                    "register 0x{address:02X} does not belong \
-                     to the Metakon 5X3 register model",
+                    "register 0x{address:02X} does \
+                     not belong to the Metakon 5X3 \
+                     register model",
                 )
             }
 
             Self::ReadOnlyRegister(register) => {
                 write!(
                     formatter,
-                    "Metakon 5X3 {} register 0x{:02X} \
-                     is read-only",
+                    "Metakon 5X3 {} register \
+                     0x{:02X} is read-only",
                     register,
                     register.address(),
                 )
@@ -632,8 +651,9 @@ impl std::fmt::Display for Metakon5x3WriteConversionError {
             } => {
                 write!(
                     formatter,
-                    "Metakon 5X3 {} register 0x{:02X} \
-                     expects type {:?}, received {:?}",
+                    "Metakon 5X3 {} register \
+                     0x{:02X} expects type {:?}, \
+                     received {:?}",
                     register,
                     register.address(),
                     expected,
@@ -705,9 +725,10 @@ impl std::fmt::Display for Metakon5x3WriteError {
             Self::VerificationRead { register, source } => {
                 write!(
                     formatter,
-                    "Metakon 5X3 {} register 0x{:02X} \
-                     was written, but verification \
-                     read failed: {source}",
+                    "Metakon 5X3 {} register \
+                     0x{:02X} was written, but \
+                     verification read failed: \
+                     {source}",
                     register,
                     register.address(),
                 )
@@ -740,7 +761,8 @@ impl std::fmt::Display for Metakon5x3ValueError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "Metakon 5X3 {} must be between {} and {}, received {}",
+            "Metakon 5X3 {} must be between {} \
+             and {}, received {}",
             self.register, self.minimum, self.maximum, self.value,
         )
     }
@@ -769,6 +791,7 @@ fn validate_range(
 #[cfg(test)]
 mod tests {
     use super::{Metakon5x3, Metakon5x3Register, Metakon5x3Write, Metakon5x3WriteConversionError};
+
     use crate::protocol::metakon::{
         ReadRegisterRequest, RegisterDataType, WriteRegisterRequest, WriteRegisterValue,
     };
@@ -869,9 +892,11 @@ mod tests {
         ];
 
         for (register, address, data_type, writable) in registers {
-            assert_eq!(register.address(), address);
-            assert_eq!(register.data_type(), data_type);
-            assert_eq!(register.writable(), writable);
+            assert_eq!(register.address(), address,);
+
+            assert_eq!(register.data_type(), data_type,);
+
+            assert_eq!(register.writable(), writable,);
         }
     }
 
@@ -880,8 +905,8 @@ mod tests {
         let instrument = Metakon5x3::new(15, 0);
 
         assert_eq!(
-            instrument.read_request(Metakon5x3Register::Measurement),
-            ReadRegisterRequest::new(15, 0, 0x01),
+            instrument.read_request(Metakon5x3Register::Measurement,),
+            ReadRegisterRequest::new(15, 0, 0x01,),
         );
     }
 
@@ -890,7 +915,7 @@ mod tests {
         let instrument = Metakon5x3::new(15, 0);
 
         assert_eq!(
-            instrument.write_request(Metakon5x3Write::Setpoint(150)),
+            instrument.write_request(Metakon5x3Write::Setpoint(150),),
             Ok(WriteRegisterRequest::new(
                 15,
                 0,
@@ -906,7 +931,7 @@ mod tests {
 
         assert!(
             instrument
-                .write_request(Metakon5x3Write::Setpoint(10_000))
+                .write_request(Metakon5x3Write::Setpoint(10_000,),)
                 .is_err()
         );
     }
@@ -928,13 +953,13 @@ mod tests {
 
         assert!(
             instrument
-                .write_request(Metakon5x3Write::IntegralTime(0))
+                .write_request(Metakon5x3Write::IntegralTime(0,),)
                 .is_err()
         );
 
         assert!(
             instrument
-                .write_request(Metakon5x3Write::IntegralTime(30_001),)
+                .write_request(Metakon5x3Write::IntegralTime(30_001,),)
                 .is_err()
         );
     }
@@ -945,7 +970,7 @@ mod tests {
 
         assert!(
             instrument
-                .write_request(Metakon5x3Write::OutputPower(101),)
+                .write_request(Metakon5x3Write::OutputPower(101,),)
                 .is_err()
         );
     }
@@ -955,7 +980,7 @@ mod tests {
         let instrument = Metakon5x3::new(15, 0);
 
         assert_eq!(
-            instrument.write_request(Metakon5x3Write::UpperOutput(true),),
+            instrument.write_request(Metakon5x3Write::UpperOutput(true,),),
             Ok(WriteRegisterRequest::new(
                 15,
                 0,
@@ -971,7 +996,7 @@ mod tests {
 
         assert_eq!(
             instrument.read_request(Metakon5x3Register::ChannelType,),
-            ReadRegisterRequest::new(1, 0, 0x00),
+            ReadRegisterRequest::new(1, 0, 0x00,),
         );
     }
 
@@ -981,15 +1006,15 @@ mod tests {
             let register =
                 Metakon5x3Register::from_address(address).expect("documented register must exist");
 
-            assert_eq!(register.address(), address);
+            assert_eq!(register.address(), address,);
         }
     }
 
     #[test]
     fn rejects_unknown_register_address() {
-        assert_eq!(Metakon5x3Register::from_address(0x0F), None,);
+        assert_eq!(Metakon5x3Register::from_address(0x0F,), None,);
 
-        assert_eq!(Metakon5x3Register::from_address(0xFF), None,);
+        assert_eq!(Metakon5x3Register::from_address(0xFF,), None,);
     }
 
     #[test]
@@ -1003,7 +1028,7 @@ mod tests {
     fn converts_boolean_output_value() {
         let parameter = Metakon5x3Write::try_from((0x0B, WriteRegisterValue::Bool(true)));
 
-        assert_eq!(parameter, Ok(Metakon5x3Write::UpperOutput(true)),);
+        assert_eq!(parameter, Ok(Metakon5x3Write::UpperOutput(true,)),);
     }
 
     #[test]
@@ -1038,7 +1063,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(Metakon5x3WriteConversionError::UnknownRegister(0xFF,),),
+            Err(Metakon5x3WriteConversionError::UnknownRegister(0xFF),),
         );
     }
 
@@ -1073,13 +1098,14 @@ mod tests {
         ];
 
         for (key, expected) in cases {
-            assert_eq!(Metakon5x3Register::from_key(key), Some(expected));
-            assert_eq!(expected.descriptor().key, key);
+            assert_eq!(Metakon5x3Register::from_key(key), Some(expected),);
+
+            assert_eq!(expected.descriptor().key, key,);
         }
     }
 
     #[test]
     fn rejects_unknown_parameter_key() {
-        assert_eq!(Metakon5x3Register::from_key("unknown"), None);
+        assert_eq!(Metakon5x3Register::from_key("unknown",), None,);
     }
 }

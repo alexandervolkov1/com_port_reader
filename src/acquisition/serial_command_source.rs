@@ -123,11 +123,12 @@ impl SerialCommandSource {
                 match register_value {
                     RegisterValue::Bool(value) => Ok(InstrumentValue::Boolean(value)),
 
+                    value if scale == 1.0 => register_value_to_instrument_value(value),
+
                     value => {
                         let raw_value = value.into_f64().expect(
-                            "Metakon 5X3 parameters \
-                                 always contain numeric \
-                                 or boolean values",
+                            "Metakon 5X3 parameters always contain \
+                             numeric or boolean values",
                         );
 
                         Ok(InstrumentValue::Number(raw_value * scale))
