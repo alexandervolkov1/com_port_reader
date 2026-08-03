@@ -416,7 +416,7 @@ impl Metakon5x3Write {
         }
     }
 
-    fn validate(self) -> Result<(), Metakon5x3ValueError> {
+    pub(super) fn validate(self) -> Result<(), Metakon5x3ValueError> {
         let value = match self {
             Self::Setpoint(value) | Self::UpperSetpoint(value) | Self::LowerSetpoint(value) => {
                 i64::from(value)

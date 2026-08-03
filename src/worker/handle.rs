@@ -5,8 +5,7 @@ use crossbeam_channel::Sender;
 use crate::{
     acquisition::InstrumentReadResult,
     data::{NewSeries, SeriesId},
-    instrument::InstrumentReadRequest,
-    protocol::metakon::WriteRegisterRequest,
+    instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     serial_connection::SerialPortConfig,
 };
 
@@ -106,12 +105,12 @@ impl WorkerHandle {
         })
     }
 
-    pub fn write_metakon(
+    pub fn write_instrument(
         &self,
-        config: SerialPortConfig,
-        request: WriteRegisterRequest,
+        port_name: String,
+        request: InstrumentWriteRequest,
     ) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::WriteMetakon { config, request })
+        self.send(WorkerCommand::WriteInstrument { port_name, request })
     }
 }
 

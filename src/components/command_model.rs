@@ -155,17 +155,20 @@ impl CommandModel {
                 }
             }
 
-            UserCommand::WriteMetakon { request } => {
+            UserCommand::WriteInstrument { request } => {
                 let Some(config) = serial_settings.serial_config() else {
                     self.log.error(
-                        "Cannot write Metakon register: \
-                         select a COM port in Settings.",
+                        "Cannot write instrument: select a COM \
+                         port in Settings.",
                     );
 
                     return;
                 };
 
-                if let Err(error) = self.worker_handle.write_metakon(config, request) {
+                if let Err(error) = self
+                    .worker_handle
+                    .write_instrument(config.port_name().to_owned(), request)
+                {
                     self.set_worker_error(error);
                 }
             }
@@ -208,6 +211,6 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
             | WorkerEvent::SerialPortTestFailed { .. }
             | WorkerEvent::SerialTextCommandFailed { .. }
             | WorkerEvent::InstrumentReadFailed { .. }
-            | WorkerEvent::MetakonWriteFailed { .. }
+            | WorkerEvent::InstrumentWriteFailed { .. }
     )
 }

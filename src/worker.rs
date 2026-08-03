@@ -12,11 +12,7 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use crate::{
     acquisition::{AcquisitionError, AcquisitionSource, InstrumentReadResult},
     data::{Series, SeriesSample, SeriesStore},
-    instrument::{
-        InstrumentReadRequest,
-        metakon_5x3::{Metakon5x3, Metakon5x3Write},
-    },
-    protocol::metakon::{RegisterValue, WriteRegisterRequest},
+    instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError},
     serial_connection::SerialConnectionError,
     utils::current_time_f64,
@@ -461,23 +457,32 @@ impl Worker {
                         let _ = response_sender.send(result);
                     }
 
-                    Ok(WorkerCommand::WriteMetakon { config, request }) => {
-                        let port_name = config.port_name().to_owned();
+                    Ok(WorkerCommand::WriteInstrument { port_name, request }) => {
+                        let acquisition_running =
+                            matches!(&state, AcquisitionState::Running { .. });
 
-                        let result = if matches!(state, AcquisitionState::Running { .. }) {
-                            write_metakon_to_active_source(source.as_mut(), request)
-                        } else {
-                            write_and_verify_metakon(&config, request)
-                        };
+                        let mut result = write_instrument_to_source(source.as_mut(), request);
+
+                        if !acquisition_running && let Err(stop_error) = source.stop() {
+                            result = match result {
+                                Ok(_) => Err(stop_error),
+
+                                Err(error) => Err(format!(
+                                    "{error}; additionally failed to close \
+                                     the instrument source: {stop_error}",
+                                )
+                                .into()),
+                            };
+                        }
 
                         let event = match result {
-                            Ok(actual_value) => WorkerEvent::MetakonWriteSucceeded {
+                            Ok(actual_value) => WorkerEvent::InstrumentWriteSucceeded {
                                 port_name,
                                 request,
                                 actual_value,
                             },
 
-                            Err(error) => WorkerEvent::MetakonWriteFailed {
+                            Err(error) => WorkerEvent::InstrumentWriteFailed {
                                 port_name,
                                 request,
                                 error,
@@ -603,53 +608,14 @@ fn request_text_from_active_source(
         })
 }
 
-fn write_metakon_to_active_source(
+fn write_instrument_to_source(
     source: &mut dyn AcquisitionSource,
-    request: WriteRegisterRequest,
-) -> Result<RegisterValue, AcquisitionError> {
-    source.write_metakon_register(request)?.ok_or_else(|| {
+    request: InstrumentWriteRequest,
+) -> Result<crate::instrument::InstrumentValue, AcquisitionError> {
+    source.write_instrument(request)?.ok_or_else(|| {
         AcquisitionError::from(
             "No acquisition source supports \
-                 Metakon register writes",
+             instrument writes",
         )
     })
-}
-
-fn write_and_verify_metakon(
-    config: &crate::serial_connection::SerialPortConfig,
-    request: WriteRegisterRequest,
-) -> Result<RegisterValue, AcquisitionError> {
-    let instrument = Metakon5x3::new(request.device(), request.channel());
-
-    let parameter =
-        Metakon5x3Write::try_from((request.register(), request.value())).map_err(|error| {
-            AcquisitionError::from(format!(
-                "Cannot write Metakon 5X3 register: \
-             {error}",
-            ))
-        })?;
-
-    let port_name = config.port_name();
-
-    let mut connection = config.open().map_err(|error| {
-        AcquisitionError::from(format!(
-            "Failed to open COM port \
-             '{port_name}': {error}",
-        ))
-    })?;
-
-    instrument
-        .verify_channel_type(&mut connection)
-        .map_err(|error| {
-            AcquisitionError::from(format!(
-                "Metakon device {}, channel {} is not \
-                 a Metakon 5X3 channel: {error}",
-                request.device(),
-                request.channel(),
-            ))
-        })?;
-
-    instrument
-        .write(&mut connection, parameter)
-        .map_err(|error| AcquisitionError::from(error.to_string()))
 }

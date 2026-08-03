@@ -1,7 +1,6 @@
 use crate::{
     data::{SeriesMetadata, SeriesSample},
-    instrument::{InstrumentReadRequest, InstrumentValue},
-    protocol::metakon::{RegisterValue, WriteRegisterRequest},
+    instrument::{InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest},
 };
 
 use super::{AcquisitionError, AcquisitionSource};
@@ -76,12 +75,12 @@ impl AcquisitionSource for CombinedSource {
         Ok(None)
     }
 
-    fn write_metakon_register(
+    fn write_instrument(
         &mut self,
-        request: WriteRegisterRequest,
-    ) -> Result<Option<RegisterValue>, AcquisitionError> {
+        request: InstrumentWriteRequest,
+    ) -> Result<Option<InstrumentValue>, AcquisitionError> {
         for source in &mut self.sources {
-            if let Some(value) = source.write_metakon_register(request)? {
+            if let Some(value) = source.write_instrument(request)? {
                 return Ok(Some(value));
             }
         }

@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
-use crate::instrument::{InstrumentReadRequest, InstrumentValue};
-use crate::protocol::metakon::{RegisterValue, WriteRegisterRequest};
+use crate::instrument::{InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest};
 use crate::serial_connection::SerialConnectionError;
 use crate::{
     acquisition::AcquisitionError,
@@ -59,15 +58,15 @@ pub enum WorkerEvent {
         error: AcquisitionError,
     },
 
-    MetakonWriteSucceeded {
+    InstrumentWriteSucceeded {
         port_name: String,
-        request: WriteRegisterRequest,
-        actual_value: RegisterValue,
+        request: InstrumentWriteRequest,
+        actual_value: InstrumentValue,
     },
 
-    MetakonWriteFailed {
+    InstrumentWriteFailed {
         port_name: String,
-        request: WriteRegisterRequest,
+        request: InstrumentWriteRequest,
         error: AcquisitionError,
     },
 }
@@ -186,25 +185,19 @@ impl std::fmt::Display for WorkerEvent {
                 )
             }
 
-            Self::MetakonWriteSucceeded {
+            Self::InstrumentWriteSucceeded {
                 port_name,
                 request,
                 actual_value,
             } => {
                 write!(
                     formatter,
-                    "COM port '{port_name}': Metakon device {}, \
-                     channel {}, register 0x{:02X} requested {}, \
-                     read back {}.",
-                    request.device(),
-                    request.channel(),
-                    request.register(),
-                    request.value(),
-                    actual_value,
+                    "COM port '{port_name}': wrote {request}; \
+                     actual value: {actual_value}.",
                 )
             }
 
-            Self::MetakonWriteFailed {
+            Self::InstrumentWriteFailed {
                 port_name,
                 request,
                 error,
@@ -212,11 +205,7 @@ impl std::fmt::Display for WorkerEvent {
                 write!(
                     formatter,
                     "COM port '{port_name}': failed to write \
-                     Metakon device {}, channel {}, register \
-                     0x{:02X}: {error}",
-                    request.device(),
-                    request.channel(),
-                    request.register(),
+                     {request}: {error}",
                 )
             }
         }

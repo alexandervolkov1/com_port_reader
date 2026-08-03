@@ -1,4 +1,4 @@
-use self::metakon_5x3::{Metakon5x3, Metakon5x3Register};
+use self::metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write};
 
 pub mod metakon_5x3;
 
@@ -101,6 +101,49 @@ impl std::fmt::Display for InstrumentReadRequest {
                     instrument.channel(),
                     parameter,
                     scale,
+                )
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstrumentWriteRequest {
+    Metakon5x3 {
+        instrument: Metakon5x3,
+        parameter: Metakon5x3Write,
+    },
+}
+
+impl InstrumentWriteRequest {
+    pub fn metakon_5x3(
+        instrument: Metakon5x3,
+        parameter: Metakon5x3Write,
+    ) -> Result<Self, metakon_5x3::Metakon5x3ValueError> {
+        parameter.validate()?;
+
+        Ok(Self::Metakon5x3 {
+            instrument,
+            parameter,
+        })
+    }
+}
+
+impl std::fmt::Display for InstrumentWriteRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Metakon5x3 {
+                instrument,
+                parameter,
+            } => {
+                write!(
+                    formatter,
+                    "Metakon 5X3 device {}, channel {}, \
+                     parameter {} = {}",
+                    instrument.device(),
+                    instrument.channel(),
+                    parameter.register(),
+                    parameter.value(),
                 )
             }
         }

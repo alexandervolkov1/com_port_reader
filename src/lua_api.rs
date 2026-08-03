@@ -6,7 +6,7 @@ use mlua::{Lua, Table, UserData, UserDataMethods, Value};
 use crate::{
     data::{DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, NewSeries},
     instrument::{
-        InstrumentReadRequest, InstrumentValue,
+        InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
         metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
     },
     user_command::UserCommand,
@@ -189,12 +189,13 @@ impl LuaMetakon5x3 {
     }
 
     fn write(&self, parameter: Metakon5x3Write) -> mlua::Result<()> {
-        let request = self
-            .instrument
-            .write_request(parameter)
+        let request = InstrumentWriteRequest::metakon_5x3(self.instrument, parameter)
             .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
-        send_application_command(&self.command_sender, UserCommand::WriteMetakon { request })
+        send_application_command(
+            &self.command_sender,
+            UserCommand::WriteInstrument { request },
+        )
     }
 
     fn parameter_scale(&self, parameter: Metakon5x3Register) -> f64 {

@@ -3,10 +3,10 @@ use std::collections::HashSet;
 use crate::{
     data::{Sample, SeriesMetadata, SeriesSample, SeriesSource},
     instrument::{
-        InstrumentReadRequest, InstrumentValue,
-        metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
+        InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
+        metakon_5x3::{Metakon5x3, Metakon5x3Register},
     },
-    protocol::metakon::{RegisterValue, WriteRegisterRequest},
+    protocol::metakon::RegisterValue,
     serial_connection::{SerialConfigStore, SerialConnection},
 };
 
@@ -136,6 +136,51 @@ impl SerialCommandSource {
             }
         }
     }
+
+    fn write_instrument_value(
+        &mut self,
+        request: InstrumentWriteRequest,
+    ) -> Result<InstrumentValue, AcquisitionError> {
+        match request {
+            InstrumentWriteRequest::Metakon5x3 {
+                instrument,
+                parameter,
+            } => {
+                let connection =
+                    self.verified_metakon_connection(instrument.device(), instrument.channel())?;
+
+                let actual_value = instrument
+                    .write(connection, parameter)
+                    .map_err(|error| AcquisitionError::from(error.to_string()))?;
+
+                register_value_to_instrument_value(actual_value)
+            }
+        }
+    }
+}
+
+fn register_value_to_instrument_value(
+    value: RegisterValue,
+) -> Result<InstrumentValue, AcquisitionError> {
+    match value {
+        RegisterValue::Bool(value) => Ok(InstrumentValue::Boolean(value)),
+
+        RegisterValue::Ascii(_) => Err(AcquisitionError::from(
+            "Instrument write returned an \
+                 unexpected ASCII value",
+        )),
+
+        value => {
+            let value = value.into_f64().ok_or_else(|| {
+                AcquisitionError::from(
+                    "Instrument write returned a \
+                     non-numeric value",
+                )
+            })?;
+
+            Ok(InstrumentValue::Number(value))
+        }
+    }
 }
 
 impl AcquisitionSource for SerialCommandSource {
@@ -209,28 +254,11 @@ impl AcquisitionSource for SerialCommandSource {
         Ok(Some(response))
     }
 
-    fn write_metakon_register(
+    fn write_instrument(
         &mut self,
-        request: WriteRegisterRequest,
-    ) -> Result<Option<RegisterValue>, AcquisitionError> {
-        let connection = self
-            .verified_metakon_connection(request.device(), request.channel())
-            .map_err(|error| {
-                AcquisitionError::from(format!("Cannot write Metakon register: {error}",))
-            })?;
-
-        let instrument = Metakon5x3::new(request.device(), request.channel());
-
-        let parameter =
-            Metakon5x3Write::try_from((request.register(), request.value())).map_err(|error| {
-                AcquisitionError::from(format!("Cannot write Metakon 5X3 register: {error}",))
-            })?;
-
-        let actual_value = instrument
-            .write(connection, parameter)
-            .map_err(|error| AcquisitionError::from(error.to_string()))?;
-
-        Ok(Some(actual_value))
+        request: InstrumentWriteRequest,
+    ) -> Result<Option<InstrumentValue>, AcquisitionError> {
+        self.write_instrument_value(request).map(Some)
     }
 
     fn stop(&mut self) -> Result<(), AcquisitionError> {

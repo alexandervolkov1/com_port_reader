@@ -1,7 +1,6 @@
 use crate::{
     data::{SeriesMetadata, SeriesSample},
-    instrument::{InstrumentReadRequest, InstrumentValue},
-    protocol::metakon::{RegisterValue, WriteRegisterRequest},
+    instrument::{InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest},
 };
 
 mod combined_source;
@@ -62,10 +61,10 @@ pub trait AcquisitionSource: Send {
         Ok(None)
     }
 
-    fn write_metakon_register(
+    fn write_instrument(
         &mut self,
-        _request: WriteRegisterRequest,
-    ) -> Result<Option<RegisterValue>, AcquisitionError> {
+        _request: InstrumentWriteRequest,
+    ) -> Result<Option<InstrumentValue>, AcquisitionError> {
         Ok(None)
     }
 

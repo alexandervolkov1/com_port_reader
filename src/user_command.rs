@@ -1,16 +1,19 @@
 use crossbeam_channel::Sender;
 
 use crate::{
-    acquisition::InstrumentReadResult, data::NewSeries, instrument::InstrumentReadRequest,
-    protocol::metakon::WriteRegisterRequest,
+    acquisition::InstrumentReadResult,
+    data::NewSeries,
+    instrument::{InstrumentReadRequest, InstrumentWriteRequest},
 };
 
 #[derive(Debug)]
 pub enum UserCommand {
     Add(NewSeries),
+
     Delete {
         name: String,
     },
+
     Rename {
         current_name: String,
         new_name: String,
@@ -39,7 +42,7 @@ pub enum UserCommand {
         response_sender: Sender<InstrumentReadResult>,
     },
 
-    WriteMetakon {
-        request: WriteRegisterRequest,
+    WriteInstrument {
+        request: InstrumentWriteRequest,
     },
 }

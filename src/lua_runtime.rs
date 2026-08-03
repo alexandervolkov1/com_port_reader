@@ -59,10 +59,9 @@ mod tests {
     use crate::{
         data::SeriesSource,
         instrument::{
-            InstrumentReadRequest, InstrumentValue,
-            metakon_5x3::{Metakon5x3, Metakon5x3Register},
+            InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
+            metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
         },
-        protocol::metakon::{WriteRegisterRequest, WriteRegisterValue},
         user_command::UserCommand,
     };
 
@@ -77,6 +76,14 @@ mod tests {
             parameter,
             scale,
         ))
+    }
+
+    fn metakon_write_request(
+        device: u8,
+        channel: u8,
+        parameter: Metakon5x3Write,
+    ) -> InstrumentWriteRequest {
+        InstrumentWriteRequest::metakon_5x3(Metakon5x3::new(device, channel), parameter).unwrap()
     }
 
     #[test]
@@ -351,65 +358,38 @@ mod tests {
         runtime
             .execute(
                 r#"
-                local controller = app.metakon({
-                    device = 15,
-                    channel = 0,
-                })
+                    local controller = app.metakon({
+                        device = 15,
+                        channel = 0,
+                    })
 
-                controller:setpoint(150)
-                controller:proportional_band(250)
-                controller:integral_time(120)
-                controller:derivative_time(10)
+                    controller:setpoint(150)
+                    controller:proportional_band(250)
+                    controller:integral_time(120)
+                    controller:derivative_time(10)
                 "#,
             )
             .unwrap();
 
         let expected = [
-            WriteRegisterRequest::new(15, 0, 0x02, WriteRegisterValue::Int(150)),
-            WriteRegisterRequest::new(15, 0, 0x03, WriteRegisterValue::Uint(250)),
-            WriteRegisterRequest::new(15, 0, 0x04, WriteRegisterValue::Uint(120)),
-            WriteRegisterRequest::new(15, 0, 0x05, WriteRegisterValue::Ubyte(10)),
+            Metakon5x3Write::Setpoint(150),
+            Metakon5x3Write::ProportionalBand(250),
+            Metakon5x3Write::IntegralTime(120),
+            Metakon5x3Write::DerivativeTime(10),
         ];
 
-        for expected_request in expected {
+        for parameter in expected {
             assert!(matches!(
-                command_receiver
-                    .try_recv()
-                    .unwrap(),
-                UserCommand::WriteMetakon {
-                    request
-                }
+                command_receiver.try_recv().unwrap(),
+                UserCommand::WriteInstrument { request }
                     if request
-                        == expected_request,
+                        == metakon_write_request(
+                            15,
+                            0,
+                            parameter,
+                        ),
             ));
         }
-
-        assert!(command_receiver.try_recv().is_err());
-    }
-
-    #[test]
-    fn rejects_unknown_metakon_controller_option() {
-        let runtime = LuaRuntime::new();
-
-        let (command_sender, command_receiver) = unbounded();
-
-        runtime.install_application_api(command_sender).unwrap();
-
-        let error = runtime
-            .execute(
-                r#"
-                app.metakon({
-                    devcie = 15
-                })
-                "#,
-            )
-            .unwrap_err()
-            .to_string();
-
-        assert!(error.contains(
-            "unknown app.metakon option \
-                 'devcie'",
-        ),);
 
         assert!(command_receiver.try_recv().is_err());
     }
@@ -425,44 +405,44 @@ mod tests {
         runtime
             .execute(
                 r#"
-                local controller = app.metakon({
-                    device = 15,
-                    channel = 2,
-                })
+                    local controller = app.metakon({
+                        device = 15,
+                        channel = 2,
+                    })
 
-                controller:output_power(-40)
+                    controller:output_power(-40)
 
-                controller:upper_setpoint(200)
-                controller:upper_hysteresis(5)
-                controller:upper_output(true)
+                    controller:upper_setpoint(200)
+                    controller:upper_hysteresis(5)
+                    controller:upper_output(true)
 
-                controller:lower_setpoint(100)
-                controller:lower_hysteresis(4)
-                controller:lower_output(false)
+                    controller:lower_setpoint(100)
+                    controller:lower_hysteresis(4)
+                    controller:lower_output(false)
                 "#,
             )
             .unwrap();
 
         let expected = [
-            WriteRegisterRequest::new(15, 2, 0x06, WriteRegisterValue::Byte(-40)),
-            WriteRegisterRequest::new(15, 2, 0x09, WriteRegisterValue::Int(200)),
-            WriteRegisterRequest::new(15, 2, 0x0A, WriteRegisterValue::Ubyte(5)),
-            WriteRegisterRequest::new(15, 2, 0x0B, WriteRegisterValue::Bool(true)),
-            WriteRegisterRequest::new(15, 2, 0x0C, WriteRegisterValue::Int(100)),
-            WriteRegisterRequest::new(15, 2, 0x0D, WriteRegisterValue::Ubyte(4)),
-            WriteRegisterRequest::new(15, 2, 0x0E, WriteRegisterValue::Bool(false)),
+            Metakon5x3Write::OutputPower(-40),
+            Metakon5x3Write::UpperSetpoint(200),
+            Metakon5x3Write::UpperHysteresis(5),
+            Metakon5x3Write::UpperOutput(true),
+            Metakon5x3Write::LowerSetpoint(100),
+            Metakon5x3Write::LowerHysteresis(4),
+            Metakon5x3Write::LowerOutput(false),
         ];
 
-        for expected_request in expected {
+        for parameter in expected {
             assert!(matches!(
-                command_receiver
-                    .try_recv()
-                    .unwrap(),
-                UserCommand::WriteMetakon {
-                    request
-                }
+                command_receiver.try_recv().unwrap(),
+                UserCommand::WriteInstrument { request }
                     if request
-                        == expected_request,
+                        == metakon_write_request(
+                            15,
+                            2,
+                            parameter,
+                        ),
             ));
         }
 

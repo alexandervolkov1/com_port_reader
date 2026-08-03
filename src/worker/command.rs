@@ -5,8 +5,7 @@ use crossbeam_channel::Sender;
 use crate::{
     acquisition::InstrumentReadResult,
     data::{NewSeries, SeriesId},
-    instrument::InstrumentReadRequest,
-    protocol::metakon::WriteRegisterRequest,
+    instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     serial_connection::SerialPortConfig,
 };
 
@@ -41,8 +40,8 @@ pub enum WorkerCommand {
         response_sender: Sender<InstrumentReadResult>,
     },
 
-    WriteMetakon {
-        config: SerialPortConfig,
-        request: WriteRegisterRequest,
+    WriteInstrument {
+        port_name: String,
+        request: InstrumentWriteRequest,
     },
 }
