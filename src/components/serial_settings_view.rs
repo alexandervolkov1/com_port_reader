@@ -179,7 +179,10 @@ fn show_main_port_controls(
                 });
         });
 
-        if ui.button("Refresh").clicked() {
+        if ui
+            .add_enabled(settings_enabled, egui::Button::new("Refresh"))
+            .clicked()
+        {
             refresh_requested = true;
         }
 

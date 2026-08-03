@@ -240,11 +240,7 @@ fn refreshed_selection(
     selected_port: Option<String>,
     available_ports: &[String],
 ) -> Option<String> {
-    match selected_port {
-        Some(selected_port) if available_ports.contains(&selected_port) => Some(selected_port),
-
-        _ => available_ports.first().cloned(),
-    }
+    selected_port.filter(|selected_port| available_ports.contains(selected_port))
 }
 
 fn configured_port(port: &str) -> Option<String> {
@@ -306,21 +302,21 @@ mod tests {
     }
 
     #[test]
-    fn selects_first_port_when_selected_port_disappears() {
+    fn clears_selection_when_selected_port_disappears() {
         let ports = vec!["COM3".to_owned(), "COM4".to_owned()];
 
         let selected = refreshed_selection(Some("COM9".to_owned()), &ports);
 
-        assert_eq!(selected, Some("COM3".to_owned()));
+        assert_eq!(selected, None);
     }
 
     #[test]
-    fn selects_first_port_when_nothing_was_selected() {
+    fn leaves_selection_empty_when_nothing_was_selected() {
         let ports = vec!["COM3".to_owned(), "COM4".to_owned()];
 
         let selected = refreshed_selection(None, &ports);
 
-        assert_eq!(selected, Some("COM3".to_owned()));
+        assert_eq!(selected, None);
     }
 
     #[test]
