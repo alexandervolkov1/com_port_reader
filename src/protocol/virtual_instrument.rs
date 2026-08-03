@@ -1,10 +1,12 @@
 mod client;
 mod frame_io;
 mod message;
+mod server;
 
 pub use client::{
     VirtualInstrumentClient, VirtualInstrumentClientError, VirtualInstrumentTransport,
 };
+pub use server::{VirtualInstrumentModel, VirtualInstrumentModelError, VirtualInstrumentServer};
 
 pub use frame_io::{VirtualFrameIoError, read_frame, write_frame};
 
