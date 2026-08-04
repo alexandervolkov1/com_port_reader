@@ -8,13 +8,14 @@ use crate::{
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterRange,
         metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
+        virtual_instrument::VirtualInstrumentId,
     },
     user_command::UserCommand,
 };
 
 const INSTRUMENT_READ_TIMEOUT: Duration = Duration::from_secs(10);
-
 const INSTRUMENT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+const VIRTUAL_INSTRUMENT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<()> {
     let app = lua.create_table()?;
@@ -62,6 +63,8 @@ pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<(
     register_add_serial(lua, &app, command_sender.clone())?;
 
     register_metakon_controller(lua, &app, command_sender.clone())?;
+
+    register_virtual_instrument_controller(lua, &app, command_sender.clone())?;
 
     register_delete_series(lua, &app, command_sender.clone())?;
 
@@ -149,6 +152,101 @@ fn register_metakon_controller(
     app.set("metakon", function)
 }
 
+fn register_virtual_instrument_controller(
+    lua: &Lua,
+    app: &Table,
+    command_sender: Sender<UserCommand>,
+) -> mlua::Result<()> {
+    let function = lua.create_function(move |lua, options: Option<Table>| {
+        let options = match options {
+            Some(options) => options,
+
+            None => lua.create_table()?,
+        };
+
+        validate_virtual_instrument_options(&options)?;
+
+        let id = options.get::<Option<u16>>("id")?.unwrap_or(1);
+
+        if id == 0 {
+            return Err(mlua::Error::RuntimeError(
+                "app.virtual_instrument id must be \
+                     greater than zero"
+                    .to_owned(),
+            ));
+        }
+
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &command_sender,
+            UserCommand::DescribeVirtualInstruments { response_sender },
+        )?;
+
+        let descriptors = match response_receiver.recv_timeout(VIRTUAL_INSTRUMENT_DISCOVERY_TIMEOUT)
+        {
+            Ok(Ok(descriptors)) => descriptors,
+
+            Ok(Err(error)) => {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "Virtual instrument discovery \
+                             failed: {error}",
+                )));
+            }
+
+            Err(RecvTimeoutError::Timeout) => {
+                return Err(mlua::Error::RuntimeError(
+                    "Timed out waiting for virtual \
+                         instrument discovery"
+                        .to_owned(),
+                ));
+            }
+
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(mlua::Error::RuntimeError(
+                    "Virtual instrument discovery \
+                         response channel is disconnected"
+                        .to_owned(),
+                ));
+            }
+        };
+
+        let requested_id = VirtualInstrumentId::new(id);
+
+        let descriptor = descriptors
+            .into_iter()
+            .find(|descriptor| descriptor.id() == requested_id)
+            .ok_or_else(|| {
+                mlua::Error::RuntimeError(format!(
+                    "Virtual instrument with id {id} \
+                         was not found",
+                ))
+            })?;
+
+        lua.create_userdata(LuaVirtualInstrument {
+            id,
+            name: descriptor.name().to_owned(),
+        })
+    })?;
+
+    app.set("virtual_instrument", function)
+}
+
+fn validate_virtual_instrument_options(options: &Table) -> mlua::Result<()> {
+    for pair in options.pairs::<String, Value>() {
+        let (key, _) = pair?;
+
+        if key != "id" {
+            return Err(mlua::Error::RuntimeError(format!(
+                "unknown app.virtual_instrument \
+                 option '{key}'",
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_metakon_controller_options(options: &Table) -> mlua::Result<()> {
     for pair in options.pairs::<String, mlua::Value>() {
         let (key, _) = pair?;
@@ -162,6 +260,12 @@ fn validate_metakon_controller_options(options: &Table) -> mlua::Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Clone)]
+struct LuaVirtualInstrument {
+    id: u16,
+    name: String,
 }
 
 #[derive(Clone)]
@@ -494,6 +598,17 @@ fn instrument_value_to_lua(value: InstrumentValue) -> Value {
         InstrumentValue::Integer(value) => Value::Integer(value),
 
         InstrumentValue::Number(value) => Value::Number(value),
+    }
+}
+
+impl UserData for LuaVirtualInstrument {
+    fn add_methods<M>(methods: &mut M)
+    where
+        M: UserDataMethods<Self>,
+    {
+        methods.add_method("id", |_, instrument, ()| Ok(instrument.id));
+
+        methods.add_method("name", |_, instrument, ()| Ok(instrument.name.clone()));
     }
 }
 
