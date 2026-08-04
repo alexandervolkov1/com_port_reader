@@ -21,10 +21,6 @@ impl SamplingInterval {
     pub const fn duration(self) -> Duration {
         self.0
     }
-
-    pub fn as_secs_f64(self) -> f64 {
-        self.0.as_secs_f64()
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,7 +49,7 @@ mod tests {
 
         assert_eq!(interval.duration(), Duration::from_millis(250),);
 
-        assert_eq!(interval.as_secs_f64(), 0.25);
+        assert_eq!(interval.duration().as_secs_f64(), 0.25);
     }
 
     #[test]

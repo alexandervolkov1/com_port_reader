@@ -69,6 +69,19 @@ pub enum WorkerEvent {
         request: InstrumentWriteRequest,
         error: AcquisitionError,
     },
+
+    SeriesPollingFailed {
+        id: SeriesId,
+        name: String,
+        error: AcquisitionError,
+        consecutive_failures: u64,
+    },
+
+    SeriesPollingRecovered {
+        id: SeriesId,
+        name: String,
+        failed_attempts: u64,
+    },
 }
 
 impl std::fmt::Display for WorkerEvent {
@@ -206,6 +219,43 @@ impl std::fmt::Display for WorkerEvent {
                     formatter,
                     "COM port '{port_name}': failed to write \
                      {request}: {error}",
+                )
+            }
+
+            Self::SeriesPollingFailed {
+                id,
+                name,
+                error,
+                consecutive_failures,
+            } => {
+                if *consecutive_failures == 1 {
+                    write!(
+                        formatter,
+                        "Series '{name}' ({id}) polling \
+                         failed: {error}. Acquisition \
+                         continues.",
+                    )
+                } else {
+                    write!(
+                        formatter,
+                        "Series '{name}' ({id}) polling \
+                         still fails after \
+                         {consecutive_failures} consecutive \
+                         attempts: {error}",
+                    )
+                }
+            }
+
+            Self::SeriesPollingRecovered {
+                id,
+                name,
+                failed_attempts,
+            } => {
+                write!(
+                    formatter,
+                    "Series '{name}' ({id}) polling \
+                     recovered after {failed_attempts} \
+                     failed attempts.",
                 )
             }
         }

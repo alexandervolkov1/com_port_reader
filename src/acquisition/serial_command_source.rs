@@ -353,10 +353,12 @@ mod tests {
         let mut source = SerialCommandSource::new(SerialConfigStore::new());
 
         let mut output = Vec::new();
+        let mut failures = Vec::new();
 
-        source.sample(&[], &mut output).unwrap();
+        source.sample(&[], &mut output, &mut failures);
 
         assert!(output.is_empty());
+        assert!(failures.is_empty());
     }
 
     #[test]
@@ -375,11 +377,18 @@ mod tests {
         }];
 
         let mut output = Vec::new();
+        let mut failures = Vec::new();
 
-        let error = source.sample(&series, &mut output).unwrap_err();
+        source.sample(&series, &mut output, &mut failures);
+
+        assert!(output.is_empty());
+        assert_eq!(failures.len(), 1);
+
+        assert_eq!(failures[0].series_id, SeriesId::new(1));
+        assert_eq!(failures[0].series_name, "random_walk");
 
         assert_eq!(
-            error.to_string(),
+            failures[0].error.to_string(),
             "Cannot acquire serial series: \
              COM port is not selected",
         );
@@ -405,11 +414,18 @@ mod tests {
         }];
 
         let mut output = Vec::new();
+        let mut failures = Vec::new();
 
-        let error = source.sample(&series, &mut output).unwrap_err();
+        source.sample(&series, &mut output, &mut failures);
+
+        assert!(output.is_empty());
+        assert_eq!(failures.len(), 1);
+
+        assert_eq!(failures[0].series_id, SeriesId::new(1));
+        assert_eq!(failures[0].series_name, "temperature");
 
         assert_eq!(
-            error.to_string(),
+            failures[0].error.to_string(),
             "Metakon series 'temperature': \
              COM port is not selected",
         );
@@ -449,11 +465,18 @@ mod tests {
         }];
 
         let mut output = Vec::new();
+        let mut failures = Vec::new();
 
-        let error = source.sample(&series, &mut output).unwrap_err();
+        source.sample(&series, &mut output, &mut failures);
+
+        assert!(output.is_empty());
+        assert_eq!(failures.len(), 1);
+
+        assert_eq!(failures[0].series_id, SeriesId::new(1));
+        assert_eq!(failures[0].series_name, "signal");
 
         assert_eq!(
-            error.to_string(),
+            failures[0].error.to_string(),
             "Virtual instrument series 'signal': \
              COM port is not selected",
         );

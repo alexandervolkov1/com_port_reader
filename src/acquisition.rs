@@ -39,6 +39,13 @@ impl From<&str> for AcquisitionError {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SeriesAcquisitionFailure {
+    pub series_id: crate::data::SeriesId,
+    pub series_name: String,
+    pub error: AcquisitionError,
+}
+
 pub type InstrumentReadResult = Result<InstrumentValue, AcquisitionError>;
 pub type InstrumentWriteResult = Result<InstrumentValue, AcquisitionError>;
 pub type VirtualInstrumentDescribeResult =
@@ -60,9 +67,8 @@ pub trait AcquisitionSource: Send {
         &mut self,
         series: &[SeriesMetadata],
         output: &mut Vec<SeriesSample>,
-    ) -> Result<(), AcquisitionError> {
-        let original_length = output.len();
-
+        failures: &mut Vec<SeriesAcquisitionFailure>,
+    ) {
         for series in series {
             match self.sample_series(series) {
                 Ok(Some(sample)) => {
@@ -70,25 +76,28 @@ pub trait AcquisitionSource: Send {
                 }
 
                 Ok(None) => {
-                    output.truncate(original_length);
+                    failures.push(SeriesAcquisitionFailure {
+                        series_id: series.id,
+                        series_name: series.name.clone(),
 
-                    return Err(format!(
-                        "No acquisition source supports \
-                         series '{}' ({})",
-                        series.name, series.source,
-                    )
-                    .into());
+                        error: format!(
+                            "No acquisition source \
+                                 supports series '{}' ({})",
+                            series.name, series.source,
+                        )
+                        .into(),
+                    });
                 }
 
                 Err(error) => {
-                    output.truncate(original_length);
-
-                    return Err(error);
+                    failures.push(SeriesAcquisitionFailure {
+                        series_id: series.id,
+                        series_name: series.name.clone(),
+                        error,
+                    });
                 }
             }
         }
-
-        Ok(())
     }
 
     fn describe_virtual_instruments(

@@ -195,8 +195,11 @@ mod tests {
         let series = vec![metadata(first_id, "first"), metadata(second_id, "second")];
 
         let mut output = Vec::new();
+        let mut failures = Vec::new();
 
-        source.sample(&series, &mut output).unwrap();
+        source.sample(&series, &mut output, &mut failures);
+
+        assert!(failures.is_empty());
 
         assert_eq!(
             output,
@@ -208,21 +211,57 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_series() {
+    fn reports_unsupported_series() {
         let mut source = CombinedSource::new(vec![Box::new(TextSource)]);
 
         let series = vec![metadata(SeriesId::new(1), "unknown")];
 
         let mut output = Vec::new();
+        let mut failures = Vec::new();
 
-        let error = source.sample(&series, &mut output).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("No acquisition source supports series")
-        );
+        source.sample(&series, &mut output, &mut failures);
 
         assert!(output.is_empty());
+        assert_eq!(failures.len(), 1);
+
+        assert_eq!(failures[0].series_id, SeriesId::new(1),);
+
+        assert_eq!(failures[0].series_name, "unknown",);
+
+        assert!(failures[0].error.to_string().contains(
+            "No acquisition source supports \
+                     series",
+        ),);
+    }
+
+    #[test]
+    fn continues_after_unsupported_series() {
+        let supported_id = SeriesId::new(2);
+
+        let mut source = CombinedSource::new(vec![Box::new(FixedSource::new(
+            supported_id,
+            1_001.0,
+            20.0,
+        ))]);
+
+        let series = vec![
+            metadata(SeriesId::new(1), "missing"),
+            metadata(supported_id, "supported"),
+        ];
+
+        let mut output = Vec::new();
+        let mut failures = Vec::new();
+
+        source.sample(&series, &mut output, &mut failures);
+
+        assert_eq!(
+            output,
+            vec![SeriesSample::new(supported_id, Sample::new(1_001.0, 20.0),)],
+        );
+
+        assert_eq!(failures.len(), 1);
+
+        assert_eq!(failures[0].series_id, SeriesId::new(1),);
     }
 
     #[test]
