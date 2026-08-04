@@ -8,7 +8,7 @@ use crate::{
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterRange,
         metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
-        virtual_instrument::VirtualInstrumentId,
+        virtual_instrument::{VirtualInstrumentDescriptor, VirtualInstrumentId},
     },
     user_command::UserCommand,
 };
@@ -223,10 +223,7 @@ fn register_virtual_instrument_controller(
                 ))
             })?;
 
-        lua.create_userdata(LuaVirtualInstrument {
-            id,
-            name: descriptor.name().to_owned(),
-        })
+        lua.create_userdata(LuaVirtualInstrument { id, descriptor })
     })?;
 
     app.set("virtual_instrument", function)
@@ -265,7 +262,51 @@ fn validate_metakon_controller_options(options: &Table) -> mlua::Result<()> {
 #[derive(Clone)]
 struct LuaVirtualInstrument {
     id: u16,
-    name: String,
+    descriptor: VirtualInstrumentDescriptor,
+}
+
+impl LuaVirtualInstrument {
+    fn parameters(&self, lua: &Lua) -> mlua::Result<Table> {
+        let descriptors = self.descriptor.parameters();
+
+        let parameters = lua.create_table_with_capacity(descriptors.len(), 0)?;
+
+        for (index, descriptor) in descriptors.iter().enumerate() {
+            let entry = lua.create_table_with_capacity(0, 8)?;
+
+            entry.set("key", descriptor.key())?;
+
+            entry.set("name", descriptor.name())?;
+
+            entry.set("access", descriptor.access().as_str())?;
+
+            entry.set("value_type", descriptor.value_type().as_str())?;
+
+            entry.set("series", descriptor.series())?;
+
+            if let Some(unit) = descriptor.unit() {
+                entry.set("unit", unit)?;
+            }
+
+            match descriptor.range() {
+                Some(ParameterRange::Integer { minimum, maximum }) => {
+                    entry.set("minimum", minimum)?;
+                    entry.set("maximum", maximum)?;
+                }
+
+                Some(ParameterRange::Number { minimum, maximum }) => {
+                    entry.set("minimum", minimum)?;
+                    entry.set("maximum", maximum)?;
+                }
+
+                None => {}
+            }
+
+            parameters.raw_set((index + 1) as i64, entry)?;
+        }
+
+        Ok(parameters)
+    }
 }
 
 #[derive(Clone)]
@@ -608,7 +649,13 @@ impl UserData for LuaVirtualInstrument {
     {
         methods.add_method("id", |_, instrument, ()| Ok(instrument.id));
 
-        methods.add_method("name", |_, instrument, ()| Ok(instrument.name.clone()));
+        methods.add_method("name", |_, instrument, ()| {
+            Ok(instrument.descriptor.name().to_owned())
+        });
+
+        methods.add_method("parameters", |lua, instrument, ()| {
+            instrument.parameters(lua)
+        });
     }
 }
 
