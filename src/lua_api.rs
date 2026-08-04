@@ -7,8 +7,11 @@ use crate::{
     data::{DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, NewSeries},
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterRange,
+        ParameterValueType,
         metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
-        virtual_instrument::{VirtualInstrumentDescriptor, VirtualInstrumentId},
+        virtual_instrument::{
+            VirtualInstrumentDescriptor, VirtualInstrumentId, VirtualParameterDescriptor,
+        },
     },
     user_command::UserCommand,
 };
@@ -223,7 +226,11 @@ fn register_virtual_instrument_controller(
                 ))
             })?;
 
-        lua.create_userdata(LuaVirtualInstrument { id, descriptor })
+        lua.create_userdata(LuaVirtualInstrument {
+            id,
+            descriptor,
+            command_sender: command_sender.clone(),
+        })
     })?;
 
     app.set("virtual_instrument", function)
@@ -263,6 +270,7 @@ fn validate_metakon_controller_options(options: &Table) -> mlua::Result<()> {
 struct LuaVirtualInstrument {
     id: u16,
     descriptor: VirtualInstrumentDescriptor,
+    command_sender: Sender<UserCommand>,
 }
 
 impl LuaVirtualInstrument {
@@ -306,6 +314,114 @@ impl LuaVirtualInstrument {
         }
 
         Ok(parameters)
+    }
+
+    fn parameter(&self, key: &str) -> mlua::Result<&VirtualParameterDescriptor> {
+        self.descriptor
+            .parameters()
+            .iter()
+            .find(|parameter| parameter.key() == key)
+            .ok_or_else(|| {
+                mlua::Error::RuntimeError(format!(
+                    "Virtual instrument '{}' has no \
+                     parameter '{key}'",
+                    self.descriptor.name(),
+                ))
+            })
+    }
+
+    fn read_parameter(&self, parameter_key: &str) -> mlua::Result<InstrumentValue> {
+        let parameter = self.parameter(parameter_key)?;
+
+        if !parameter.access().readable() {
+            return Err(mlua::Error::RuntimeError(format!(
+                "Virtual instrument parameter \
+                 '{parameter_key}' is write-only",
+            )));
+        }
+
+        let request =
+            InstrumentReadRequest::virtual_instrument(self.descriptor.id(), parameter.id());
+
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::ReadInstrument {
+                request,
+                response_sender,
+            },
+        )?;
+
+        match response_receiver.recv_timeout(INSTRUMENT_READ_TIMEOUT) {
+            Ok(Ok(value)) => Ok(value),
+
+            Ok(Err(error)) => Err(mlua::Error::RuntimeError(format!(
+                "Virtual instrument read failed: \
+                     {error}",
+            ))),
+
+            Err(RecvTimeoutError::Timeout) => Err(mlua::Error::RuntimeError(
+                "Timed out waiting for virtual \
+                     instrument read"
+                    .to_owned(),
+            )),
+
+            Err(RecvTimeoutError::Disconnected) => Err(mlua::Error::RuntimeError(
+                "Virtual instrument read response \
+                     channel is disconnected"
+                    .to_owned(),
+            )),
+        }
+    }
+
+    fn write_parameter(
+        &self,
+        parameter_key: &str,
+        value: InstrumentValue,
+    ) -> mlua::Result<InstrumentValue> {
+        let parameter = self.parameter(parameter_key)?;
+
+        if !parameter.access().writable() {
+            return Err(mlua::Error::RuntimeError(format!(
+                "Virtual instrument parameter \
+                 '{parameter_key}' is read-only",
+            )));
+        }
+
+        let request =
+            InstrumentWriteRequest::virtual_instrument(self.descriptor.id(), parameter.id(), value);
+
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::WriteInstrument {
+                request,
+                response_sender,
+            },
+        )?;
+
+        match response_receiver.recv_timeout(INSTRUMENT_WRITE_TIMEOUT) {
+            Ok(Ok(actual_value)) => Ok(actual_value),
+
+            Ok(Err(error)) => Err(mlua::Error::RuntimeError(format!(
+                "Virtual instrument write failed: \
+                     {error}",
+            ))),
+
+            Err(RecvTimeoutError::Timeout) => Err(mlua::Error::RuntimeError(
+                "Timed out waiting for virtual \
+                     instrument write"
+                    .to_owned(),
+            )),
+
+            Err(RecvTimeoutError::Disconnected) => Err(mlua::Error::RuntimeError(
+                "Virtual instrument write response \
+                     channel is disconnected"
+                    .to_owned(),
+            )),
+        }
     }
 }
 
@@ -642,6 +758,59 @@ fn instrument_value_to_lua(value: InstrumentValue) -> Value {
     }
 }
 
+fn virtual_instrument_value_from_lua(
+    lua: &Lua,
+    parameter: &VirtualParameterDescriptor,
+    value: Value,
+) -> mlua::Result<InstrumentValue> {
+    let parameter_key = parameter.key();
+
+    match parameter.value_type() {
+        ParameterValueType::Boolean => {
+            let value = bool::from_lua(value, lua).map_err(|_| {
+                mlua::Error::RuntimeError(format!(
+                    "Virtual instrument parameter \
+                         '{parameter_key}' expects a \
+                         Boolean value",
+                ))
+            })?;
+
+            Ok(InstrumentValue::Boolean(value))
+        }
+
+        ParameterValueType::Integer => {
+            let value = i64::from_lua(value, lua).map_err(|_| {
+                mlua::Error::RuntimeError(format!(
+                    "Virtual instrument parameter \
+                         '{parameter_key}' expects an \
+                         integer value",
+                ))
+            })?;
+
+            Ok(InstrumentValue::Integer(value))
+        }
+
+        ParameterValueType::Number => {
+            let value = f64::from_lua(value, lua).map_err(|_| {
+                mlua::Error::RuntimeError(format!(
+                    "Virtual instrument parameter \
+                         '{parameter_key}' expects a \
+                         numeric value",
+                ))
+            })?;
+
+            if !value.is_finite() {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "Virtual instrument parameter \
+                         '{parameter_key}' must be finite",
+                )));
+            }
+
+            Ok(InstrumentValue::Number(value))
+        }
+    }
+}
+
 impl UserData for LuaVirtualInstrument {
     fn add_methods<M>(methods: &mut M)
     where
@@ -656,6 +825,25 @@ impl UserData for LuaVirtualInstrument {
         methods.add_method("parameters", |lua, instrument, ()| {
             instrument.parameters(lua)
         });
+
+        methods.add_method("read", |_, instrument, parameter_key: String| {
+            let value = instrument.read_parameter(&parameter_key)?;
+
+            Ok(instrument_value_to_lua(value))
+        });
+
+        methods.add_method(
+            "write",
+            |lua, instrument, (parameter_key, value): (String, Value)| {
+                let parameter = instrument.parameter(&parameter_key)?;
+
+                let value = virtual_instrument_value_from_lua(lua, parameter, value)?;
+
+                let actual_value = instrument.write_parameter(&parameter_key, value)?;
+
+                Ok(instrument_value_to_lua(actual_value))
+            },
+        );
     }
 }
 
