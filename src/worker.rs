@@ -17,7 +17,6 @@ use crate::{
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError},
     serial_connection::SerialConnectionError,
-    utils::current_time_f64,
 };
 
 mod command;
@@ -76,14 +75,11 @@ impl Worker {
                 if let AcquisitionState::Running { next_poll } = &mut state
                     && now >= *next_poll
                 {
-                    let timestamp = current_time_f64();
-
                     sample_batch.clear();
 
                     let series_metadata = series.metadata();
 
-                    let result = source.sample(&series_metadata, timestamp, &mut sample_batch);
-
+                    let result = source.sample(&series_metadata, &mut sample_batch);
                     let result = match result {
                         Ok(()) => series.with_mut(|all_series| {
                             append_series_samples(all_series, &sample_batch)

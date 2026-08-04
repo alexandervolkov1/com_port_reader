@@ -1,5 +1,5 @@
 use crate::{
-    data::{SeriesMetadata, SeriesSample},
+    data::{Sample, SeriesMetadata},
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
         virtual_instrument::VirtualInstrumentDescriptor,
@@ -45,10 +45,9 @@ impl AcquisitionSource for CombinedSource {
     fn sample_series(
         &mut self,
         series: &SeriesMetadata,
-        timestamp: f64,
-    ) -> Result<Option<SeriesSample>, AcquisitionError> {
+    ) -> Result<Option<Sample>, AcquisitionError> {
         for source in &mut self.sources {
-            if let Some(sample) = source.sample_series(series, timestamp)? {
+            if let Some(sample) = source.sample_series(series)? {
                 return Ok(Some(sample));
             }
         }
@@ -137,12 +136,15 @@ mod tests {
 
     struct FixedSource {
         series_id: SeriesId,
-        value: f64,
+        sample: Sample,
     }
 
     impl FixedSource {
-        fn new(series_id: SeriesId, value: f64) -> Self {
-            Self { series_id, value }
+        fn new(series_id: SeriesId, timestamp: f64, value: f64) -> Self {
+            Self {
+                series_id,
+                sample: Sample::new(timestamp, value),
+            }
         }
     }
 
@@ -150,16 +152,12 @@ mod tests {
         fn sample_series(
             &mut self,
             series: &SeriesMetadata,
-            timestamp: f64,
-        ) -> Result<Option<SeriesSample>, AcquisitionError> {
+        ) -> Result<Option<Sample>, AcquisitionError> {
             if series.id != self.series_id {
                 return Ok(None);
             }
 
-            Ok(Some(SeriesSample::new(
-                series.id,
-                Sample::new(timestamp, self.value),
-            )))
+            Ok(Some(self.sample))
         }
     }
 
@@ -190,21 +188,21 @@ mod tests {
         let second_id = SeriesId::new(2);
 
         let mut source = CombinedSource::new(vec![
-            Box::new(FixedSource::new(first_id, 10.0)),
-            Box::new(FixedSource::new(second_id, 20.0)),
+            Box::new(FixedSource::new(first_id, 1_000.0, 10.0)),
+            Box::new(FixedSource::new(second_id, 1_000.25, 20.0)),
         ]);
 
         let series = vec![metadata(first_id, "first"), metadata(second_id, "second")];
 
         let mut output = Vec::new();
 
-        source.sample(&series, 1_000.0, &mut output).unwrap();
+        source.sample(&series, &mut output).unwrap();
 
         assert_eq!(
             output,
             vec![
                 SeriesSample::new(first_id, Sample::new(1_000.0, 10.0),),
-                SeriesSample::new(second_id, Sample::new(1_000.0, 20.0),),
+                SeriesSample::new(second_id, Sample::new(1_000.25, 20.0),),
             ],
         );
     }
@@ -217,8 +215,7 @@ mod tests {
 
         let mut output = Vec::new();
 
-        let error = source.sample(&series, 1_000.0, &mut output).unwrap_err();
-
+        let error = source.sample(&series, &mut output).unwrap_err();
         assert!(
             error
                 .to_string()
@@ -231,7 +228,7 @@ mod tests {
     #[test]
     fn routes_text_request_to_supporting_source() {
         let mut source = CombinedSource::new(vec![
-            Box::new(FixedSource::new(SeriesId::new(1), 10.0)),
+            Box::new(FixedSource::new(SeriesId::new(1), 1_000.0, 10.0)),
             Box::new(TextSource),
         ]);
 

@@ -1,5 +1,5 @@
 use crate::{
-    data::{SeriesMetadata, SeriesSample},
+    data::{Sample, SeriesMetadata, SeriesSample},
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
         virtual_instrument::VirtualInstrumentDescriptor,
@@ -52,23 +52,21 @@ pub trait AcquisitionSource: Send {
     fn sample_series(
         &mut self,
         _series: &SeriesMetadata,
-        _timestamp: f64,
-    ) -> Result<Option<SeriesSample>, AcquisitionError> {
+    ) -> Result<Option<Sample>, AcquisitionError> {
         Ok(None)
     }
 
     fn sample(
         &mut self,
         series: &[SeriesMetadata],
-        timestamp: f64,
         output: &mut Vec<SeriesSample>,
     ) -> Result<(), AcquisitionError> {
         let original_length = output.len();
 
         for series in series {
-            match self.sample_series(series, timestamp) {
+            match self.sample_series(series) {
                 Ok(Some(sample)) => {
-                    output.push(sample);
+                    output.push(SeriesSample::new(series.id, sample));
                 }
 
                 Ok(None) => {

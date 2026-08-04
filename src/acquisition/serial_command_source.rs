@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::{
-    data::{Sample, SeriesMetadata, SeriesSample, SeriesSource},
+    data::{Sample, SeriesMetadata, SeriesSource},
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
         metakon_5x3::{Metakon5x3, Metakon5x3Register},
@@ -9,6 +9,7 @@ use crate::{
     },
     protocol::{metakon::RegisterValue, virtual_instrument::VirtualInstrumentClient},
     serial_connection::{SerialConfigStore, SerialConnection},
+    utils::current_time_f64,
 };
 
 use super::{AcquisitionError, AcquisitionSource};
@@ -236,8 +237,7 @@ impl AcquisitionSource for SerialCommandSource {
     fn sample_series(
         &mut self,
         series: &SeriesMetadata,
-        timestamp: f64,
-    ) -> Result<Option<SeriesSample>, AcquisitionError> {
+    ) -> Result<Option<Sample>, AcquisitionError> {
         let value = match &series.source {
             SeriesSource::SerialCommand { command } => {
                 let connection = self.connection().map_err(|error| {
@@ -273,10 +273,9 @@ impl AcquisitionSource for SerialCommandSource {
             }
         };
 
-        Ok(Some(SeriesSample::new(
-            series.id,
-            Sample::new(timestamp, value),
-        )))
+        let timestamp = current_time_f64();
+
+        Ok(Some(Sample::new(timestamp, value)))
     }
 
     fn describe_virtual_instruments(
@@ -355,7 +354,7 @@ mod tests {
 
         let mut output = Vec::new();
 
-        source.sample(&[], 1_000.0, &mut output).unwrap();
+        source.sample(&[], &mut output).unwrap();
 
         assert!(output.is_empty());
     }
@@ -377,7 +376,7 @@ mod tests {
 
         let mut output = Vec::new();
 
-        let error = source.sample(&series, 1_000.0, &mut output).unwrap_err();
+        let error = source.sample(&series, &mut output).unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -407,7 +406,7 @@ mod tests {
 
         let mut output = Vec::new();
 
-        let error = source.sample(&series, 1_000.0, &mut output).unwrap_err();
+        let error = source.sample(&series, &mut output).unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -450,7 +449,7 @@ mod tests {
 
         let mut output = Vec::new();
 
-        let error = source.sample(&series, 1_000.0, &mut output).unwrap_err();
+        let error = source.sample(&series, &mut output).unwrap_err();
 
         assert_eq!(
             error.to_string(),
