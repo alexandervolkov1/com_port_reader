@@ -15,4 +15,4 @@ flow_control = "none"
 timeout_ms = 250
 
 [emulator]
-script_path = 'D:\rust\com_port_reader\emulator_scripts\sine_generator.lua'
+script_path = 'D:\rust_projects\com_port_reader\emulator_scripts\sine_generator.lua'

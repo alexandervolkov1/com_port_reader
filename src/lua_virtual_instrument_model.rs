@@ -166,11 +166,23 @@ fn parse_instruments(table: &Table) -> mlua::Result<Vec<VirtualInstrumentDescrip
     Ok(instruments)
 }
 
+const INSTRUMENT_FIELDS: &[&str] = &["name", "parameters"];
+
+const PARAMETER_FIELDS: &[&str] = &[
+    "key", "name", "type", "access", "series", "unit", "min", "max",
+];
+
 fn parse_instrument(
     id: VirtualInstrumentId,
     table: &Table,
 ) -> mlua::Result<VirtualInstrumentDescriptor> {
     let name = table.get::<String>("name")?;
+
+    validate_table_fields(
+        table,
+        &format!("virtual instrument '{name}'"),
+        INSTRUMENT_FIELDS,
+    )?;
 
     let parameter_table = table.get::<Table>("parameters")?;
 
@@ -205,6 +217,12 @@ fn parse_parameter(
 ) -> mlua::Result<VirtualParameterDescriptor> {
     let key = table.get::<String>("key")?;
 
+    validate_table_fields(
+        table,
+        &format!("virtual parameter '{key}'"),
+        PARAMETER_FIELDS,
+    )?;
+
     let name = table
         .get::<Option<String>>("name")?
         .unwrap_or_else(|| key.clone());
@@ -236,6 +254,24 @@ fn parse_parameter(
     }
 
     Ok(descriptor)
+}
+
+fn validate_table_fields(
+    table: &Table,
+    context: &str,
+    allowed_fields: &[&str],
+) -> mlua::Result<()> {
+    for pair in table.pairs::<String, Value>() {
+        let (field, _) = pair?;
+
+        if !allowed_fields.contains(&field.as_str()) {
+            return Err(mlua::Error::RuntimeError(format!(
+                "Unknown field '{field}' in {context}",
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 fn parse_access(access: &str) -> mlua::Result<ParameterAccess> {
@@ -691,5 +727,89 @@ mod tests {
         let error = model.read(INSTRUMENT, VALUE, Duration::ZERO).unwrap_err();
 
         assert!(error.to_string().contains("simulated failure"),);
+    }
+
+    #[test]
+    fn rejects_unknown_instrument_field() {
+        let result = LuaVirtualInstrumentModel::from_source(
+            r#"
+                instruments = {
+                    {
+                        name = "Generator",
+                        unexpected = true,
+
+                        parameters = {
+                            {
+                                key = "value",
+                                type = "number",
+                            },
+                        },
+                    },
+                }
+
+                function read(
+                    instrument,
+                    parameter,
+                    time
+                )
+                    return 0
+                end
+            "#,
+        );
+
+        let error = result
+            .err()
+            .expect("expected schema validation error")
+            .to_string();
+
+        assert!(
+            error.contains(
+                "Unknown field 'unexpected' \
+                 in virtual instrument 'Generator'",
+            ),
+            "{error}",
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_parameter_field() {
+        let result = LuaVirtualInstrumentModel::from_source(
+            r#"
+                instruments = {
+                    {
+                        name = "Generator",
+
+                        parameters = {
+                            {
+                                key = "value",
+                                type = "number",
+                                minimum = 0,
+                            },
+                        },
+                    },
+                }
+
+                function read(
+                    instrument,
+                    parameter,
+                    time
+                )
+                    return 0
+                end
+            "#,
+        );
+
+        let error = result
+            .err()
+            .expect("expected schema validation error")
+            .to_string();
+
+        assert!(
+            error.contains(
+                "Unknown field 'minimum' \
+                 in virtual parameter 'value'",
+            ),
+            "{error}",
+        );
     }
 }

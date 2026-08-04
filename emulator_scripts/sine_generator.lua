@@ -1,114 +1,143 @@
-local state = {
-    [1] = {
-        amplitude = 1.0,
-        period = 10.0,
-        phase = 0.0,
-    },
-}
+-- Number of independent virtual sine generators.
+-- Change this value without recompiling the Rust application.
+local GENERATOR_COUNT = 8
 
-instruments = {
-    {
-        name = "Sine generator",
+local generators = {}
 
-        parameters = {
-            {
-                key = "value",
-                name = "Signal value",
-                type = "number",
-                access = "read_only",
-                series = true,
-            },
+instruments = {}
 
-            {
-                key = "amplitude",
-                name = "Amplitude",
-                type = "number",
-                access = "read_write",
-            },
-
-            {
-                key = "period",
-                name = "Period",
-                type = "number",
-                access = "read_write",
-                min = 0.001,
-                max = 86400.0,
-                unit = "s",
-            },
-
-            {
-                key = "phase",
-                name = "Phase",
-                type = "number",
-                access = "read_write",
-                unit = "rad",
-            },
+local function create_parameter_descriptors()
+    return {
+        {
+            key = "value",
+            name = "Value",
+            type = "number",
+            access = "read_only",
+            series = true,
         },
-    },
-}
 
-local function instrument_state(instrument)
-    local value = state[instrument]
+        {
+            key = "amplitude",
+            name = "Amplitude",
+            type = "number",
+            access = "read_write",
+            series = false,
+            min = 0.0,
+            max = 1000000.0,
+        },
 
-    if value == nil then
+        {
+            key = "period",
+            name = "Period",
+            type = "number",
+            access = "read_write",
+            series = false,
+            unit = "s",
+            min = 0.001,
+            max = 1000000.0,
+        },
+
+        {
+            key = "phase",
+            name = "Phase",
+            type = "number",
+            access = "read_write",
+            series = false,
+            unit = "rad",
+        },
+    }
+end
+
+for instrument_id = 1, GENERATOR_COUNT do
+    generators[instrument_id] = {
+        amplitude = 1.0,
+        period = 300.0,
+        phase = 0.0,
+    }
+
+    instruments[instrument_id] = {
+        name = "Sine generator " .. instrument_id,
+        parameters = create_parameter_descriptors(),
+    }
+end
+
+local function get_generator(instrument_id)
+    local generator = generators[instrument_id]
+
+    if generator == nil then
         error(
-            "unknown instrument: "
-                .. tostring(instrument)
+            "unknown sine generator: "
+                .. tostring(instrument_id)
         )
     end
 
-    return value
+    return generator
 end
 
-function read(instrument, parameter, time)
-    local value =
-        instrument_state(instrument)
+function read(instrument_id, parameter, time)
+    local generator = get_generator(instrument_id)
 
     if parameter == "value" then
-        return value.amplitude
+        local angular_frequency =
+            2.0 * math.pi / generator.period
+
+        return generator.amplitude
             * math.sin(
-                2.0
-                    * math.pi
-                    * time
-                    / value.period
-                    + value.phase
+                angular_frequency * time
+                    + generator.phase
             )
     end
 
-    local parameter_value =
-        value[parameter]
-
-    if parameter_value == nil then
-        error(
-            "unknown readable parameter: "
-                .. tostring(parameter)
-        )
+    if parameter == "amplitude" then
+        return generator.amplitude
     end
 
-    return parameter_value
+    if parameter == "period" then
+        return generator.period
+    end
+
+    if parameter == "phase" then
+        return generator.phase
+    end
+
+    error(
+        "unknown sine parameter: "
+            .. tostring(parameter)
+    )
 end
 
 function write(
-    instrument,
+    instrument_id,
     parameter,
     value,
-    time
+    _time
 )
-    local current =
-        instrument_state(instrument)
+    local generator = get_generator(instrument_id)
 
-    if parameter == "value" then
-        error("value is read-only")
+    if parameter == "amplitude" then
+        generator.amplitude = value
+        return generator.amplitude
     end
 
-    if current[parameter] == nil then
-        error(
-            "unknown writable parameter: "
-                .. tostring(parameter)
-        )
+    if parameter == "period" then
+        if value <= 0.0 then
+            error(
+                "sine period must be greater than zero"
+            )
+        end
+
+        generator.period = value
+        return generator.period
     end
 
-    current[parameter] = value
+    if parameter == "phase" then
+        generator.phase = value
+        return generator.phase
+    end
 
-    return current[parameter]
+    error(
+        "sine parameter '"
+            .. tostring(parameter)
+            .. "' is not writable"
+    )
 end
