@@ -3,6 +3,7 @@ pub mod app;
 mod app_config;
 mod app_log;
 mod components;
+pub mod connection;
 mod data;
 pub mod device_emulator_handle;
 pub mod instrument;
