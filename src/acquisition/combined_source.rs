@@ -177,7 +177,7 @@ mod tests {
             source: SeriesSource::SerialCommand {
                 command: "read".to_owned(),
             },
-
+            sampling_interval: None,
             visible: true,
         }
     }

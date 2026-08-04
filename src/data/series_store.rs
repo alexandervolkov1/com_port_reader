@@ -122,7 +122,7 @@ impl SeriesStore {
     }
 
     pub fn add_series(&self, new_series: NewSeries) -> Result<SeriesId, AddSeriesError> {
-        let (source, requested_name) = new_series.into_source_parts();
+        let (source, requested_name, sampling_interval) = new_series.into_parts();
 
         let source = normalize_series_source(source)?;
 
@@ -146,7 +146,7 @@ impl SeriesStore {
             let name = custom_name
                 .unwrap_or_else(|| generate_default_name(series, source.default_name_prefix(), id));
 
-            series.push(Series::new(id, name, source));
+            series.push(Series::new(id, name, source, sampling_interval));
 
             Ok(id)
         })
@@ -292,7 +292,9 @@ mod tests {
     use super::{RenameSeriesError, SeriesStore};
 
     use crate::{
-        data::{AddSeriesError, NewSeries, SeriesId, SeriesNameError, SeriesSource},
+        data::{
+            AddSeriesError, NewSeries, SamplingInterval, SeriesId, SeriesNameError, SeriesSource,
+        },
         instrument::{
             InstrumentReadRequest,
             metakon_5x3::{Metakon5x3, Metakon5x3Register},
@@ -709,5 +711,38 @@ mod tests {
         assert_eq!(metadata[0].name, "virtual1");
 
         assert_eq!(metadata[0].source, SeriesSource::Instrument(request),);
+    }
+
+    #[test]
+    fn stores_custom_sampling_interval() {
+        let store = SeriesStore::new();
+
+        let interval = SamplingInterval::from_secs_f64(2.5).unwrap();
+
+        store
+            .add_series(
+                NewSeries::named_serial_command("read value", "temperature")
+                    .with_sampling_interval(interval),
+            )
+            .unwrap();
+
+        let metadata = store.metadata();
+
+        assert_eq!(metadata.len(), 1);
+
+        assert_eq!(metadata[0].sampling_interval, Some(interval),);
+    }
+
+    #[test]
+    fn leaves_sampling_interval_unspecified_by_default() {
+        let store = SeriesStore::new();
+
+        store
+            .add_series(NewSeries::unnamed_serial_command("read value"))
+            .unwrap();
+
+        let metadata = store.metadata();
+
+        assert_eq!(metadata[0].sampling_interval, None);
     }
 }

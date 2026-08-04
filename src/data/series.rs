@@ -1,6 +1,6 @@
 use crate::instrument::InstrumentReadRequest;
 
-use super::Sample;
+use super::{Sample, SamplingInterval};
 
 pub const DEFAULT_METAKON_DEVICE: u8 = 1;
 pub const DEFAULT_METAKON_CHANNEL: u8 = 0;
@@ -54,6 +54,7 @@ impl std::fmt::Display for SeriesSource {
 pub struct NewSeries {
     source: SeriesSource,
     name: Option<String>,
+    sampling_interval: Option<SamplingInterval>,
 }
 
 impl NewSeries {
@@ -63,6 +64,7 @@ impl NewSeries {
                 command: command.into(),
             },
             name: None,
+            sampling_interval: None,
         }
     }
 
@@ -72,6 +74,7 @@ impl NewSeries {
                 command: command.into(),
             },
             name: Some(name.into()),
+            sampling_interval: None,
         }
     }
 
@@ -79,6 +82,7 @@ impl NewSeries {
         Self {
             source: SeriesSource::Instrument(request),
             name: None,
+            sampling_interval: None,
         }
     }
 
@@ -86,11 +90,17 @@ impl NewSeries {
         Self {
             source: SeriesSource::Instrument(request),
             name: Some(name.into()),
+            sampling_interval: None,
         }
     }
 
-    pub(crate) fn into_source_parts(self) -> (SeriesSource, Option<String>) {
-        (self.source, self.name)
+    pub fn with_sampling_interval(mut self, interval: SamplingInterval) -> Self {
+        self.sampling_interval = Some(interval);
+        self
+    }
+
+    pub(crate) fn into_parts(self) -> (SeriesSource, Option<String>, Option<SamplingInterval>) {
+        (self.source, self.name, self.sampling_interval)
     }
 }
 
@@ -99,16 +109,23 @@ pub struct Series {
     pub id: SeriesId,
     pub name: String,
     pub source: SeriesSource,
+    pub sampling_interval: Option<SamplingInterval>,
     pub samples: Vec<Sample>,
     pub visible: bool,
 }
 
 impl Series {
-    pub(crate) fn new(id: SeriesId, name: String, source: SeriesSource) -> Self {
+    pub(crate) fn new(
+        id: SeriesId,
+        name: String,
+        source: SeriesSource,
+        sampling_interval: Option<SamplingInterval>,
+    ) -> Self {
         Self {
             id,
             name,
             source,
+            sampling_interval,
             samples: Vec::new(),
             visible: true,
         }
@@ -120,6 +137,7 @@ pub struct SeriesMetadata {
     pub id: SeriesId,
     pub name: String,
     pub source: SeriesSource,
+    pub sampling_interval: Option<SamplingInterval>,
     pub visible: bool,
 }
 
@@ -129,6 +147,7 @@ impl From<&Series> for SeriesMetadata {
             id: series.id,
             name: series.name.clone(),
             source: series.source.clone(),
+            sampling_interval: series.sampling_interval,
             visible: series.visible,
         }
     }

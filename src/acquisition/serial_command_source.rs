@@ -370,7 +370,7 @@ mod tests {
             source: SeriesSource::SerialCommand {
                 command: "read walue".to_owned(),
             },
-
+            sampling_interval: None,
             visible: true,
         }];
 
@@ -400,7 +400,7 @@ mod tests {
                 Metakon5x3Register::Measurement,
                 0.1,
             )),
-
+            sampling_interval: None,
             visible: true,
         }];
 
@@ -444,6 +444,7 @@ mod tests {
             id: SeriesId::new(1),
             name: "signal".to_owned(),
             source: SeriesSource::Instrument(request),
+            sampling_interval: None,
             visible: true,
         }];
 

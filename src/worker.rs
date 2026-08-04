@@ -1,10 +1,11 @@
 use std::{
+    collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
@@ -13,7 +14,7 @@ use crate::{
     acquisition::{
         AcquisitionError, AcquisitionSource, InstrumentReadResult, VirtualInstrumentDescribeResult,
     },
-    data::{Series, SeriesSample, SeriesStore},
+    data::{Series, SeriesId, SeriesMetadata, SeriesSample, SeriesStore},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError},
     serial_connection::SerialConnectionError,
@@ -35,6 +36,12 @@ enum AcquisitionState {
     Running { next_poll: Instant },
 }
 
+#[derive(Clone, Copy, Debug)]
+struct SeriesSchedule {
+    interval: Duration,
+    next_poll: Instant,
+}
+
 pub struct Worker {
     thread: Option<JoinHandle<()>>,
     commands: WorkerHandle,
@@ -53,33 +60,62 @@ impl Worker {
         config: WorkerConfig,
     ) -> Self {
         let running = Arc::new(AtomicBool::new(false));
+
         let sample_sink_active = Arc::new(AtomicBool::new(false));
+
         let thread_sample_sink_active = sample_sink_active.clone();
+
         let thread_running = running.clone();
-        let initial_poll_interval = config.poll_interval();
+
+        let initial_default_poll_interval = config.poll_interval();
 
         let thread = thread::spawn(move || {
-            let mut poll_interval = initial_poll_interval;
+            let mut default_poll_interval = initial_default_poll_interval;
+
+            let mut series_schedules: HashMap<SeriesId, SeriesSchedule> = HashMap::new();
 
             let mut state = AcquisitionState::Stopped;
+
             let mut sample_batch: Vec<SeriesSample> = Vec::new();
+
             let mut pending_command: Option<WorkerCommand> = None;
+
             loop {
                 let now = Instant::now();
+
+                let series_metadata = if matches!(&state, AcquisitionState::Running { .. }) {
+                    series.metadata()
+                } else {
+                    Vec::new()
+                };
+
+                if let AcquisitionState::Running { next_poll } = &mut state {
+                    synchronize_series_schedules(
+                        &mut series_schedules,
+                        &series_metadata,
+                        default_poll_interval,
+                        now,
+                    );
+
+                    *next_poll =
+                        next_series_poll(&series_schedules).unwrap_or(now + default_poll_interval);
+                }
 
                 let mut poll_completed = false;
 
                 let mut acquisition_error: Option<AcquisitionError> = None;
+
                 let mut sink_error: Option<SampleSinkError> = None;
 
                 if let AcquisitionState::Running { next_poll } = &mut state
                     && now >= *next_poll
                 {
+                    let due_series = due_series_metadata(&series_metadata, &series_schedules, now);
+
                     sample_batch.clear();
 
-                    let series_metadata = series.metadata();
+                    let result = source.sample(&due_series, &mut sample_batch);
 
-                    let result = source.sample(&series_metadata, &mut sample_batch);
                     let result = match result {
                         Ok(()) => series.with_mut(|all_series| {
                             append_series_samples(all_series, &sample_batch)
@@ -91,11 +127,16 @@ impl Worker {
                     match result {
                         Ok(()) => match sink.write_batch(&sample_batch, &series_metadata) {
                             Ok(()) => {
-                                *next_poll += poll_interval;
+                                let completed_at = Instant::now();
 
-                                if Instant::now() > *next_poll + poll_interval {
-                                    *next_poll = Instant::now() + poll_interval;
-                                }
+                                advance_series_schedules(
+                                    &mut series_schedules,
+                                    &due_series,
+                                    completed_at,
+                                );
+
+                                *next_poll = next_series_poll(&series_schedules)
+                                    .unwrap_or(completed_at + default_poll_interval);
 
                                 poll_completed = true;
                             }
@@ -114,11 +155,14 @@ impl Worker {
                 if let Some(mut error) = acquisition_error {
                     state = AcquisitionState::Stopped;
 
+                    series_schedules.clear();
+
                     thread_running.store(false, Ordering::Release);
 
                     if let Err(stop_error) = source.stop() {
                         error = format!(
-                            "{error}; additionally failed to stop source: \
+                            "{error}; additionally \
+                             failed to stop source: \
                              {stop_error}",
                         )
                         .into();
@@ -126,7 +170,8 @@ impl Worker {
 
                     if let Err(flush_error) = sink.flush() {
                         error = format!(
-                            "{error}; additionally failed to flush sink: \
+                            "{error}; additionally \
+                             failed to flush sink: \
                              {flush_error}",
                         )
                         .into();
@@ -140,11 +185,14 @@ impl Worker {
                 if let Some(mut error) = sink_error {
                     state = AcquisitionState::Stopped;
 
+                    series_schedules.clear();
+
                     thread_running.store(false, Ordering::Release);
 
                     if let Err(stop_error) = source.stop() {
                         error = format!(
-                            "{error}; additionally failed to stop source: \
+                            "{error}; additionally \
+                             failed to stop source: \
                              {stop_error}",
                         )
                         .into();
@@ -152,13 +200,15 @@ impl Worker {
 
                     if let Err(flush_error) = sink.flush() {
                         error = format!(
-                            "{error}; additionally failed to flush sink: \
+                            "{error}; additionally \
+                             failed to flush sink: \
                              {flush_error}",
                         )
                         .into();
                     }
 
                     let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
+
                     sink = Box::new(NullSampleSink::new());
 
                     thread_sample_sink_active.store(false, Ordering::Release);
@@ -208,18 +258,21 @@ impl Worker {
                             continue;
                         }
 
-                        poll_interval = new_interval;
+                        default_poll_interval = new_interval;
 
-                        if let AcquisitionState::Running { next_poll, .. } = &mut state {
-                            *next_poll = Instant::now() + poll_interval;
+                        if let AcquisitionState::Running { next_poll } = &mut state {
+                            *next_poll = Instant::now() + new_interval;
                         }
                     }
+
                     Ok(WorkerCommand::Start) => {
                         if matches!(state, AcquisitionState::Stopped) {
                             match source.start() {
                                 Ok(()) => {
+                                    series_schedules.clear();
+
                                     state = AcquisitionState::Running {
-                                        next_poll: Instant::now() + poll_interval,
+                                        next_poll: Instant::now() + default_poll_interval,
                                     };
 
                                     thread_running.store(true, Ordering::Release);
@@ -238,6 +291,8 @@ impl Worker {
                     Ok(WorkerCommand::Stop) => {
                         if matches!(state, AcquisitionState::Running { .. }) {
                             state = AcquisitionState::Stopped;
+
+                            series_schedules.clear();
 
                             thread_running.store(false, Ordering::Release);
 
@@ -351,6 +406,7 @@ impl Worker {
                     Ok(WorkerCommand::RemoveSeriesByName(name)) => {
                         let event = match series.remove_series_by_name(&name) {
                             Some(id) => WorkerEvent::SeriesRemoved(id),
+
                             None => WorkerEvent::SeriesNotFound(name),
                         };
 
@@ -369,6 +425,7 @@ impl Worker {
 
                         let _ = event_sender.send(event);
                     }
+
                     Ok(WorkerCommand::TestSerialPort(config)) => {
                         let port_name = config.port_name().to_owned();
 
@@ -423,15 +480,19 @@ impl Worker {
 
                         let mut result = read_instrument_from_source(source.as_mut(), request);
 
-                        // A one-shot read performed while acquisition is
-                        // stopped must not leave the COM port open.
+                        // A one-shot read performed
+                        // while acquisition is stopped
+                        // must not leave the COM port
+                        // open.
                         if !acquisition_running && let Err(stop_error) = source.stop() {
                             result = match result {
                                 Ok(_) => Err(stop_error),
 
                                 Err(error) => Err(format!(
-                                    "{error}; additionally failed to close \
-                                     the instrument source: {stop_error}",
+                                    "{error}; additionally \
+                                         failed to close the \
+                                         instrument source: \
+                                         {stop_error}",
                                 )
                                 .into()),
                             };
@@ -452,6 +513,7 @@ impl Worker {
                         };
 
                         let _ = event_sender.send(event);
+
                         let _ = response_sender.send(result);
                     }
 
@@ -470,8 +532,10 @@ impl Worker {
                                 Ok(_) => Err(stop_error),
 
                                 Err(error) => Err(format!(
-                                    "{error}; additionally failed to close \
-                                     the instrument source: {stop_error}",
+                                    "{error}; additionally \
+                                         failed to close the \
+                                         instrument source: \
+                                         {stop_error}",
                                 )
                                 .into()),
                             };
@@ -492,6 +556,7 @@ impl Worker {
                         };
 
                         let _ = event_sender.send(event);
+
                         let _ = response_sender.send(result);
                     }
 
@@ -501,15 +566,19 @@ impl Worker {
 
                         let mut result = describe_virtual_instruments_from_source(source.as_mut());
 
-                        // Если опрос остановлен, describe является разовой
-                        // операцией и не должен оставлять COM-порт открытым.
+                        // A one-shot discovery
+                        // performed while acquisition
+                        // is stopped must not leave the
+                        // COM port open.
                         if !acquisition_running && let Err(stop_error) = source.stop() {
                             result = match result {
                                 Ok(_) => Err(stop_error),
 
                                 Err(error) => Err(format!(
-                                    "{error}; additionally failed to close \
-                                     the instrument source: {stop_error}",
+                                    "{error}; additionally \
+                                         failed to close the \
+                                         instrument source: \
+                                         {stop_error}",
                                 )
                                 .into()),
                             };
@@ -527,6 +596,7 @@ impl Worker {
             }
 
             thread_running.store(false, Ordering::Release);
+
             thread_sample_sink_active.store(false, Ordering::Release);
         });
 
@@ -577,6 +647,79 @@ impl Drop for Worker {
     }
 }
 
+fn synchronize_series_schedules(
+    schedules: &mut HashMap<SeriesId, SeriesSchedule>,
+    series: &[SeriesMetadata],
+    default_interval: Duration,
+    now: Instant,
+) {
+    schedules.retain(|series_id, _| series.iter().any(|series| series.id == *series_id));
+
+    for series in series {
+        let interval = series
+            .sampling_interval
+            .map(|interval| interval.duration())
+            .unwrap_or(default_interval);
+
+        match schedules.get_mut(&series.id) {
+            Some(schedule) if schedule.interval != interval => {
+                schedule.interval = interval;
+                schedule.next_poll = now + interval;
+            }
+
+            Some(_) => {}
+
+            None => {
+                schedules.insert(
+                    series.id,
+                    SeriesSchedule {
+                        interval,
+                        next_poll: now + interval,
+                    },
+                );
+            }
+        }
+    }
+}
+
+fn next_series_poll(schedules: &HashMap<SeriesId, SeriesSchedule>) -> Option<Instant> {
+    schedules.values().map(|schedule| schedule.next_poll).min()
+}
+
+fn due_series_metadata(
+    series: &[SeriesMetadata],
+    schedules: &HashMap<SeriesId, SeriesSchedule>,
+    now: Instant,
+) -> Vec<SeriesMetadata> {
+    series
+        .iter()
+        .filter(|series| {
+            schedules
+                .get(&series.id)
+                .is_some_and(|schedule| now >= schedule.next_poll)
+        })
+        .cloned()
+        .collect()
+}
+
+fn advance_series_schedules(
+    schedules: &mut HashMap<SeriesId, SeriesSchedule>,
+    polled_series: &[SeriesMetadata],
+    completed_at: Instant,
+) {
+    for series in polled_series {
+        let Some(schedule) = schedules.get_mut(&series.id) else {
+            continue;
+        };
+
+        schedule.next_poll += schedule.interval;
+
+        if completed_at > schedule.next_poll + schedule.interval {
+            schedule.next_poll = completed_at + schedule.interval;
+        }
+    }
+}
+
 fn append_series_samples(
     series: &mut [Series],
     samples: &[SeriesSample],
@@ -587,8 +730,8 @@ fn append_series_samples(
             .any(|series| series.id == series_sample.series_id)
         {
             return Err(format!(
-                "Acquisition source returned a sample for \
-                 unknown series {}",
+                "Acquisition source returned a \
+                 sample for unknown series {}",
                 series_sample.series_id,
             )
             .into());
@@ -614,7 +757,7 @@ fn read_instrument_from_source(
     source.read_instrument(request)?.ok_or_else(|| {
         AcquisitionError::from(
             "No acquisition source supports \
-             instrument reads",
+                 instrument reads",
         )
     })
 }
@@ -641,7 +784,7 @@ fn write_instrument_to_source(
     source.write_instrument(request)?.ok_or_else(|| {
         AcquisitionError::from(
             "No acquisition source supports \
-             instrument writes",
+                 instrument writes",
         )
     })
 }
@@ -655,4 +798,94 @@ fn describe_virtual_instruments_from_source(
                  virtual instrument discovery",
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::HashMap,
+        time::{Duration, Instant},
+    };
+
+    use super::{SeriesSchedule, synchronize_series_schedules};
+
+    use crate::data::{SamplingInterval, SeriesId, SeriesMetadata, SeriesSource};
+
+    fn metadata(id: u64, sampling_interval: Option<SamplingInterval>) -> SeriesMetadata {
+        SeriesMetadata {
+            id: SeriesId::new(id),
+            name: format!("series_{id}"),
+
+            source: SeriesSource::SerialCommand {
+                command: "read".to_owned(),
+            },
+
+            sampling_interval,
+            visible: true,
+        }
+    }
+
+    #[test]
+    fn uses_default_and_custom_intervals() {
+        let now = Instant::now();
+
+        let custom_interval = SamplingInterval::new(Duration::from_secs(5)).unwrap();
+
+        let series = [metadata(1, None), metadata(2, Some(custom_interval))];
+
+        let mut schedules = HashMap::new();
+
+        synchronize_series_schedules(&mut schedules, &series, Duration::from_secs(1), now);
+
+        assert_eq!(
+            schedules[&SeriesId::new(1)].interval,
+            Duration::from_secs(1),
+        );
+
+        assert_eq!(
+            schedules[&SeriesId::new(1)].next_poll,
+            now + Duration::from_secs(1),
+        );
+
+        assert_eq!(
+            schedules[&SeriesId::new(2)].interval,
+            Duration::from_secs(5),
+        );
+
+        assert_eq!(
+            schedules[&SeriesId::new(2)].next_poll,
+            now + Duration::from_secs(5),
+        );
+    }
+
+    #[test]
+    fn updates_only_default_intervals() {
+        let first_now = Instant::now();
+
+        let custom_interval = SamplingInterval::new(Duration::from_secs(5)).unwrap();
+
+        let series = [metadata(1, None), metadata(2, Some(custom_interval))];
+
+        let mut schedules: HashMap<SeriesId, SeriesSchedule> = HashMap::new();
+
+        synchronize_series_schedules(&mut schedules, &series, Duration::from_secs(1), first_now);
+
+        let custom_deadline = schedules[&SeriesId::new(2)].next_poll;
+
+        let second_now = first_now + Duration::from_millis(100);
+
+        synchronize_series_schedules(&mut schedules, &series, Duration::from_secs(2), second_now);
+
+        assert_eq!(
+            schedules[&SeriesId::new(1)].interval,
+            Duration::from_secs(2),
+        );
+
+        assert_eq!(
+            schedules[&SeriesId::new(1)].next_poll,
+            second_now + Duration::from_secs(2),
+        );
+
+        assert_eq!(schedules[&SeriesId::new(2)].next_poll, custom_deadline,);
+    }
 }

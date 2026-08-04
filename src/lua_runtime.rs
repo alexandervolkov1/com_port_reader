@@ -57,7 +57,7 @@ mod tests {
 
     use super::LuaRuntime;
     use crate::{
-        data::SeriesSource,
+        data::{SamplingInterval, SeriesSource},
         instrument::{
             InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
             metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
@@ -252,18 +252,21 @@ mod tests {
         runtime
             .execute(
                 r#"
-                app.add_serial(
-                    "read sine",
-                    "sine"
-                )
+                    app.add_serial(
+                        "read sine",
+                        {
+                            name = "sine",
+                            interval = 2.5,
+                        }
+                    )
 
-                app.add_serial(
-                    "read pressure"
-                )
+                    app.add_serial(
+                        "read pressure"
+                    )
 
-                app.send_serial(
-                    "set amplitude 25"
-                )
+                    app.send_serial(
+                        "set amplitude 25"
+                    )
                 "#,
             )
             .unwrap();
@@ -272,9 +275,14 @@ mod tests {
             panic!("expected Add command");
         };
 
-        let (source, name) = new_series.into_source_parts();
+        let (source, name, sampling_interval) = new_series.into_parts();
 
-        assert_eq!(name.as_deref(), Some("sine"),);
+        assert_eq!(name.as_deref(), Some("sine"));
+
+        assert_eq!(
+            sampling_interval,
+            Some(SamplingInterval::from_secs_f64(2.5).unwrap(),),
+        );
 
         assert_eq!(
             source,
@@ -287,9 +295,10 @@ mod tests {
             panic!("expected Add command");
         };
 
-        let (source, name) = new_series.into_source_parts();
+        let (source, name, sampling_interval) = new_series.into_parts();
 
         assert_eq!(name, None);
+        assert_eq!(sampling_interval, None);
 
         assert_eq!(
             source,
@@ -301,8 +310,7 @@ mod tests {
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
             UserCommand::SendSerial { command }
-                if command
-                    == "set amplitude 25",
+                if command == "set amplitude 25",
         ));
 
         assert!(command_receiver.try_recv().is_err());
@@ -499,7 +507,9 @@ mod tests {
                 panic!("expected Add command");
             };
 
-            let (source, name) = new_series.into_source_parts();
+            let (source, name, sampling_interval) = new_series.into_parts();
+
+            assert_eq!(sampling_interval, None);
 
             assert_eq!(name.as_deref(), Some(expected_name),);
 
@@ -923,6 +933,69 @@ mod tests {
             .to_string();
 
         assert!(error.contains("cannot be represented",));
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_series_sampling_interval() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        let error = runtime
+            .execute(
+                r#"
+                    app.add_serial(
+                        "read value",
+                        {
+                            interval = 0,
+                        }
+                    )
+                "#,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains(
+                "Sampling interval must be finite \
+                 and greater than zero",
+            ),
+            "{error}",
+        );
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_series_option() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        let error = runtime
+            .execute(
+                r#"
+                    app.add_serial(
+                        "read value",
+                        {
+                            interwal = 2,
+                        }
+                    )
+                "#,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains("Unknown series option 'interwal'",),
+            "{error}",
+        );
 
         assert!(command_receiver.try_recv().is_err());
     }
