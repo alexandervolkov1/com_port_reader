@@ -316,6 +316,36 @@ impl LuaVirtualInstrument {
         Ok(parameters)
     }
 
+    fn add_parameter_series(&self, parameter_key: &str, name: Option<String>) -> mlua::Result<()> {
+        let parameter = self.parameter(parameter_key)?;
+
+        if !parameter.access().readable() {
+            return Err(mlua::Error::RuntimeError(format!(
+                "Virtual instrument parameter \
+                 '{parameter_key}' is write-only",
+            )));
+        }
+
+        if !parameter.series() {
+            return Err(mlua::Error::RuntimeError(format!(
+                "Virtual instrument parameter \
+                 '{parameter_key}' cannot be added \
+                 as a series",
+            )));
+        }
+
+        let request =
+            InstrumentReadRequest::virtual_instrument(self.descriptor.id(), parameter.id());
+
+        let new_series = match name {
+            Some(name) => NewSeries::named_instrument(request, name),
+
+            None => NewSeries::unnamed_instrument(request),
+        };
+
+        send_application_command(&self.command_sender, UserCommand::Add(new_series))
+    }
+
     fn parameter(&self, key: &str) -> mlua::Result<&VirtualParameterDescriptor> {
         self.descriptor
             .parameters()
@@ -825,6 +855,13 @@ impl UserData for LuaVirtualInstrument {
         methods.add_method("parameters", |lua, instrument, ()| {
             instrument.parameters(lua)
         });
+
+        methods.add_method(
+            "add",
+            |_, instrument, (parameter_key, name): (String, Option<String>)| {
+                instrument.add_parameter_series(&parameter_key, name)
+            },
+        );
 
         methods.add_method("read", |_, instrument, parameter_key: String| {
             let value = instrument.read_parameter(&parameter_key)?;
