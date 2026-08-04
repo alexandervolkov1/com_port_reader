@@ -6,7 +6,7 @@ use crate::{
         plot_downsampling::downsample_min_max_into,
         plot_model::{PlotLine, PlotModel},
     },
-    data::SeriesStore,
+    data::{Sample, SeriesId, SeriesStore},
     utils::{current_time_f64, mark_for_timestamp},
 };
 
@@ -16,6 +16,19 @@ const Y_LABEL_MIN_SPACING: f32 = 14.0;
 const Y_LABEL_FULL_SPACING: f32 = 20.0;
 const X_LABEL_LEFT_MARGIN: f64 = 0.035;
 
+struct PlotSnapshot {
+    min_x: f64,
+    max_x: f64,
+    series_ids: Vec<SeriesId>,
+    visible_series: Vec<VisibleSeriesSnapshot>,
+}
+
+struct VisibleSeriesSnapshot {
+    id: SeriesId,
+    name: String,
+    samples: Vec<Sample>,
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     plot: &mut PlotModel,
@@ -24,6 +37,7 @@ pub fn show(
     window_seconds: f64,
 ) {
     let (min_x, max_x) = prepare_lines(plot, series_store, max_points_per_series, window_seconds);
+
     let pane_count = plot.panes.len();
 
     let spacing = ui.spacing().item_spacing.y;
@@ -253,6 +267,57 @@ fn prepare_lines(
     max_points_per_series: usize,
     window_seconds: f64,
 ) -> (f64, f64) {
+    let snapshot = take_plot_snapshot(
+        series_store,
+        plot.follow_latest,
+        plot.manual_x_bounds,
+        window_seconds,
+    );
+
+    plot.series_panes
+        .retain(|series_id, _| snapshot.series_ids.contains(series_id));
+
+    let default_pane_id = plot.panes[0].id;
+    let series_panes = &plot.series_panes;
+
+    for pane in &mut plot.panes {
+        pane.lines
+            .resize_with(snapshot.visible_series.len(), PlotLine::default);
+
+        let mut prepared_count = 0;
+
+        for series in &snapshot.visible_series {
+            let assigned_pane = series_panes
+                .get(&series.id)
+                .copied()
+                .unwrap_or(default_pane_id);
+
+            if assigned_pane != pane.id {
+                continue;
+            }
+
+            let line = &mut pane.lines[prepared_count];
+
+            line.name.clone_from(&series.name);
+            line.points.clear();
+
+            downsample_min_max_into(&series.samples, max_points_per_series, &mut line.points);
+
+            prepared_count += 1;
+        }
+
+        pane.lines.truncate(prepared_count);
+    }
+
+    (snapshot.min_x, snapshot.max_x)
+}
+
+fn take_plot_snapshot(
+    series_store: &SeriesStore,
+    follow_latest: bool,
+    manual_x_bounds: Option<(f64, f64)>,
+    window_seconds: f64,
+) -> PlotSnapshot {
     series_store.with(|series| {
         let latest_x = series
             .iter()
@@ -276,64 +341,40 @@ fn prepare_lines(
             (latest_x - window_seconds, latest_x)
         };
 
-        let (min_x, max_x) = if plot.follow_latest {
+        let (min_x, max_x) = if follow_latest {
             live_bounds
         } else {
-            plot.manual_x_bounds.unwrap_or(live_bounds)
+            manual_x_bounds.unwrap_or(live_bounds)
         };
 
-        plot.series_panes.retain(|series_id, _| {
-            series
-                .iter()
-                .any(|stored_series| stored_series.id == *series_id)
-        });
+        let series_ids = series.iter().map(|series| series.id).collect();
 
-        let default_pane_id = plot.panes[0].id;
-        let series_panes = &plot.series_panes;
-
-        for pane in &mut plot.panes {
-            pane.lines.resize_with(series.len(), PlotLine::default);
-
-            let mut prepared_count = 0;
-
-            for signal_series in series {
-                if !signal_series.visible {
-                    continue;
-                }
-
-                let assigned_pane = series_panes
-                    .get(&signal_series.id)
-                    .copied()
-                    .unwrap_or(default_pane_id);
-
-                if assigned_pane != pane.id {
-                    continue;
-                }
-
-                let start_idx = signal_series
+        let visible_series = series
+            .iter()
+            .filter(|series| series.visible)
+            .map(|series| {
+                let start_idx = series
                     .samples
                     .partition_point(|sample| sample.timestamp < min_x);
 
-                let end_idx = signal_series
+                let end_idx = series
                     .samples
                     .partition_point(|sample| sample.timestamp <= max_x);
 
-                let visible_samples = &signal_series.samples[start_idx..end_idx];
+                VisibleSeriesSnapshot {
+                    id: series.id,
+                    name: series.name.clone(),
+                    samples: series.samples[start_idx..end_idx].to_vec(),
+                }
+            })
+            .collect();
 
-                let line = &mut pane.lines[prepared_count];
-
-                line.name.clone_from(&signal_series.name);
-
-                line.points.clear();
-
-                downsample_min_max_into(visible_samples, max_points_per_series, &mut line.points);
-                prepared_count += 1;
-            }
-
-            pane.lines.truncate(prepared_count);
+        PlotSnapshot {
+            min_x,
+            max_x,
+            series_ids,
+            visible_series,
         }
-
-        (min_x, max_x)
     })
 }
 
