@@ -4,6 +4,7 @@ use crossbeam_channel::{RecvTimeoutError, Sender, bounded};
 use mlua::{FromLua, Lua, Table, UserData, UserDataMethods, Value};
 
 use crate::{
+    connection::ConnectionId,
     data::{
         DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, NewSeries,
         SamplingInterval,
@@ -20,14 +21,10 @@ use crate::{
 };
 
 const INSTRUMENT_READ_TIMEOUT: Duration = Duration::from_secs(10);
-const INSTRUMENT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
-const VIRTUAL_INSTRUMENT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Default)]
-struct SeriesAddOptions {
-    name: Option<String>,
-    sampling_interval: Option<SamplingInterval>,
-}
+const INSTRUMENT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
+const VIRTUAL_INSTRUMENT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<()> {
     let app = lua.create_table()?;
@@ -101,80 +98,24 @@ fn register_command(
     app.set(name, function)
 }
 
-fn parse_series_add_options(lua: &Lua, value: Value) -> mlua::Result<SeriesAddOptions> {
-    match value {
-        Value::Nil => Ok(SeriesAddOptions::default()),
-
-        Value::String(_) => Ok(SeriesAddOptions {
-            name: Some(String::from_lua(value, lua)?),
-            sampling_interval: None,
-        }),
-
-        Value::Table(table) => {
-            validate_series_add_options(&table)?;
-
-            let name = table.get::<Option<String>>("name")?;
-
-            let interval_seconds = table.get::<Option<f64>>("interval")?;
-
-            let sampling_interval = interval_seconds
-                .map(SamplingInterval::from_secs_f64)
-                .transpose()
-                .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
-
-            Ok(SeriesAddOptions {
-                name,
-                sampling_interval,
-            })
-        }
-
-        value => Err(mlua::Error::RuntimeError(format!(
-            "Series options must be a name, \
-                 a table or nil, received {value:?}",
-        ))),
-    }
-}
-
-fn validate_series_add_options(table: &Table) -> mlua::Result<()> {
-    for pair in table.pairs::<String, Value>() {
-        let (key, _) = pair?;
-
-        if !matches!(key.as_str(), "name" | "interval") {
-            return Err(mlua::Error::RuntimeError(format!(
-                "Unknown series option '{key}'",
-            )));
-        }
-    }
-
-    Ok(())
-}
-
-fn apply_sampling_interval(new_series: NewSeries, interval: Option<SamplingInterval>) -> NewSeries {
-    match interval {
-        Some(interval) => new_series.with_sampling_interval(interval),
-
-        None => new_series,
-    }
-}
-
 fn register_add_serial(
     lua: &Lua,
     app: &Table,
     command_sender: Sender<UserCommand>,
 ) -> mlua::Result<()> {
-    let function = lua.create_function(move |lua, (command, options): (String, Value)| {
-        let options = parse_series_add_options(lua, options)?;
+    let function = lua.create_function(
+        move |_, (command, name, interval_seconds): (String, Option<String>, Option<f64>)| {
+            let new_series = match name {
+                Some(name) => NewSeries::named_serial_command(command, name),
 
-        let new_series = match options.name {
-            Some(name) => NewSeries::named_serial_command(command, name),
+                None => NewSeries::unnamed_serial_command(command),
+            };
 
-            None => NewSeries::unnamed_serial_command(command),
-        };
+            let new_series = with_sampling_interval(new_series, interval_seconds)?;
 
-        let new_series = apply_sampling_interval(new_series, options.sampling_interval);
-
-        send_application_command(&command_sender, UserCommand::Add(new_series))
-    })?;
+            send_application_command(&command_sender, UserCommand::Add(new_series))
+        },
+    )?;
 
     app.set("add_serial", function)
 }
@@ -187,7 +128,6 @@ fn register_metakon_controller(
     let function = lua.create_function(move |lua, options: Option<Table>| {
         let options = match options {
             Some(options) => options,
-
             None => lua.create_table()?,
         };
 
@@ -207,15 +147,15 @@ fn register_metakon_controller(
 
         if !scale.is_finite() || scale <= 0.0 {
             return Err(mlua::Error::RuntimeError(
-                "app.metakon scale must be \
-                         finite and greater than zero"
+                "app.metakon scale must be finite \
+                     and greater than zero"
                     .to_owned(),
             ));
         }
 
         lua.create_userdata(LuaMetakon5x3 {
+            connection_id: ConnectionId::PRIMARY,
             instrument: Metakon5x3::new(device, channel),
-
             scale,
             command_sender: command_sender.clone(),
         })
@@ -232,7 +172,6 @@ fn register_virtual_instrument_controller(
     let function = lua.create_function(move |lua, options: Option<Table>| {
         let options = match options {
             Some(options) => options,
-
             None => lua.create_table()?,
         };
 
@@ -248,11 +187,16 @@ fn register_virtual_instrument_controller(
             ));
         }
 
+        let connection_id = ConnectionId::PRIMARY;
+
         let (response_sender, response_receiver) = bounded(1);
 
         send_application_command(
             &command_sender,
-            UserCommand::DescribeVirtualInstruments { response_sender },
+            UserCommand::DescribeVirtualInstruments {
+                connection_id,
+                response_sender,
+            },
         )?;
 
         let descriptors = match response_receiver.recv_timeout(VIRTUAL_INSTRUMENT_DISCOVERY_TIMEOUT)
@@ -269,7 +213,7 @@ fn register_virtual_instrument_controller(
             Err(RecvTimeoutError::Timeout) => {
                 return Err(mlua::Error::RuntimeError(
                     "Timed out waiting for virtual \
-                         instrument discovery"
+                             instrument discovery"
                         .to_owned(),
                 ));
             }
@@ -277,7 +221,8 @@ fn register_virtual_instrument_controller(
             Err(RecvTimeoutError::Disconnected) => {
                 return Err(mlua::Error::RuntimeError(
                     "Virtual instrument discovery \
-                         response channel is disconnected"
+                             response channel is \
+                             disconnected"
                         .to_owned(),
                 ));
             }
@@ -296,6 +241,7 @@ fn register_virtual_instrument_controller(
             })?;
 
         lua.create_userdata(LuaVirtualInstrument {
+            connection_id,
             id,
             descriptor,
             command_sender: command_sender.clone(),
@@ -312,7 +258,7 @@ fn validate_virtual_instrument_options(options: &Table) -> mlua::Result<()> {
         if key != "id" {
             return Err(mlua::Error::RuntimeError(format!(
                 "unknown app.virtual_instrument \
-                 option '{key}'",
+                     option '{key}'",
             )));
         }
     }
@@ -321,13 +267,12 @@ fn validate_virtual_instrument_options(options: &Table) -> mlua::Result<()> {
 }
 
 fn validate_metakon_controller_options(options: &Table) -> mlua::Result<()> {
-    for pair in options.pairs::<String, mlua::Value>() {
+    for pair in options.pairs::<String, Value>() {
         let (key, _) = pair?;
 
         if !matches!(key.as_str(), "device" | "channel" | "scale") {
             return Err(mlua::Error::RuntimeError(format!(
-                "unknown app.metakon \
-                         option '{key}'",
+                "unknown app.metakon option '{key}'",
             )));
         }
     }
@@ -337,6 +282,7 @@ fn validate_metakon_controller_options(options: &Table) -> mlua::Result<()> {
 
 #[derive(Clone)]
 struct LuaVirtualInstrument {
+    connection_id: ConnectionId,
     id: u16,
     descriptor: VirtualInstrumentDescriptor,
     command_sender: Sender<UserCommand>,
@@ -352,7 +298,6 @@ impl LuaVirtualInstrument {
             let entry = lua.create_table_with_capacity(0, 8)?;
 
             entry.set("key", descriptor.key())?;
-
             entry.set("name", descriptor.name())?;
 
             entry.set("access", descriptor.access().as_str())?;
@@ -388,35 +333,36 @@ impl LuaVirtualInstrument {
     fn add_parameter_series(
         &self,
         parameter_key: &str,
-        options: SeriesAddOptions,
+        name: Option<String>,
+        interval_seconds: Option<f64>,
     ) -> mlua::Result<()> {
         let parameter = self.parameter(parameter_key)?;
 
         if !parameter.access().readable() {
             return Err(mlua::Error::RuntimeError(format!(
                 "Virtual instrument parameter \
-                 '{parameter_key}' is write-only",
+                     '{parameter_key}' is write-only",
             )));
         }
 
         if !parameter.series() {
             return Err(mlua::Error::RuntimeError(format!(
                 "Virtual instrument parameter \
-                 '{parameter_key}' cannot be added \
-                 as a series",
+                     '{parameter_key}' cannot be \
+                     added as a series",
             )));
         }
 
         let request =
             InstrumentReadRequest::virtual_instrument(self.descriptor.id(), parameter.id());
 
-        let new_series = match options.name {
+        let new_series = match name {
             Some(name) => NewSeries::named_instrument(request, name),
 
             None => NewSeries::unnamed_instrument(request),
         };
 
-        let new_series = apply_sampling_interval(new_series, options.sampling_interval);
+        let new_series = with_sampling_interval(new_series, interval_seconds)?;
 
         send_application_command(&self.command_sender, UserCommand::Add(new_series))
     }
@@ -441,7 +387,7 @@ impl LuaVirtualInstrument {
         if !parameter.access().readable() {
             return Err(mlua::Error::RuntimeError(format!(
                 "Virtual instrument parameter \
-                 '{parameter_key}' is write-only",
+                     '{parameter_key}' is write-only",
             )));
         }
 
@@ -453,6 +399,7 @@ impl LuaVirtualInstrument {
         send_application_command(
             &self.command_sender,
             UserCommand::ReadInstrument {
+                connection_id: self.connection_id,
                 request,
                 response_sender,
             },
@@ -490,7 +437,7 @@ impl LuaVirtualInstrument {
         if !parameter.access().writable() {
             return Err(mlua::Error::RuntimeError(format!(
                 "Virtual instrument parameter \
-                 '{parameter_key}' is read-only",
+                     '{parameter_key}' is read-only",
             )));
         }
 
@@ -502,6 +449,7 @@ impl LuaVirtualInstrument {
         send_application_command(
             &self.command_sender,
             UserCommand::WriteInstrument {
+                connection_id: self.connection_id,
                 request,
                 response_sender,
             },
@@ -532,6 +480,7 @@ impl LuaVirtualInstrument {
 
 #[derive(Clone)]
 struct LuaMetakon5x3 {
+    connection_id: ConnectionId,
     instrument: Metakon5x3,
     scale: f64,
     command_sender: Sender<UserCommand>,
@@ -546,17 +495,18 @@ impl LuaMetakon5x3 {
         &self,
         parameter: Metakon5x3Register,
         scale: f64,
-        options: SeriesAddOptions,
+        name: Option<String>,
+        interval_seconds: Option<f64>,
     ) -> mlua::Result<()> {
         let request = InstrumentReadRequest::metakon_5x3(self.instrument, parameter, scale);
 
-        let new_series = match options.name {
+        let new_series = match name {
             Some(name) => NewSeries::named_instrument(request, name),
 
             None => NewSeries::unnamed_instrument(request),
         };
 
-        let new_series = apply_sampling_interval(new_series, options.sampling_interval);
+        let new_series = with_sampling_interval(new_series, interval_seconds)?;
 
         self.add_series(new_series)
     }
@@ -582,6 +532,7 @@ impl LuaMetakon5x3 {
         send_application_command(
             &self.command_sender,
             UserCommand::WriteInstrument {
+                connection_id: self.connection_id,
                 request,
                 response_sender,
             },
@@ -591,19 +542,16 @@ impl LuaMetakon5x3 {
             Ok(Ok(value)) => Ok(value),
 
             Ok(Err(error)) => Err(mlua::Error::RuntimeError(format!(
-                "Instrument write failed: \
-                         {error}",
+                "Instrument write failed: {error}",
             ))),
 
             Err(RecvTimeoutError::Timeout) => Err(mlua::Error::RuntimeError(
-                "Timed out waiting for \
-                     instrument write"
-                    .to_owned(),
+                "Timed out waiting for instrument write".to_owned(),
             )),
 
             Err(RecvTimeoutError::Disconnected) => Err(mlua::Error::RuntimeError(
-                "Instrument write response \
-                     channel is disconnected"
+                "Instrument write response channel \
+                     is disconnected"
                     .to_owned(),
             )),
         }
@@ -645,7 +593,6 @@ impl LuaMetakon5x3 {
             let entry = lua.create_table_with_capacity(0, 7)?;
 
             entry.set("key", descriptor.key)?;
-
             entry.set("name", descriptor.name)?;
 
             entry.set("access", descriptor.access.as_str())?;
@@ -655,13 +602,11 @@ impl LuaMetakon5x3 {
             match range {
                 ParameterRange::Integer { minimum, maximum } => {
                     entry.set("minimum", minimum)?;
-
                     entry.set("maximum", maximum)?;
                 }
 
                 ParameterRange::Number { minimum, maximum } => {
                     entry.set("minimum", minimum)?;
-
                     entry.set("maximum", maximum)?;
                 }
             }
@@ -684,6 +629,7 @@ impl LuaMetakon5x3 {
         send_application_command(
             &self.command_sender,
             UserCommand::ReadInstrument {
+                connection_id: self.connection_id,
                 request,
                 response_sender,
             },
@@ -693,19 +639,16 @@ impl LuaMetakon5x3 {
             Ok(Ok(value)) => Ok(value),
 
             Ok(Err(error)) => Err(mlua::Error::RuntimeError(format!(
-                "Instrument read failed: \
-                         {error}",
+                "Instrument read failed: {error}",
             ))),
 
             Err(RecvTimeoutError::Timeout) => Err(mlua::Error::RuntimeError(
-                "Timed out waiting for \
-                     instrument read"
-                    .to_owned(),
+                "Timed out waiting for instrument read".to_owned(),
             )),
 
             Err(RecvTimeoutError::Disconnected) => Err(mlua::Error::RuntimeError(
-                "Instrument read response \
-                     channel is disconnected"
+                "Instrument read response channel \
+                     is disconnected"
                     .to_owned(),
             )),
         }
@@ -714,10 +657,7 @@ impl LuaMetakon5x3 {
 
 fn metakon_parameter_from_key(key: &str) -> mlua::Result<Metakon5x3Register> {
     Metakon5x3Register::from_key(key).ok_or_else(|| {
-        mlua::Error::RuntimeError(format!(
-            "Unknown Metakon 5X3 \
-                     parameter: '{key}'",
-        ))
+        mlua::Error::RuntimeError(format!("Unknown Metakon 5X3 parameter: '{key}'",))
     })
 }
 
@@ -729,8 +669,7 @@ fn metakon_write_from_lua(
 ) -> mlua::Result<Metakon5x3Write> {
     if !parameter.writable() {
         return Err(mlua::Error::RuntimeError(format!(
-            "Metakon 5X3 parameter '{}' \
-                 is read-only",
+            "Metakon 5X3 parameter '{}' is read-only",
             parameter.descriptor().key,
         )));
     }
@@ -784,7 +723,7 @@ fn metakon_write_from_lua(
         | Metakon5x3Register::Measurement
         | Metakon5x3Register::PwmPositive
         | Metakon5x3Register::PwmNegative => {
-            unreachable!("read-only parameters were rejected above")
+            unreachable!("read-only parameters were rejected above",)
         }
     }
 }
@@ -800,31 +739,30 @@ where
 {
     let engineering_value = f64::from_lua(value, lua).map_err(|_| {
         mlua::Error::RuntimeError(format!(
-            "Metakon 5X3 parameter '{}' \
-                 expects a numeric value",
+            "Metakon 5X3 parameter '{}' expects \
+                 a numeric value",
             parameter.descriptor().key,
         ))
     })?;
 
     if !engineering_value.is_finite() {
         return Err(mlua::Error::RuntimeError(format!(
-            "Metakon 5X3 parameter '{}' \
-                 must be finite",
+            "Metakon 5X3 parameter '{}' must \
+                 be finite",
             parameter.descriptor().key,
         )));
     }
 
     let raw_value = engineering_value / scale;
-
     let rounded_value = raw_value.round();
 
     let tolerance = raw_value.abs().max(1.0) * 1.0e-9;
 
     if (raw_value - rounded_value).abs() > tolerance {
         return Err(mlua::Error::RuntimeError(format!(
-            "Value {engineering_value} cannot \
-                 be represented by Metakon 5X3 \
-                 parameter '{}' with scale {scale}",
+            "Value {engineering_value} cannot be \
+                 represented by Metakon 5X3 parameter \
+                 '{}' with scale {scale}",
             parameter.descriptor().key,
         )));
     }
@@ -847,9 +785,8 @@ fn boolean_parameter_value(
 ) -> mlua::Result<bool> {
     bool::from_lua(value, lua).map_err(|_| {
         mlua::Error::RuntimeError(format!(
-            "Metakon 5X3 parameter \
-                     '{}' expects a Boolean \
-                     value",
+            "Metakon 5X3 parameter '{}' expects \
+             a Boolean value",
             parameter.descriptor().key,
         ))
     })
@@ -877,8 +814,8 @@ fn virtual_instrument_value_from_lua(
             let value = bool::from_lua(value, lua).map_err(|_| {
                 mlua::Error::RuntimeError(format!(
                     "Virtual instrument parameter \
-                         '{parameter_key}' expects a \
-                         Boolean value",
+                     '{parameter_key}' expects a \
+                     Boolean value",
                 ))
             })?;
 
@@ -889,8 +826,8 @@ fn virtual_instrument_value_from_lua(
             let value = i64::from_lua(value, lua).map_err(|_| {
                 mlua::Error::RuntimeError(format!(
                     "Virtual instrument parameter \
-                         '{parameter_key}' expects an \
-                         integer value",
+                     '{parameter_key}' expects an \
+                     integer value",
                 ))
             })?;
 
@@ -901,21 +838,36 @@ fn virtual_instrument_value_from_lua(
             let value = f64::from_lua(value, lua).map_err(|_| {
                 mlua::Error::RuntimeError(format!(
                     "Virtual instrument parameter \
-                         '{parameter_key}' expects a \
-                         numeric value",
+                     '{parameter_key}' expects a \
+                     numeric value",
                 ))
             })?;
 
             if !value.is_finite() {
                 return Err(mlua::Error::RuntimeError(format!(
                     "Virtual instrument parameter \
-                         '{parameter_key}' must be finite",
+                         '{parameter_key}' must be \
+                         finite",
                 )));
             }
 
             Ok(InstrumentValue::Number(value))
         }
     }
+}
+
+fn with_sampling_interval(
+    new_series: NewSeries,
+    interval_seconds: Option<f64>,
+) -> mlua::Result<NewSeries> {
+    let Some(interval_seconds) = interval_seconds else {
+        return Ok(new_series);
+    };
+
+    let sampling_interval = SamplingInterval::from_secs_f64(interval_seconds)
+        .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+    Ok(new_series.with_sampling_interval(sampling_interval))
 }
 
 impl UserData for LuaVirtualInstrument {
@@ -935,10 +887,22 @@ impl UserData for LuaVirtualInstrument {
 
         methods.add_method(
             "add",
-            |lua, instrument, (parameter_key, options): (String, Value)| {
-                let options = parse_series_add_options(lua, options)?;
-
-                instrument.add_parameter_series(&parameter_key, options)
+            |_,
+             instrument,
+             (
+                parameter_key,
+                name,
+                interval_seconds,
+            ): (
+                String,
+                Option<String>,
+                Option<f64>,
+            )| {
+                instrument.add_parameter_series(
+                    &parameter_key,
+                    name,
+                    interval_seconds,
+                )
             },
         );
 
@@ -974,14 +938,31 @@ impl UserData for LuaMetakon5x3 {
 
         methods.add_method(
             "add",
-            |lua, controller, (parameter_key, options): (String, Value)| {
-                let parameter = metakon_parameter_from_key(&parameter_key)?;
+            |_,
+             controller,
+             (
+                parameter_key,
+                name,
+                interval_seconds,
+            ): (
+                String,
+                Option<String>,
+                Option<f64>,
+            )| {
+                let parameter =
+                    metakon_parameter_from_key(
+                        &parameter_key,
+                    )?;
 
-                let scale = controller.parameter_scale(parameter);
+                let scale =
+                    controller.parameter_scale(parameter);
 
-                let options = parse_series_add_options(lua, options)?;
-
-                controller.add_parameter_series(parameter, scale, options)
+                controller.add_parameter_series(
+                    parameter,
+                    scale,
+                    name,
+                    interval_seconds,
+                )
             },
         );
 
@@ -1054,7 +1035,13 @@ fn register_send_serial(
     command_sender: Sender<UserCommand>,
 ) -> mlua::Result<()> {
     let function = lua.create_function(move |_, command: String| {
-        send_application_command(&command_sender, UserCommand::SendSerial { command })
+        send_application_command(
+            &command_sender,
+            UserCommand::SendSerial {
+                connection_id: ConnectionId::PRIMARY,
+                command,
+            },
+        )
     })?;
 
     app.set("send_serial", function)
@@ -1065,11 +1052,7 @@ fn send_application_command(
     command: UserCommand,
 ) -> mlua::Result<()> {
     command_sender.send(command).map_err(|_| {
-        mlua::Error::RuntimeError(
-            "application command channel \
-                 is disconnected"
-                .to_owned(),
-        )
+        mlua::Error::RuntimeError("application command channel is disconnected".to_owned())
     })
 }
 

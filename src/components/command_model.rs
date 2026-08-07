@@ -32,6 +32,17 @@ impl CommandModel {
         }
     }
 
+    fn connection_worker(
+        &self,
+        connection_id: ConnectionId,
+    ) -> Result<WorkerHandle, AcquisitionError> {
+        self.connections.handle(connection_id).ok_or_else(|| {
+            AcquisitionError::from(format!(
+                "Connection worker {connection_id:?} is not registered",
+            ))
+        })
+    }
+
     fn primary_worker(&self) -> WorkerHandle {
         self.connections
             .handle(ConnectionId::PRIMARY)
@@ -111,7 +122,10 @@ impl CommandModel {
                 self.log.info(message);
             }
 
-            UserCommand::SendSerial { command } => {
+            UserCommand::SendSerial {
+                connection_id,
+                command,
+            } => {
                 let Some(config) = serial_settings.serial_config() else {
                     self.log.error(
                         "Cannot send COM command: \
@@ -121,13 +135,22 @@ impl CommandModel {
 
                     return;
                 };
+                let worker_handle = match self.connection_worker(connection_id) {
+                    Ok(worker_handle) => worker_handle,
 
-                if let Err(error) = self.primary_worker().send_serial_text(config, command) {
+                    Err(error) => {
+                        self.log.error(error.to_string());
+                        return;
+                    }
+                };
+
+                if let Err(error) = worker_handle.send_serial_text(config, command) {
                     self.set_worker_error(error);
                 }
             }
 
             UserCommand::ReadInstrument {
+                connection_id,
                 request,
                 response_sender,
             } => {
@@ -144,7 +167,19 @@ impl CommandModel {
                     return;
                 };
 
-                let send_result = self.primary_worker().read_instrument(
+                let worker_handle = match self.connection_worker(connection_id) {
+                    Ok(worker_handle) => worker_handle,
+
+                    Err(error) => {
+                        self.log.error(error.to_string());
+
+                        let _ = response_sender.send(Err(error));
+
+                        return;
+                    }
+                };
+
+                let send_result = worker_handle.read_instrument(
                     config.port_name().to_owned(),
                     request,
                     response_sender.clone(),
@@ -163,6 +198,7 @@ impl CommandModel {
             }
 
             UserCommand::WriteInstrument {
+                connection_id,
                 request,
                 response_sender,
             } => {
@@ -179,7 +215,19 @@ impl CommandModel {
                     return;
                 };
 
-                let send_result = self.primary_worker().write_instrument(
+                let worker_handle = match self.connection_worker(connection_id) {
+                    Ok(worker_handle) => worker_handle,
+
+                    Err(error) => {
+                        self.log.error(error.to_string());
+
+                        let _ = response_sender.send(Err(error));
+
+                        return;
+                    }
+                };
+
+                let send_result = worker_handle.write_instrument(
                     config.port_name().to_owned(),
                     request,
                     response_sender.clone(),
@@ -197,7 +245,10 @@ impl CommandModel {
                 }
             }
 
-            UserCommand::DescribeVirtualInstruments { response_sender } => {
+            UserCommand::DescribeVirtualInstruments {
+                connection_id,
+                response_sender,
+            } => {
                 if serial_settings.serial_config().is_none() {
                     let error = AcquisitionError::from(
                         "Cannot describe virtual instruments: \
@@ -211,9 +262,20 @@ impl CommandModel {
                     return;
                 }
 
-                let send_result = self
-                    .primary_worker()
-                    .describe_virtual_instruments(response_sender.clone());
+                let worker_handle = match self.connection_worker(connection_id) {
+                    Ok(worker_handle) => worker_handle,
+
+                    Err(error) => {
+                        self.log.error(error.to_string());
+
+                        let _ = response_sender.send(Err(error));
+
+                        return;
+                    }
+                };
+
+                let send_result =
+                    worker_handle.describe_virtual_instruments(response_sender.clone());
 
                 if let Err(send_error) = send_result {
                     let error = AcquisitionError::from(format!(

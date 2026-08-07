@@ -57,6 +57,7 @@ mod tests {
 
     use super::LuaRuntime;
     use crate::{
+        connection::ConnectionId,
         data::{SamplingInterval, SeriesSource},
         instrument::{
             InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
@@ -309,7 +310,10 @@ mod tests {
 
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
-            UserCommand::SendSerial { command }
+            UserCommand::SendSerial {
+                connection_id,
+                command,
+            }
                 if command == "set amplitude 25",
         ));
 
@@ -568,12 +572,15 @@ mod tests {
             let command = command_receiver.recv().unwrap();
 
             let UserCommand::ReadInstrument {
+                connection_id,
                 request,
                 response_sender,
             } = command
             else {
-                panic!("expected instrument read command");
+                panic!("expected ReadInstrument command");
             };
+
+            assert_eq!(connection_id, ConnectionId::PRIMARY,);
 
             assert_eq!(
                 request,
@@ -612,12 +619,15 @@ mod tests {
             let command = command_receiver.recv().unwrap();
 
             let UserCommand::ReadInstrument {
+                connection_id,
                 request,
                 response_sender,
             } = command
             else {
-                panic!("expected instrument read command");
+                panic!("expected ReadInstrument command");
             };
+
+            assert_eq!(connection_id, ConnectionId::PRIMARY,);
 
             assert_eq!(
                 request,
@@ -666,12 +676,15 @@ mod tests {
             let command = command_receiver.recv().unwrap();
 
             let UserCommand::WriteInstrument {
+                connection_id,
                 request,
                 response_sender,
             } = command
             else {
-                panic!("expected instrument write");
+                panic!("expected WriteInstrument command");
             };
+
+            assert_eq!(connection_id, ConnectionId::PRIMARY,);
 
             assert_eq!(
                 request,
