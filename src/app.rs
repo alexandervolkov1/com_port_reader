@@ -16,10 +16,7 @@ use crate::{
     sample_sink::NullSampleSink,
     serial_connection::SerialConnectionRegistry,
     user_command::UserCommand,
-    worker::{
-        ConnectionWorkers, SpawnedConnectionWorker, WorkerConfig, WorkerHandle,
-        spawn_serial_connection_worker,
-    },
+    worker::{ConnectionWorkers, WorkerConfig, WorkerHandle, spawn_serial_connection_worker},
 };
 
 const SERIES_PANEL_WIDTH: f32 = 150.0;
@@ -87,10 +84,7 @@ impl MyApp {
 
         let worker_config = WorkerConfig::new(config.application.poll_interval());
 
-        let SpawnedConnectionWorker {
-            worker,
-            handle: worker_handle,
-        } = spawn_serial_connection_worker(
+        let worker = spawn_serial_connection_worker(
             serial_config_store,
             event_sender,
             series.clone(),
@@ -99,6 +93,11 @@ impl MyApp {
         );
 
         let workers = ConnectionWorkers::new(worker);
+
+        let worker_handle = workers.handle(ConnectionId::PRIMARY).expect(
+            "primary worker was registered \
+                 during construction",
+        );
 
         let controls = ControlsModel::new(workers, log_handle.clone());
 

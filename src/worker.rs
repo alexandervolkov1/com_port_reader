@@ -34,7 +34,7 @@ pub use config::WorkerConfig;
 pub use connections::{ConnectionWorkers, ConnectionWorkersError};
 pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
-pub use serial::{SpawnedConnectionWorker, spawn_serial_connection_worker};
+pub use serial::spawn_serial_connection_worker;
 
 enum AcquisitionState {
     Stopped,
@@ -514,6 +514,10 @@ impl Worker {
 
     pub(crate) fn connection_id(&self) -> ConnectionId {
         self.commands.connection_id()
+    }
+
+    pub(crate) fn handle(&self) -> WorkerHandle {
+        self.commands.clone()
     }
 
     pub fn start_csv_recording(&self, path: std::path::PathBuf) -> Result<(), WorkerHandleError> {

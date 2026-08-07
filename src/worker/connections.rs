@@ -7,7 +7,7 @@ use std::{
 
 use crate::connection::ConnectionId;
 
-use super::{Worker, WorkerHandleError};
+use super::{Worker, WorkerHandle, WorkerHandleError};
 
 pub struct ConnectionWorkers {
     workers: BTreeMap<ConnectionId, Worker>,
@@ -45,6 +45,10 @@ impl ConnectionWorkers {
 
             Entry::Occupied(_) => Err(DuplicateConnectionWorkerError { connection_id }),
         }
+    }
+
+    pub fn handle(&self, connection_id: ConnectionId) -> Option<WorkerHandle> {
+        self.workers.get(&connection_id).map(Worker::handle)
     }
 
     pub fn start(&self) -> Result<(), ConnectionWorkersError> {
