@@ -11,6 +11,7 @@ use crate::{
         lua_console_model::LuaConsoleModel, lua_console_view, plot_model::PlotModel, plot_view,
         serial_settings_model::SerialSettingsModel, serial_settings_view, series_view,
     },
+    connection::ConnectionId,
     data::SeriesStore,
     lua_worker::LuaWorker,
     sample_sink::NullSampleSink,
@@ -91,6 +92,7 @@ impl MyApp {
 
         let worker = Worker::spawn(
             worker_handle.clone(),
+            ConnectionId::PRIMARY,
             command_receiver,
             event_sender,
             series.clone(),

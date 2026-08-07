@@ -3,6 +3,8 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
+use crate::connection::ConnectionId;
+
 use super::{
     NewSeries, Series, SeriesId, SeriesMetadata, SeriesNameError, SeriesSource,
     series_name::normalize_series_name,
@@ -202,6 +204,16 @@ impl SeriesStore {
 
     pub fn metadata(&self) -> Vec<SeriesMetadata> {
         self.with(|series| series.iter().map(SeriesMetadata::from).collect())
+    }
+
+    pub fn metadata_for_connection(&self, connection_id: ConnectionId) -> Vec<SeriesMetadata> {
+        self.with(|series| {
+            series
+                .iter()
+                .filter(|series| series.connection_id == connection_id)
+                .map(SeriesMetadata::from)
+                .collect()
+        })
     }
 
     pub fn set_visibility(&self, id: SeriesId, visible: bool) -> bool {
@@ -782,5 +794,33 @@ mod tests {
         let metadata = store.metadata();
 
         assert_eq!(metadata[0].connection_id, connection_id,);
+    }
+
+    #[test]
+    fn filters_metadata_by_connection() {
+        let store = SeriesStore::new();
+
+        let primary_id = store
+            .add_series(NewSeries::named_serial_command("read primary", "primary"))
+            .unwrap();
+
+        let secondary_connection = ConnectionId::new(2);
+
+        let secondary_id = store
+            .add_series(
+                NewSeries::named_serial_command("read secondary", "secondary")
+                    .with_connection(secondary_connection),
+            )
+            .unwrap();
+
+        let primary = store.metadata_for_connection(ConnectionId::PRIMARY);
+
+        assert_eq!(primary.len(), 1);
+        assert_eq!(primary[0].id, primary_id);
+
+        let secondary = store.metadata_for_connection(secondary_connection);
+
+        assert_eq!(secondary.len(), 1);
+        assert_eq!(secondary[0].id, secondary_id);
     }
 }

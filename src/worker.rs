@@ -15,6 +15,7 @@ use crate::{
         AcquisitionError, AcquisitionSource, InstrumentReadResult, SeriesAcquisitionFailure,
         VirtualInstrumentDescribeResult,
     },
+    connection::ConnectionId,
     data::{Series, SeriesId, SeriesMetadata, SeriesSample, SeriesStore},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError},
@@ -54,6 +55,7 @@ pub struct Worker {
 impl Worker {
     pub fn spawn(
         commands: WorkerHandle,
+        connection_id: ConnectionId,
         command_receiver: Receiver<WorkerCommand>,
         event_sender: Sender<WorkerEvent>,
         series: SeriesStore,
@@ -88,7 +90,7 @@ impl Worker {
                 let now = Instant::now();
 
                 let series_metadata = if matches!(&state, AcquisitionState::Running { .. }) {
-                    series.metadata()
+                    series.metadata_for_connection(connection_id)
                 } else {
                     Vec::new()
                 };
