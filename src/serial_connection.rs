@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, btree_map::Entry},
     io::{Read, Write},
     sync::{Arc, RwLock},
     time::Duration,
@@ -100,6 +101,69 @@ impl SerialConfigStore {
 }
 
 impl Default for SerialConfigStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone)]
+pub struct SerialConnectionRegistry {
+    stores: Arc<RwLock<BTreeMap<ConnectionId, SerialConfigStore>>>,
+}
+
+impl SerialConnectionRegistry {
+    pub fn new() -> Self {
+        let result = Self {
+            stores: Arc::new(RwLock::new(BTreeMap::new())),
+        };
+
+        result.register(ConnectionId::PRIMARY).expect(
+            "new serial connection registry \
+                 must be empty",
+        );
+
+        result
+    }
+
+    pub fn register(
+        &self,
+        connection_id: ConnectionId,
+    ) -> Result<SerialConfigStore, DuplicateSerialConnectionError> {
+        let mut stores = self
+            .stores
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        match stores.entry(connection_id) {
+            Entry::Vacant(entry) => {
+                let store = SerialConfigStore::for_connection(connection_id);
+
+                entry.insert(store.clone());
+
+                Ok(store)
+            }
+
+            Entry::Occupied(_) => Err(DuplicateSerialConnectionError { connection_id }),
+        }
+    }
+
+    pub fn store(&self, connection_id: ConnectionId) -> Option<SerialConfigStore> {
+        self.stores
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&connection_id)
+            .cloned()
+    }
+
+    pub fn primary(&self) -> SerialConfigStore {
+        self.store(ConnectionId::PRIMARY).expect(
+            "primary serial connection is \
+                 registered during construction",
+        )
+    }
+}
+
+impl Default for SerialConnectionRegistry {
     fn default() -> Self {
         Self::new()
     }
@@ -278,9 +342,28 @@ impl From<&str> for SerialConnectionError {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DuplicateSerialConnectionError {
+    connection_id: ConnectionId,
+}
+
+impl std::fmt::Display for DuplicateSerialConnectionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "serial connection {} is already registered",
+            self.connection_id,
+        )
+    }
+}
+
+impl std::error::Error for DuplicateSerialConnectionError {}
+
 #[cfg(test)]
 mod tests {
-    use super::{SerialConfigStore, parse_f64_response, parse_text_response};
+    use super::{
+        SerialConfigStore, SerialConnectionRegistry, parse_f64_response, parse_text_response,
+    };
 
     use crate::connection::ConnectionId;
 
@@ -339,5 +422,44 @@ mod tests {
         let store = SerialConfigStore::for_connection(connection_id);
 
         assert_eq!(store.connection_id(), connection_id,);
+    }
+
+    #[test]
+    fn registry_contains_primary_connection() {
+        let registry = SerialConnectionRegistry::new();
+
+        let store = registry.primary();
+
+        assert_eq!(store.connection_id(), ConnectionId::PRIMARY,);
+    }
+
+    #[test]
+    fn registry_registers_secondary_connection() {
+        let registry = SerialConnectionRegistry::new();
+
+        let connection_id = ConnectionId::new(2);
+
+        let store = registry.register(connection_id).unwrap();
+
+        assert_eq!(store.connection_id(), connection_id,);
+
+        assert_eq!(
+            registry.store(connection_id).unwrap().connection_id(),
+            connection_id,
+        );
+    }
+
+    #[test]
+    fn registry_rejects_duplicate_connection() {
+        let registry = SerialConnectionRegistry::new();
+
+        let result = registry.register(ConnectionId::PRIMARY);
+
+        let error = result.err().expect("duplicate must be rejected");
+
+        assert_eq!(
+            error.to_string(),
+            "serial connection 1 is already registered",
+        );
     }
 }

@@ -15,7 +15,7 @@ use crate::{
     data::SeriesStore,
     lua_worker::LuaWorker,
     sample_sink::NullSampleSink,
-    serial_connection::SerialConfigStore,
+    serial_connection::SerialConnectionRegistry,
     user_command::UserCommand,
     worker::{ConnectionWorkers, Worker, WorkerConfig, WorkerHandle},
 };
@@ -80,9 +80,12 @@ impl MyApp {
 
         let worker_handle = WorkerHandle::new(ConnectionId::PRIMARY, command_sender);
 
-        let serial_config_store = SerialConfigStore::new();
+        let serial_connections = SerialConnectionRegistry::new();
 
-        let serial_settings = SerialSettingsModel::new(serial_config_store.clone(), &config.serial);
+        let serial_config_store = serial_connections.primary();
+
+        let serial_settings =
+            SerialSettingsModel::new(ConnectionId::PRIMARY, serial_connections, &config.serial);
 
         let worker_config = WorkerConfig::new(config.application.poll_interval());
 

@@ -5,7 +5,8 @@ use crate::{
         SerialFlowControl as ConfigFlowControl, SerialParity as ConfigParity,
         SerialPortSettings as ConfigSerialSettings,
     },
-    serial_connection::{SerialConfigStore, SerialPortConfig},
+    connection::ConnectionId,
+    serial_connection::{SerialConnectionRegistry, SerialPortConfig},
     worker::WorkerHandle,
 };
 
@@ -76,11 +77,22 @@ pub struct SerialSettingsModel {
     settings: SerialSettings,
     settings_open: bool,
     error: Option<String>,
-    config_store: SerialConfigStore,
+    connection_id: ConnectionId,
+    connections: SerialConnectionRegistry,
 }
 
 impl SerialSettingsModel {
-    pub fn new(config_store: SerialConfigStore, config: &ConfigSerialSettings) -> Self {
+    pub fn new(
+        connection_id: ConnectionId,
+        connections: SerialConnectionRegistry,
+        config: &ConfigSerialSettings,
+    ) -> Self {
+        assert!(
+            connections.store(connection_id).is_some(),
+            "serial settings connection must be \
+             registered before creating its model",
+        );
+
         let selected_port = configured_port(&config.main_port);
 
         let mut model = Self {
@@ -89,7 +101,8 @@ impl SerialSettingsModel {
             settings: SerialSettings::from(config),
             settings_open: false,
             error: None,
-            config_store,
+            connection_id,
+            connections,
         };
 
         model.refresh_ports();
@@ -177,7 +190,12 @@ impl SerialSettingsModel {
     }
 
     pub fn publish_config(&self) {
-        self.config_store.set(self.serial_config());
+        let store = self.connections.store(self.connection_id).expect(
+            "serial settings connection was \
+                 registered during construction",
+        );
+
+        store.set(self.serial_config());
     }
 
     pub fn serial_config(&self) -> Option<SerialPortConfig> {
@@ -232,7 +250,11 @@ impl SerialSettingsModel {
 
 impl Default for SerialSettingsModel {
     fn default() -> Self {
-        Self::new(SerialConfigStore::new(), &ConfigSerialSettings::default())
+        Self::new(
+            ConnectionId::PRIMARY,
+            SerialConnectionRegistry::new(),
+            &ConfigSerialSettings::default(),
+        )
     }
 }
 
