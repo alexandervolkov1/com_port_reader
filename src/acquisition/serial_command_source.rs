@@ -24,10 +24,19 @@ pub struct SerialCommandSource {
 
 impl SerialCommandSource {
     pub fn new(config_store: SerialConfigStore) -> Self {
-        Self::for_connection(ConnectionId::PRIMARY, config_store)
+        let connection_id = config_store.connection_id();
+
+        Self::for_connection(connection_id, config_store)
     }
 
     pub fn for_connection(connection_id: ConnectionId, config_store: SerialConfigStore) -> Self {
+        assert_eq!(
+            config_store.connection_id(),
+            connection_id,
+            "serial configuration store belongs \
+             to another connection",
+        );
+
         Self {
             connection_id,
             config_store,
@@ -532,5 +541,13 @@ mod tests {
         let result = source.sample_series(&series).unwrap();
 
         assert_eq!(result, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "serial configuration store belongs to another connection")]
+    fn rejects_config_store_from_another_connection() {
+        let store = SerialConfigStore::for_connection(ConnectionId::new(2));
+
+        let _source = SerialCommandSource::for_connection(ConnectionId::new(3), store);
     }
 }

@@ -6,6 +6,8 @@ use std::{
 
 use serialport::{ClearBuffer, DataBits, FlowControl, Parity, SerialPort, StopBits};
 
+use crate::connection::ConnectionId;
+
 const MAX_RESPONSE_LENGTH: usize = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,14 +60,26 @@ impl SerialPortConfig {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SerialConfigStore {
+    connection_id: ConnectionId,
     inner: Arc<RwLock<Option<SerialPortConfig>>>,
 }
 
 impl SerialConfigStore {
     pub fn new() -> Self {
-        Self::default()
+        Self::for_connection(ConnectionId::PRIMARY)
+    }
+
+    pub fn for_connection(connection_id: ConnectionId) -> Self {
+        Self {
+            connection_id,
+            inner: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    pub const fn connection_id(&self) -> ConnectionId {
+        self.connection_id
     }
 
     pub fn set(&self, config: Option<SerialPortConfig>) {
@@ -82,6 +96,12 @@ impl SerialConfigStore {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
+    }
+}
+
+impl Default for SerialConfigStore {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -260,7 +280,9 @@ impl From<&str> for SerialConnectionError {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_f64_response, parse_text_response};
+    use super::{SerialConfigStore, parse_f64_response, parse_text_response};
+
+    use crate::connection::ConnectionId;
 
     #[test]
     fn parses_f64_response() {
@@ -301,5 +323,21 @@ mod tests {
         let error = parse_text_response(&[0xff, 0xfe]).unwrap_err();
 
         assert!(error.to_string().contains("Serial response is not UTF-8"),);
+    }
+
+    #[test]
+    fn new_config_store_uses_primary_connection() {
+        let store = SerialConfigStore::new();
+
+        assert_eq!(store.connection_id(), ConnectionId::PRIMARY,);
+    }
+
+    #[test]
+    fn creates_config_store_for_connection() {
+        let connection_id = ConnectionId::new(7);
+
+        let store = SerialConfigStore::for_connection(connection_id);
+
+        assert_eq!(store.connection_id(), connection_id,);
     }
 }
