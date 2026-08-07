@@ -459,154 +459,16 @@ impl Worker {
                         let _ = event_sender.send(event);
                     }
 
-                    Ok(WorkerCommand::Connection(ConnectionCommand::SendSerialText {
-                        config,
-                        command,
-                    })) => {
-                        let port_name = config.port_name().to_owned();
-
-                        let result = if matches!(state, AcquisitionState::Running { .. }) {
-                            request_text_from_active_source(source.as_mut(), &command)
-                        } else {
-                            config
-                                .open()
-                                .and_then(|mut connection| connection.request_text(&command))
-                        };
-
-                        let event = match result {
-                            Ok(response) => WorkerEvent::SerialTextCommandSucceeded {
-                                port_name,
-                                command,
-                                response,
-                            },
-
-                            Err(error) => WorkerEvent::SerialTextCommandFailed {
-                                port_name,
-                                command,
-                                error,
-                            },
-                        };
-
-                        let _ = event_sender.send(event);
-                    }
-
-                    Ok(WorkerCommand::Connection(ConnectionCommand::ReadInstrument {
-                        port_name,
-                        request,
-                        response_sender,
-                    })) => {
+                    Ok(WorkerCommand::Connection(command)) => {
                         let acquisition_running =
                             matches!(&state, AcquisitionState::Running { .. });
 
-                        let mut result = read_instrument_from_source(source.as_mut(), request);
-
-                        // A one-shot read performed
-                        // while acquisition is stopped
-                        // must not leave the COM port
-                        // open.
-                        if !acquisition_running && let Err(stop_error) = source.stop() {
-                            result = match result {
-                                Ok(_) => Err(stop_error),
-
-                                Err(error) => Err(format!(
-                                    "{error}; additionally \
-                                         failed to close the \
-                                         instrument source: \
-                                         {stop_error}",
-                                )
-                                .into()),
-                            };
-                        }
-
-                        let event = match &result {
-                            Ok(value) => WorkerEvent::InstrumentReadSucceeded {
-                                port_name,
-                                request,
-                                value: *value,
-                            },
-
-                            Err(error) => WorkerEvent::InstrumentReadFailed {
-                                port_name,
-                                request,
-                                error: error.clone(),
-                            },
-                        };
-
-                        let _ = event_sender.send(event);
-
-                        let _ = response_sender.send(result);
-                    }
-
-                    Ok(WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
-                        port_name,
-                        request,
-                        response_sender,
-                    })) => {
-                        let acquisition_running =
-                            matches!(&state, AcquisitionState::Running { .. });
-
-                        let mut result = write_instrument_to_source(source.as_mut(), request);
-
-                        if !acquisition_running && let Err(stop_error) = source.stop() {
-                            result = match result {
-                                Ok(_) => Err(stop_error),
-
-                                Err(error) => Err(format!(
-                                    "{error}; additionally \
-                                         failed to close the \
-                                         instrument source: \
-                                         {stop_error}",
-                                )
-                                .into()),
-                            };
-                        }
-
-                        let event = match &result {
-                            Ok(actual_value) => WorkerEvent::InstrumentWriteSucceeded {
-                                port_name,
-                                request,
-                                actual_value: *actual_value,
-                            },
-
-                            Err(error) => WorkerEvent::InstrumentWriteFailed {
-                                port_name,
-                                request,
-                                error: error.clone(),
-                            },
-                        };
-
-                        let _ = event_sender.send(event);
-
-                        let _ = response_sender.send(result);
-                    }
-
-                    Ok(WorkerCommand::Connection(
-                        ConnectionCommand::DescribeVirtualInstruments { response_sender },
-                    )) => {
-                        let acquisition_running =
-                            matches!(&state, AcquisitionState::Running { .. });
-
-                        let mut result = describe_virtual_instruments_from_source(source.as_mut());
-
-                        // A one-shot discovery
-                        // performed while acquisition
-                        // is stopped must not leave the
-                        // COM port open.
-                        if !acquisition_running && let Err(stop_error) = source.stop() {
-                            result = match result {
-                                Ok(_) => Err(stop_error),
-
-                                Err(error) => Err(format!(
-                                    "{error}; additionally \
-                                         failed to close the \
-                                         instrument source: \
-                                         {stop_error}",
-                                )
-                                .into()),
-                            };
-                        }
-
-                        let _ = response_sender.send(result);
+                        handle_connection_command(
+                            command,
+                            acquisition_running,
+                            source.as_mut(),
+                            &event_sender,
+                        );
                     }
 
                     Err(RecvTimeoutError::Timeout) => {}
@@ -801,6 +663,129 @@ fn should_report_series_failure(failure_count: u64) -> bool {
     }
 
     value == 1
+}
+
+fn handle_connection_command(
+    command: ConnectionCommand,
+    acquisition_running: bool,
+    source: &mut dyn AcquisitionSource,
+    event_sender: &Sender<WorkerEvent>,
+) {
+    match command {
+        ConnectionCommand::SendSerialText { config, command } => {
+            let port_name = config.port_name().to_owned();
+
+            let result = if acquisition_running {
+                request_text_from_active_source(source, &command)
+            } else {
+                config
+                    .open()
+                    .and_then(|mut connection| connection.request_text(&command))
+            };
+
+            let event = match result {
+                Ok(response) => WorkerEvent::SerialTextCommandSucceeded {
+                    port_name,
+                    command,
+                    response,
+                },
+
+                Err(error) => WorkerEvent::SerialTextCommandFailed {
+                    port_name,
+                    command,
+                    error,
+                },
+            };
+
+            let _ = event_sender.send(event);
+        }
+
+        ConnectionCommand::ReadInstrument {
+            port_name,
+            request,
+            response_sender,
+        } => {
+            let result = read_instrument_from_source(source, request);
+
+            let result = close_source_after_one_shot(result, acquisition_running, source);
+
+            let event = match &result {
+                Ok(value) => WorkerEvent::InstrumentReadSucceeded {
+                    port_name,
+                    request,
+                    value: *value,
+                },
+
+                Err(error) => WorkerEvent::InstrumentReadFailed {
+                    port_name,
+                    request,
+                    error: error.clone(),
+                },
+            };
+
+            let _ = event_sender.send(event);
+            let _ = response_sender.send(result);
+        }
+
+        ConnectionCommand::WriteInstrument {
+            port_name,
+            request,
+            response_sender,
+        } => {
+            let result = write_instrument_to_source(source, request);
+
+            let result = close_source_after_one_shot(result, acquisition_running, source);
+
+            let event = match &result {
+                Ok(actual_value) => WorkerEvent::InstrumentWriteSucceeded {
+                    port_name,
+                    request,
+                    actual_value: *actual_value,
+                },
+
+                Err(error) => WorkerEvent::InstrumentWriteFailed {
+                    port_name,
+                    request,
+                    error: error.clone(),
+                },
+            };
+
+            let _ = event_sender.send(event);
+            let _ = response_sender.send(result);
+        }
+
+        ConnectionCommand::DescribeVirtualInstruments { response_sender } => {
+            let result = describe_virtual_instruments_from_source(source);
+
+            let result = close_source_after_one_shot(result, acquisition_running, source);
+
+            let _ = response_sender.send(result);
+        }
+    }
+}
+
+fn close_source_after_one_shot<T>(
+    mut result: Result<T, AcquisitionError>,
+    acquisition_running: bool,
+    source: &mut dyn AcquisitionSource,
+) -> Result<T, AcquisitionError> {
+    if acquisition_running {
+        return result;
+    }
+
+    if let Err(stop_error) = source.stop() {
+        result = match result {
+            Ok(_) => Err(stop_error),
+
+            Err(error) => Err(format!(
+                "{error}; additionally failed to close \
+                 the instrument source: {stop_error}",
+            )
+            .into()),
+        };
+    }
+
+    result
 }
 
 fn append_series_samples(
