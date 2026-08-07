@@ -27,7 +27,7 @@ mod config;
 mod event;
 mod handle;
 
-pub use command::WorkerCommand;
+pub use command::{ConnectionCommand, WorkerCommand};
 pub use config::WorkerConfig;
 pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
@@ -459,7 +459,10 @@ impl Worker {
                         let _ = event_sender.send(event);
                     }
 
-                    Ok(WorkerCommand::SendSerialText { config, command }) => {
+                    Ok(WorkerCommand::Connection(ConnectionCommand::SendSerialText {
+                        config,
+                        command,
+                    })) => {
                         let port_name = config.port_name().to_owned();
 
                         let result = if matches!(state, AcquisitionState::Running { .. }) {
@@ -487,11 +490,11 @@ impl Worker {
                         let _ = event_sender.send(event);
                     }
 
-                    Ok(WorkerCommand::ReadInstrument {
+                    Ok(WorkerCommand::Connection(ConnectionCommand::ReadInstrument {
                         port_name,
                         request,
                         response_sender,
-                    }) => {
+                    })) => {
                         let acquisition_running =
                             matches!(&state, AcquisitionState::Running { .. });
 
@@ -534,11 +537,11 @@ impl Worker {
                         let _ = response_sender.send(result);
                     }
 
-                    Ok(WorkerCommand::WriteInstrument {
+                    Ok(WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
                         port_name,
                         request,
                         response_sender,
-                    }) => {
+                    })) => {
                         let acquisition_running =
                             matches!(&state, AcquisitionState::Running { .. });
 
@@ -577,7 +580,9 @@ impl Worker {
                         let _ = response_sender.send(result);
                     }
 
-                    Ok(WorkerCommand::DescribeVirtualInstruments { response_sender }) => {
+                    Ok(WorkerCommand::Connection(
+                        ConnectionCommand::DescribeVirtualInstruments { response_sender },
+                    )) => {
                         let acquisition_running =
                             matches!(&state, AcquisitionState::Running { .. });
 

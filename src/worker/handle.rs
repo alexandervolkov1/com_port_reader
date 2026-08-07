@@ -9,7 +9,7 @@ use crate::{
     serial_connection::SerialPortConfig,
 };
 
-use super::command::WorkerCommand;
+use super::command::{ConnectionCommand, WorkerCommand};
 
 #[derive(Clone)]
 pub struct WorkerHandle {
@@ -89,7 +89,9 @@ impl WorkerHandle {
         config: SerialPortConfig,
         command: String,
     ) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::SendSerialText { config, command })
+        self.send(WorkerCommand::Connection(
+            ConnectionCommand::SendSerialText { config, command },
+        ))
     }
 
     pub fn read_instrument(
@@ -98,11 +100,13 @@ impl WorkerHandle {
         request: InstrumentReadRequest,
         response_sender: Sender<InstrumentReadResult>,
     ) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::ReadInstrument {
-            port_name,
-            request,
-            response_sender,
-        })
+        self.send(WorkerCommand::Connection(
+            ConnectionCommand::ReadInstrument {
+                port_name,
+                request,
+                response_sender,
+            },
+        ))
     }
 
     pub fn write_instrument(
@@ -111,18 +115,22 @@ impl WorkerHandle {
         request: InstrumentWriteRequest,
         response_sender: Sender<InstrumentWriteResult>,
     ) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::WriteInstrument {
-            port_name,
-            request,
-            response_sender,
-        })
+        self.send(WorkerCommand::Connection(
+            ConnectionCommand::WriteInstrument {
+                port_name,
+                request,
+                response_sender,
+            },
+        ))
     }
 
     pub fn describe_virtual_instruments(
         &self,
         response_sender: Sender<VirtualInstrumentDescribeResult>,
     ) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::DescribeVirtualInstruments { response_sender })
+        self.send(WorkerCommand::Connection(
+            ConnectionCommand::DescribeVirtualInstruments { response_sender },
+        ))
     }
 }
 
