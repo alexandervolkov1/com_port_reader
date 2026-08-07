@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use crate::{
+    connection::ConnectionId,
     data::{Sample, SeriesMetadata, SeriesSource},
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
@@ -15,6 +16,7 @@ use crate::{
 use super::{AcquisitionError, AcquisitionSource};
 
 pub struct SerialCommandSource {
+    connection_id: ConnectionId,
     config_store: SerialConfigStore,
     connection: Option<SerialConnection>,
     verified_metakon_channels: HashSet<(u8, u8)>,
@@ -22,7 +24,12 @@ pub struct SerialCommandSource {
 
 impl SerialCommandSource {
     pub fn new(config_store: SerialConfigStore) -> Self {
+        Self::for_connection(ConnectionId::PRIMARY, config_store)
+    }
+
+    pub fn for_connection(connection_id: ConnectionId, config_store: SerialConfigStore) -> Self {
         Self {
+            connection_id,
             config_store,
             connection: None,
             verified_metakon_channels: HashSet::new(),
@@ -238,6 +245,9 @@ impl AcquisitionSource for SerialCommandSource {
         &mut self,
         series: &SeriesMetadata,
     ) -> Result<Option<Sample>, AcquisitionError> {
+        if series.connection_id != self.connection_id {
+            return Ok(None);
+        }
         let value = match &series.source {
             SeriesSource::SerialCommand { command } => {
                 let connection = self.connection().map_err(|error| {
@@ -499,5 +509,28 @@ mod tests {
             "Cannot describe virtual instruments: \
              COM port is not selected",
         );
+    }
+
+    #[test]
+    fn ignores_series_from_another_connection() {
+        let mut source =
+            SerialCommandSource::for_connection(ConnectionId::new(1), SerialConfigStore::new());
+
+        let series = SeriesMetadata {
+            id: SeriesId::new(1),
+            connection_id: ConnectionId::new(2),
+            name: "foreign".to_owned(),
+
+            source: SeriesSource::SerialCommand {
+                command: "read value".to_owned(),
+            },
+
+            visible: true,
+            sampling_interval: None,
+        };
+
+        let result = source.sample_series(&series).unwrap();
+
+        assert_eq!(result, None);
     }
 }
