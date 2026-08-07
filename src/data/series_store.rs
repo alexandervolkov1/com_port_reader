@@ -122,6 +122,8 @@ impl SeriesStore {
     }
 
     pub fn add_series(&self, new_series: NewSeries) -> Result<SeriesId, AddSeriesError> {
+        let connection_id = new_series.connection_id();
+
         let (source, requested_name, sampling_interval) = new_series.into_parts();
 
         let source = normalize_series_source(source)?;
@@ -146,8 +148,13 @@ impl SeriesStore {
             let name = custom_name
                 .unwrap_or_else(|| generate_default_name(series, source.default_name_prefix(), id));
 
-            series.push(Series::new(id, name, source, sampling_interval));
-
+            series.push(Series::new(
+                id,
+                name,
+                source,
+                sampling_interval,
+                connection_id,
+            ));
             Ok(id)
         })
     }
@@ -292,6 +299,7 @@ mod tests {
     use super::{RenameSeriesError, SeriesStore};
 
     use crate::{
+        connection::ConnectionId,
         data::{
             AddSeriesError, NewSeries, SamplingInterval, SeriesId, SeriesNameError, SeriesSource,
         },
@@ -744,5 +752,35 @@ mod tests {
         let metadata = store.metadata();
 
         assert_eq!(metadata[0].sampling_interval, None);
+    }
+
+    #[test]
+    fn uses_primary_connection_by_default() {
+        let store = SeriesStore::new();
+
+        store
+            .add_series(NewSeries::unnamed_serial_command("read value"))
+            .unwrap();
+
+        let metadata = store.metadata();
+
+        assert_eq!(metadata[0].connection_id, ConnectionId::PRIMARY,);
+    }
+
+    #[test]
+    fn stores_custom_connection() {
+        let store = SeriesStore::new();
+
+        let connection_id = ConnectionId::new(7);
+
+        store
+            .add_series(
+                NewSeries::unnamed_serial_command("read value").with_connection(connection_id),
+            )
+            .unwrap();
+
+        let metadata = store.metadata();
+
+        assert_eq!(metadata[0].connection_id, connection_id,);
     }
 }

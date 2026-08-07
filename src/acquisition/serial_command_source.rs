@@ -339,6 +339,7 @@ mod tests {
     use super::{AcquisitionSource, SerialCommandSource};
 
     use crate::{
+        connection::ConnectionId,
         data::{SeriesId, SeriesMetadata, SeriesSource},
         instrument::{
             InstrumentReadRequest,
@@ -367,6 +368,7 @@ mod tests {
 
         let series = vec![SeriesMetadata {
             id: SeriesId::new(1),
+            connection_id: ConnectionId::PRIMARY,
             name: "random_walk".to_owned(),
 
             source: SeriesSource::SerialCommand {
@@ -402,6 +404,7 @@ mod tests {
 
         let series = vec![SeriesMetadata {
             id: SeriesId::new(1),
+            connection_id: ConnectionId::PRIMARY,
             name: "temperature".to_owned(),
 
             source: SeriesSource::Instrument(InstrumentReadRequest::metakon_5x3(
@@ -458,6 +461,7 @@ mod tests {
 
         let series = vec![SeriesMetadata {
             id: SeriesId::new(1),
+            connection_id: ConnectionId::PRIMARY,
             name: "signal".to_owned(),
             source: SeriesSource::Instrument(request),
             sampling_interval: None,

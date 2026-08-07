@@ -1,4 +1,4 @@
-use crate::instrument::InstrumentReadRequest;
+use crate::{connection::ConnectionId, instrument::InstrumentReadRequest};
 
 use super::{Sample, SamplingInterval};
 
@@ -55,6 +55,7 @@ pub struct NewSeries {
     source: SeriesSource,
     name: Option<String>,
     sampling_interval: Option<SamplingInterval>,
+    connection_id: ConnectionId,
 }
 
 impl NewSeries {
@@ -65,6 +66,7 @@ impl NewSeries {
             },
             name: None,
             sampling_interval: None,
+            connection_id: ConnectionId::PRIMARY,
         }
     }
 
@@ -75,6 +77,7 @@ impl NewSeries {
             },
             name: Some(name.into()),
             sampling_interval: None,
+            connection_id: ConnectionId::PRIMARY,
         }
     }
 
@@ -83,6 +86,7 @@ impl NewSeries {
             source: SeriesSource::Instrument(request),
             name: None,
             sampling_interval: None,
+            connection_id: ConnectionId::PRIMARY,
         }
     }
 
@@ -91,6 +95,7 @@ impl NewSeries {
             source: SeriesSource::Instrument(request),
             name: Some(name.into()),
             sampling_interval: None,
+            connection_id: ConnectionId::PRIMARY,
         }
     }
 
@@ -102,16 +107,26 @@ impl NewSeries {
     pub(crate) fn into_parts(self) -> (SeriesSource, Option<String>, Option<SamplingInterval>) {
         (self.source, self.name, self.sampling_interval)
     }
+
+    pub fn with_connection(mut self, connection_id: ConnectionId) -> Self {
+        self.connection_id = connection_id;
+        self
+    }
+
+    pub(crate) const fn connection_id(&self) -> ConnectionId {
+        self.connection_id
+    }
 }
 
 #[derive(Clone)]
 pub struct Series {
     pub id: SeriesId,
+    pub connection_id: ConnectionId,
     pub name: String,
     pub source: SeriesSource,
-    pub sampling_interval: Option<SamplingInterval>,
     pub samples: Vec<Sample>,
     pub visible: bool,
+    pub sampling_interval: Option<SamplingInterval>,
 }
 
 impl Series {
@@ -120,14 +135,16 @@ impl Series {
         name: String,
         source: SeriesSource,
         sampling_interval: Option<SamplingInterval>,
+        connection_id: ConnectionId,
     ) -> Self {
         Self {
             id,
+            connection_id,
             name,
             source,
-            sampling_interval,
             samples: Vec::new(),
             visible: true,
+            sampling_interval,
         }
     }
 }
@@ -135,20 +152,22 @@ impl Series {
 #[derive(Clone)]
 pub struct SeriesMetadata {
     pub id: SeriesId,
+    pub connection_id: ConnectionId,
     pub name: String,
     pub source: SeriesSource,
-    pub sampling_interval: Option<SamplingInterval>,
     pub visible: bool,
+    pub sampling_interval: Option<SamplingInterval>,
 }
 
 impl From<&Series> for SeriesMetadata {
     fn from(series: &Series) -> Self {
         Self {
             id: series.id,
+            connection_id: series.connection_id,
             name: series.name.clone(),
             source: series.source.clone(),
-            sampling_interval: series.sampling_interval,
             visible: series.visible,
+            sampling_interval: series.sampling_interval,
         }
     }
 }

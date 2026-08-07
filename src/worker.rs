@@ -885,11 +885,13 @@ mod tests {
 
     use super::{SeriesSchedule, should_report_series_failure, synchronize_series_schedules};
 
+    use crate::connection::ConnectionId;
     use crate::data::{SamplingInterval, SeriesId, SeriesMetadata, SeriesSource};
 
     fn metadata(id: u64, sampling_interval: Option<SamplingInterval>) -> SeriesMetadata {
         SeriesMetadata {
             id: SeriesId::new(id),
+            connection_id: ConnectionId::PRIMARY,
             name: format!("series_{id}"),
 
             source: SeriesSource::SerialCommand {

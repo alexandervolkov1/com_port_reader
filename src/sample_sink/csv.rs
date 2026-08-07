@@ -103,6 +103,7 @@ mod tests {
     use super::CsvSampleSink;
 
     use crate::{
+        connection::ConnectionId,
         data::{Sample, SeriesId, SeriesMetadata, SeriesSample, SeriesSource},
         sample_sink::SampleSink,
     };
@@ -165,6 +166,7 @@ mod tests {
     fn metadata(id: SeriesId, name: &str) -> SeriesMetadata {
         SeriesMetadata {
             id,
+            connection_id: ConnectionId::PRIMARY,
             name: name.to_owned(),
 
             source: SeriesSource::SerialCommand {

@@ -132,6 +132,7 @@ impl AcquisitionSource for CombinedSource {
 mod tests {
     use super::{AcquisitionError, AcquisitionSource, CombinedSource};
 
+    use crate::connection::ConnectionId;
     use crate::data::{Sample, SeriesId, SeriesMetadata, SeriesSample, SeriesSource};
 
     struct FixedSource {
@@ -172,6 +173,7 @@ mod tests {
     fn metadata(id: SeriesId, name: &str) -> SeriesMetadata {
         SeriesMetadata {
             id,
+            connection_id: ConnectionId::PRIMARY,
             name: name.to_owned(),
 
             source: SeriesSource::SerialCommand {
