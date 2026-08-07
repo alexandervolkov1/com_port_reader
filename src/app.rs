@@ -103,7 +103,7 @@ impl MyApp {
 
         let controls = ControlsModel::new(workers, log_handle.clone());
 
-        let command = CommandModel::new(worker_handle.clone(), event_receiver, log_handle.clone());
+        let command = CommandModel::new(connection_router, event_receiver, log_handle.clone());
 
         Self {
             config,

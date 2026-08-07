@@ -7,28 +7,35 @@ use crate::{
         controls_model::ControlsModel, device_emulator_model::DeviceEmulatorModel,
         serial_settings_model::SerialSettingsModel,
     },
+    connection::ConnectionId,
     data::{NewSeries, SeriesId},
     user_command::UserCommand,
-    worker::{WorkerEvent, WorkerHandle, WorkerHandleError},
+    worker::{ConnectionRouter, WorkerEvent, WorkerHandle, WorkerHandleError},
 };
 
 pub struct CommandModel {
-    worker_handle: WorkerHandle,
+    connections: ConnectionRouter,
     event_receiver: Receiver<WorkerEvent>,
     log: LogHandle,
 }
 
 impl CommandModel {
     pub fn new(
-        worker_handle: WorkerHandle,
+        connections: ConnectionRouter,
         event_receiver: Receiver<WorkerEvent>,
         log: LogHandle,
     ) -> Self {
         Self {
-            worker_handle,
+            connections,
             event_receiver,
             log,
         }
+    }
+
+    fn primary_worker(&self) -> WorkerHandle {
+        self.connections
+            .handle(ConnectionId::PRIMARY)
+            .expect("primary connection worker must be registered")
     }
 
     pub fn poll_events(&mut self, controls: &mut ControlsModel) {
@@ -58,7 +65,7 @@ impl CommandModel {
             }
 
             UserCommand::Delete { name } => {
-                if let Err(error) = self.worker_handle.remove_series_by_name(name) {
+                if let Err(error) = self.primary_worker().remove_series_by_name(name) {
                     self.set_worker_error(error);
                 }
             }
@@ -67,7 +74,7 @@ impl CommandModel {
                 current_name,
                 new_name,
             } => {
-                if let Err(error) = self.worker_handle.rename_series(current_name, new_name) {
+                if let Err(error) = self.primary_worker().rename_series(current_name, new_name) {
                     self.set_worker_error(error);
                 }
             }
@@ -115,7 +122,7 @@ impl CommandModel {
                     return;
                 };
 
-                if let Err(error) = self.worker_handle.send_serial_text(config, command) {
+                if let Err(error) = self.primary_worker().send_serial_text(config, command) {
                     self.set_worker_error(error);
                 }
             }
@@ -137,7 +144,7 @@ impl CommandModel {
                     return;
                 };
 
-                let send_result = self.worker_handle.read_instrument(
+                let send_result = self.primary_worker().read_instrument(
                     config.port_name().to_owned(),
                     request,
                     response_sender.clone(),
@@ -172,7 +179,7 @@ impl CommandModel {
                     return;
                 };
 
-                let send_result = self.worker_handle.write_instrument(
+                let send_result = self.primary_worker().write_instrument(
                     config.port_name().to_owned(),
                     request,
                     response_sender.clone(),
@@ -205,7 +212,7 @@ impl CommandModel {
                 }
 
                 let send_result = self
-                    .worker_handle
+                    .primary_worker()
                     .describe_virtual_instruments(response_sender.clone());
 
                 if let Err(send_error) = send_result {
@@ -223,19 +230,19 @@ impl CommandModel {
     }
 
     pub fn set_visibility(&self, id: SeriesId, visible: bool) {
-        if let Err(error) = self.worker_handle.set_visibility(id, visible) {
+        if let Err(error) = self.primary_worker().set_visibility(id, visible) {
             self.set_worker_error(error);
         }
     }
 
     pub fn remove_series(&self, id: SeriesId) {
-        if let Err(error) = self.worker_handle.remove_series(id) {
+        if let Err(error) = self.primary_worker().remove_series(id) {
             self.set_worker_error(error);
         }
     }
 
     pub fn add_series(&self, new_series: NewSeries) {
-        if let Err(error) = self.worker_handle.add_series(new_series) {
+        if let Err(error) = self.primary_worker().add_series(new_series) {
             self.set_worker_error(error);
         }
     }

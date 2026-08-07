@@ -21,7 +21,7 @@ impl ConnectionRouter {
             .cloned()
     }
 
-    pub(super) fn insert(&self, handle: WorkerHandle) {
+    pub(crate) fn insert(&self, handle: WorkerHandle) {
         let connection_id = handle.connection_id();
 
         let previous = self
