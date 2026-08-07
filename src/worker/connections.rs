@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, error::Error, fmt, path::PathBuf};
+use std::{
+    collections::{BTreeMap, btree_map::Entry},
+    error::Error,
+    fmt,
+    path::PathBuf,
+};
 
 use crate::connection::ConnectionId;
 
@@ -10,20 +15,36 @@ pub struct ConnectionWorkers {
 
 impl ConnectionWorkers {
     pub fn new(primary: Worker) -> Self {
-        let connection_id = primary.connection_id();
-
         assert_eq!(
-            connection_id,
+            primary.connection_id(),
             ConnectionId::PRIMARY,
             "primary worker must use the primary \
              connection ID",
         );
 
-        let mut workers = BTreeMap::new();
+        let mut result = Self {
+            workers: BTreeMap::new(),
+        };
 
-        workers.insert(connection_id, primary);
+        result.insert(primary).expect(
+            "new connection worker collection \
+                 must be empty",
+        );
 
-        Self { workers }
+        result
+    }
+
+    pub fn insert(&mut self, worker: Worker) -> Result<(), DuplicateConnectionWorkerError> {
+        let connection_id = worker.connection_id();
+
+        match self.workers.entry(connection_id) {
+            Entry::Vacant(entry) => {
+                entry.insert(worker);
+                Ok(())
+            }
+
+            Entry::Occupied(_) => Err(DuplicateConnectionWorkerError { connection_id }),
+        }
     }
 
     pub fn start(&self) -> Result<(), ConnectionWorkersError> {
@@ -120,3 +141,20 @@ impl Error for ConnectionWorkersError {
         Some(&self.source)
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DuplicateConnectionWorkerError {
+    connection_id: ConnectionId,
+}
+
+impl fmt::Display for DuplicateConnectionWorkerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "worker for connection {} already exists",
+            self.connection_id,
+        )
+    }
+}
+
+impl Error for DuplicateConnectionWorkerError {}

@@ -664,7 +664,7 @@ fn should_report_series_failure(failure_count: u64) -> bool {
 
     let mut value = failure_count;
 
-    while value > 1 && value % 10 == 0 {
+    while value > 1 && value.is_multiple_of(10) {
         value /= 10;
     }
 

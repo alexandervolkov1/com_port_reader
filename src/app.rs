@@ -140,6 +140,12 @@ impl MyApp {
     }
 }
 
+impl Default for MyApp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.device_emulator.poll();

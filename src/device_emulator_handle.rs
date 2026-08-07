@@ -176,11 +176,7 @@ fn run_emulator(
             Ok(bytes_read) => {
                 decoder.push(&read_buffer[..bytes_read]);
 
-                loop {
-                    let Some(frame) = decoder.next_frame()? else {
-                        break;
-                    };
-
+                while let Some(frame) = decoder.next_frame()? {
                     let request = VirtualInstrumentMessage::decode_frame(&frame)?;
 
                     let response = server.handle(request, started_at.elapsed());
