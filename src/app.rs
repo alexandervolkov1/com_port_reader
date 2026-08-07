@@ -94,7 +94,9 @@ impl MyApp {
 
         let workers = ConnectionWorkers::new(worker);
 
-        let worker_handle = workers.handle(ConnectionId::PRIMARY).expect(
+        let connection_router = workers.router();
+
+        let worker_handle = connection_router.handle(ConnectionId::PRIMARY).expect(
             "primary worker was registered \
                  during construction",
         );

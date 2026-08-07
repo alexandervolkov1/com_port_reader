@@ -7,10 +7,11 @@ use std::{
 
 use crate::connection::ConnectionId;
 
-use super::{Worker, WorkerHandle, WorkerHandleError};
+use super::{ConnectionRouter, Worker, WorkerHandleError};
 
 pub struct ConnectionWorkers {
     workers: BTreeMap<ConnectionId, Worker>,
+    router: ConnectionRouter,
 }
 
 impl ConnectionWorkers {
@@ -24,6 +25,7 @@ impl ConnectionWorkers {
 
         let mut result = Self {
             workers: BTreeMap::new(),
+            router: ConnectionRouter::default(),
         };
 
         result.insert(primary).expect(
@@ -37,9 +39,13 @@ impl ConnectionWorkers {
     pub fn insert(&mut self, worker: Worker) -> Result<(), DuplicateConnectionWorkerError> {
         let connection_id = worker.connection_id();
 
+        let handle = worker.handle();
+
         match self.workers.entry(connection_id) {
             Entry::Vacant(entry) => {
+                self.router.insert(handle);
                 entry.insert(worker);
+
                 Ok(())
             }
 
@@ -47,8 +53,8 @@ impl ConnectionWorkers {
         }
     }
 
-    pub fn handle(&self, connection_id: ConnectionId) -> Option<WorkerHandle> {
-        self.workers.get(&connection_id).map(Worker::handle)
+    pub fn router(&self) -> ConnectionRouter {
+        self.router.clone()
     }
 
     pub fn start(&self) -> Result<(), ConnectionWorkersError> {
