@@ -2,7 +2,6 @@ use eframe::egui;
 use egui_extras::{Size, StripBuilder};
 
 use crate::{
-    acquisition::{CombinedSource, SerialCommandSource},
     app_config::{AppConfig, CONFIG_PATH},
     app_log::{LogHandle, LogModel},
     components::{
@@ -17,7 +16,10 @@ use crate::{
     sample_sink::NullSampleSink,
     serial_connection::SerialConnectionRegistry,
     user_command::UserCommand,
-    worker::{ConnectionWorkers, Worker, WorkerConfig, WorkerHandle},
+    worker::{
+        ConnectionWorkers, SpawnedConnectionWorker, WorkerConfig, WorkerHandle,
+        spawn_serial_connection_worker,
+    },
 };
 
 const SERIES_PANEL_WIDTH: f32 = 150.0;
@@ -74,11 +76,7 @@ impl MyApp {
 
         let series = SeriesStore::new();
 
-        let (command_sender, command_receiver) = crossbeam_channel::bounded(32);
-
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
-
-        let worker_handle = WorkerHandle::new(ConnectionId::PRIMARY, command_sender);
 
         let serial_connections = SerialConnectionRegistry::new();
 
@@ -89,16 +87,13 @@ impl MyApp {
 
         let worker_config = WorkerConfig::new(config.application.poll_interval());
 
-        let source = CombinedSource::new(vec![Box::new(SerialCommandSource::new(
+        let SpawnedConnectionWorker {
+            worker,
+            handle: worker_handle,
+        } = spawn_serial_connection_worker(
             serial_config_store,
-        ))]);
-
-        let worker = Worker::spawn(
-            worker_handle.clone(),
-            command_receiver,
             event_sender,
             series.clone(),
-            Box::new(source),
             Box::new(NullSampleSink::new()),
             worker_config,
         );

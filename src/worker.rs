@@ -27,12 +27,14 @@ mod config;
 mod connections;
 mod event;
 mod handle;
+mod serial;
 
 pub use command::{ConnectionCommand, WorkerCommand};
 pub use config::WorkerConfig;
 pub use connections::{ConnectionWorkers, ConnectionWorkersError};
 pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
+pub use serial::{SpawnedConnectionWorker, spawn_serial_connection_worker};
 
 enum AcquisitionState {
     Stopped,
