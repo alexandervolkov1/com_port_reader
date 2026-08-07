@@ -4,6 +4,7 @@ use crossbeam_channel::Sender;
 
 use crate::{
     acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
+    connection::ConnectionId,
     data::{NewSeries, SeriesId},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     serial_connection::SerialPortConfig,
@@ -13,12 +14,20 @@ use super::command::{ConnectionCommand, WorkerCommand};
 
 #[derive(Clone)]
 pub struct WorkerHandle {
+    connection_id: ConnectionId,
     sender: Sender<WorkerCommand>,
 }
 
 impl WorkerHandle {
-    pub(crate) fn new(sender: Sender<WorkerCommand>) -> Self {
-        Self { sender }
+    pub(crate) fn new(connection_id: ConnectionId, sender: Sender<WorkerCommand>) -> Self {
+        Self {
+            connection_id,
+            sender,
+        }
+    }
+
+    pub(super) const fn connection_id(&self) -> ConnectionId {
+        self.connection_id
     }
 
     pub fn start(&self) -> Result<(), WorkerHandleError> {
@@ -144,3 +153,22 @@ impl fmt::Display for WorkerHandleError {
 }
 
 impl Error for WorkerHandleError {}
+
+#[cfg(test)]
+mod tests {
+    use crossbeam_channel::unbounded;
+
+    use super::WorkerHandle;
+    use crate::connection::ConnectionId;
+
+    #[test]
+    fn stores_connection_id() {
+        let (sender, _receiver) = unbounded();
+
+        let connection_id = ConnectionId::new(7);
+
+        let handle = WorkerHandle::new(connection_id, sender);
+
+        assert_eq!(handle.connection_id(), connection_id,);
+    }
+}

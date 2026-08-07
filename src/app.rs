@@ -78,7 +78,7 @@ impl MyApp {
 
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
 
-        let worker_handle = WorkerHandle::new(command_sender);
+        let worker_handle = WorkerHandle::new(ConnectionId::PRIMARY, command_sender);
 
         let serial_config_store = SerialConfigStore::new();
 
@@ -92,7 +92,6 @@ impl MyApp {
 
         let worker = Worker::spawn(
             worker_handle.clone(),
-            ConnectionId::PRIMARY,
             command_receiver,
             event_sender,
             series.clone(),

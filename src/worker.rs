@@ -15,7 +15,6 @@ use crate::{
         AcquisitionError, AcquisitionSource, InstrumentReadResult, SeriesAcquisitionFailure,
         VirtualInstrumentDescribeResult,
     },
-    connection::ConnectionId,
     data::{Series, SeriesId, SeriesMetadata, SeriesSample, SeriesStore},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError},
@@ -34,7 +33,6 @@ pub use handle::{WorkerHandle, WorkerHandleError};
 
 enum AcquisitionState {
     Stopped,
-
     Running { next_poll: Instant },
 }
 
@@ -55,7 +53,6 @@ pub struct Worker {
 impl Worker {
     pub fn spawn(
         commands: WorkerHandle,
-        connection_id: ConnectionId,
         command_receiver: Receiver<WorkerCommand>,
         event_sender: Sender<WorkerEvent>,
         series: SeriesStore,
@@ -63,6 +60,8 @@ impl Worker {
         mut sink: Box<dyn SampleSink>,
         config: WorkerConfig,
     ) -> Self {
+        let connection_id = commands.connection_id();
+
         let running = Arc::new(AtomicBool::new(false));
 
         let sample_sink_active = Arc::new(AtomicBool::new(false));
