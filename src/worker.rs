@@ -15,6 +15,7 @@ use crate::{
         AcquisitionError, AcquisitionSource, InstrumentReadResult, SeriesAcquisitionFailure,
         VirtualInstrumentDescribeResult,
     },
+    connection::ConnectionId,
     data::{Series, SeriesId, SeriesMetadata, SeriesSample, SeriesStore},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError},
@@ -23,11 +24,13 @@ use crate::{
 
 mod command;
 mod config;
+mod connections;
 mod event;
 mod handle;
 
 pub use command::{ConnectionCommand, WorkerCommand};
 pub use config::WorkerConfig;
+pub use connections::{ConnectionWorkers, ConnectionWorkersError};
 pub use event::WorkerEvent;
 pub use handle::{WorkerHandle, WorkerHandleError};
 
@@ -505,6 +508,10 @@ impl Worker {
 
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn connection_id(&self) -> ConnectionId {
+        self.commands.connection_id()
     }
 
     pub fn start_csv_recording(&self, path: std::path::PathBuf) -> Result<(), WorkerHandleError> {

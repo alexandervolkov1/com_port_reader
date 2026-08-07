@@ -4,7 +4,7 @@ use chrono::Local;
 
 use crate::{
     app_log::LogHandle,
-    worker::{Worker, WorkerEvent, WorkerHandleError},
+    worker::{ConnectionWorkers, ConnectionWorkersError, WorkerEvent},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,7 +14,7 @@ pub enum RecordingTransition {
 }
 
 pub struct ControlsModel {
-    worker: Worker,
+    workers: ConnectionWorkers,
     recording_file: Option<PathBuf>,
     recording_error: Option<String>,
     recording_transition: Option<RecordingTransition>,
@@ -22,9 +22,9 @@ pub struct ControlsModel {
 }
 
 impl ControlsModel {
-    pub fn new(worker: Worker, log: LogHandle) -> Self {
+    pub fn new(workers: ConnectionWorkers, log: LogHandle) -> Self {
         Self {
-            worker,
+            workers,
             recording_file: None,
             recording_error: None,
             recording_transition: None,
@@ -33,19 +33,19 @@ impl ControlsModel {
     }
 
     pub fn start(&self) {
-        self.report_worker_error("start acquisition", self.worker.start());
+        self.report_worker_error("start acquisition", self.workers.start());
     }
 
     pub fn stop(&self) {
-        self.report_worker_error("stop acquisition", self.worker.stop());
+        self.report_worker_error("stop acquisition", self.workers.stop());
     }
 
     pub fn clear(&self) {
-        self.report_worker_error("clear series", self.worker.clear_series());
+        self.report_worker_error("clear series", self.workers.clear_series());
     }
 
     pub fn is_running(&self) -> bool {
-        self.worker.is_running()
+        self.workers.is_running()
     }
 
     pub fn start_recording(&mut self) {
@@ -61,7 +61,7 @@ impl ControlsModel {
 
         let path = PathBuf::from("protocols").join(date).join(file_name);
 
-        match self.worker.start_csv_recording(path) {
+        match self.workers.start_csv_recording(path) {
             Ok(()) => {
                 self.recording_transition = Some(RecordingTransition::Starting);
 
@@ -84,7 +84,7 @@ impl ControlsModel {
             return;
         }
 
-        match self.worker.stop_recording() {
+        match self.workers.stop_recording() {
             Ok(()) => {
                 self.recording_transition = Some(RecordingTransition::Stopping);
 
@@ -130,7 +130,7 @@ impl ControlsModel {
     }
 
     pub fn is_recording(&self) -> bool {
-        self.worker.is_recording()
+        self.workers.is_recording()
     }
 
     pub fn recording_transition(&self) -> Option<RecordingTransition> {
@@ -145,7 +145,7 @@ impl ControlsModel {
         self.recording_error.as_deref()
     }
 
-    fn report_worker_error(&self, action: &str, result: Result<(), WorkerHandleError>) {
+    fn report_worker_error(&self, action: &str, result: Result<(), ConnectionWorkersError>) {
         if let Err(error) = result {
             self.log.error(format!("Failed to {action}: {error}",));
         }

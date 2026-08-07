@@ -17,7 +17,7 @@ use crate::{
     sample_sink::NullSampleSink,
     serial_connection::SerialConfigStore,
     user_command::UserCommand,
-    worker::{Worker, WorkerConfig, WorkerHandle},
+    worker::{ConnectionWorkers, Worker, WorkerConfig, WorkerHandle},
 };
 
 const SERIES_PANEL_WIDTH: f32 = 150.0;
@@ -100,7 +100,9 @@ impl MyApp {
             worker_config,
         );
 
-        let controls = ControlsModel::new(worker, log_handle.clone());
+        let workers = ConnectionWorkers::new(worker);
+
+        let controls = ControlsModel::new(workers, log_handle.clone());
 
         let command = CommandModel::new(worker_handle.clone(), event_receiver, log_handle.clone());
 
