@@ -3,6 +3,7 @@ use crossbeam_channel::Receiver;
 use crate::{
     acquisition::AcquisitionError,
     app_log::LogHandle,
+    application_definition::ApplicationDefinition,
     components::{
         controls_model::ControlsModel, device_emulator_model::DeviceEmulatorModel,
         serial_settings_model::SerialSettingsModel,
@@ -19,6 +20,7 @@ use crate::{
 pub struct CommandModel {
     connections: ConnectionRouter,
     serial_connections: SerialConnectionRegistry,
+    application_definition: ApplicationDefinition,
     event_receiver: Receiver<ConnectionWorkerEvent>,
     log: LogHandle,
 }
@@ -27,12 +29,14 @@ impl CommandModel {
     pub fn new(
         connections: ConnectionRouter,
         serial_connections: SerialConnectionRegistry,
+        application_definition: ApplicationDefinition,
         event_receiver: Receiver<ConnectionWorkerEvent>,
         log: LogHandle,
     ) -> Self {
         Self {
             connections,
             serial_connections,
+            application_definition,
             event_receiver,
             log,
         }
@@ -77,13 +81,33 @@ impl CommandModel {
             .expect("primary connection worker must be registered")
     }
 
+    fn format_worker_event(&self, connection_event: &ConnectionWorkerEvent) -> String {
+        let connection_id = connection_event.connection_id();
+
+        let event = connection_event.event();
+
+        match self
+            .application_definition
+            .connection_name_by_id(connection_id)
+        {
+            Some(connection_name) => {
+                format!(
+                    "Connection '{connection_name}': \
+                     {event}",
+                )
+            }
+
+            None => connection_event.to_string(),
+        }
+    }
+
     pub fn poll_events(&mut self, controls: &mut ControlsModel) {
         while let Ok(connection_event) = self.event_receiver.try_recv() {
             let event = connection_event.event();
 
             controls.handle_worker_event(event);
 
-            let message = connection_event.to_string();
+            let message = self.format_worker_event(&connection_event);
 
             if worker_event_is_error(event) {
                 self.log.error(message);

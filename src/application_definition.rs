@@ -45,6 +45,13 @@ impl ApplicationDefinition {
             .map(SerialConnectionDefinition::id)
     }
 
+    pub fn connection_name_by_id(&self, connection_id: ConnectionId) -> Option<&str> {
+        self.serial_connections
+            .iter()
+            .find(|connection| connection.id() == connection_id)
+            .map(SerialConnectionDefinition::name)
+    }
+
     pub fn add_serial_connection(
         &mut self,
         connection: SerialConnectionDefinition,
@@ -514,5 +521,28 @@ mod tests {
         let definition = ApplicationDefinition::default();
 
         assert_eq!(definition.connection_id_by_name("missing",), None,);
+    }
+
+    #[test]
+    fn resolves_connection_name_by_id() {
+        let mut definition = ApplicationDefinition::default();
+
+        definition
+            .add_serial_connection(connection(1, "primary", "COM3"))
+            .unwrap();
+
+        definition
+            .add_serial_connection(connection(2, "vacuum_bus", "COM4"))
+            .unwrap();
+
+        assert_eq!(
+            definition.connection_name_by_id(ConnectionId::new(2),),
+            Some("vacuum_bus"),
+        );
+
+        assert_eq!(
+            definition.connection_name_by_id(ConnectionId::new(99),),
+            None,
+        );
     }
 }

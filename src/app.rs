@@ -159,6 +159,7 @@ impl MyApp {
         let command = CommandModel::new(
             connection_router,
             serial_connections,
+            definition.clone(),
             event_receiver,
             log_handle.clone(),
         );
