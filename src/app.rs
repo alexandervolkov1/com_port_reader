@@ -62,7 +62,7 @@ impl MyApp {
 
         let (lua_command_sender, lua_command_receiver) = crossbeam_channel::unbounded();
 
-        let lua_worker = LuaWorker::spawn(lua_event_sender, lua_command_sender)
+        let lua_worker = LuaWorker::spawn(lua_event_sender, lua_command_sender, definition.clone())
             .expect("failed to spawn Lua worker thread");
 
         let lua_console =

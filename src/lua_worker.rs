@@ -5,7 +5,10 @@ use std::{
 
 use crossbeam_channel::{Receiver, Sender, bounded};
 
-use crate::{lua_runtime::LuaRuntime, user_command::UserCommand};
+use crate::{
+    application_definition::ApplicationDefinition, lua_runtime::LuaRuntime,
+    user_command::UserCommand,
+};
 
 const COMMAND_CHANNEL_CAPACITY: usize = 32;
 
@@ -60,6 +63,7 @@ impl LuaWorker {
     pub(crate) fn spawn(
         event_sender: Sender<LuaEvent>,
         application_command_sender: Sender<UserCommand>,
+        application_definition: ApplicationDefinition,
     ) -> std::io::Result<Self> {
         let (command_sender, command_receiver) = bounded(COMMAND_CHANNEL_CAPACITY);
 
@@ -70,7 +74,12 @@ impl LuaWorker {
         let thread = thread::Builder::new()
             .name("lua-runtime".to_owned())
             .spawn(move || {
-                run_lua_worker(command_receiver, event_sender, application_command_sender);
+                run_lua_worker(
+                    command_receiver,
+                    event_sender,
+                    application_command_sender,
+                    application_definition,
+                );
             })?;
 
         Ok(Self {
@@ -98,8 +107,9 @@ fn run_lua_worker(
     command_receiver: Receiver<LuaCommand>,
     event_sender: Sender<LuaEvent>,
     application_command_sender: Sender<UserCommand>,
+    application_definition: ApplicationDefinition,
 ) {
-    let runtime = LuaRuntime::new();
+    let runtime = LuaRuntime::with_application_definition(application_definition);
 
     if let Err(error) = runtime.install_application_api(application_command_sender) {
         let _ = event_sender.send(LuaEvent::InitializationFailed(error.to_string()));
@@ -131,14 +141,20 @@ mod tests {
     use crossbeam_channel::{Receiver, Sender, unbounded};
 
     use super::{LuaEvent, LuaWorker};
-    use crate::user_command::UserCommand;
+
+    use crate::{application_definition::ApplicationDefinition, user_command::UserCommand};
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
     fn spawn_worker(event_sender: Sender<LuaEvent>) -> LuaWorker {
         let (application_command_sender, _application_command_receiver) = unbounded();
 
-        LuaWorker::spawn(event_sender, application_command_sender).unwrap()
+        LuaWorker::spawn(
+            event_sender,
+            application_command_sender,
+            ApplicationDefinition::default(),
+        )
+        .unwrap()
     }
 
     fn receive_event(receiver: &Receiver<LuaEvent>) -> LuaEvent {
@@ -223,7 +239,12 @@ mod tests {
 
         let (application_command_sender, application_command_receiver) = unbounded();
 
-        let worker = LuaWorker::spawn(event_sender, application_command_sender).unwrap();
+        let worker = LuaWorker::spawn(
+            event_sender,
+            application_command_sender,
+            ApplicationDefinition::default(),
+        )
+        .unwrap();
 
         worker.handle().execute("app.start()").unwrap();
 

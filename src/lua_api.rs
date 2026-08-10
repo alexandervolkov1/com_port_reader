@@ -4,6 +4,7 @@ use crossbeam_channel::{RecvTimeoutError, Sender, bounded};
 use mlua::{FromLua, Lua, Table, UserData, UserDataMethods, Value};
 
 use crate::{
+    application_definition::ApplicationDefinition,
     connection::ConnectionId,
     data::{
         DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, NewSeries,
@@ -32,7 +33,11 @@ struct LuaSeriesOptions {
     sampling_interval: Option<SamplingInterval>,
 }
 
-pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<()> {
+pub fn install(
+    lua: &Lua,
+    command_sender: Sender<UserCommand>,
+    application_definition: &ApplicationDefinition,
+) -> mlua::Result<()> {
     let app = lua.create_table()?;
 
     register_command(lua, &app, "start", command_sender.clone(), start_command)?;
@@ -77,7 +82,12 @@ pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<(
 
     register_add_serial(lua, &app, command_sender.clone())?;
 
-    register_metakon_controller(lua, &app, command_sender.clone())?;
+    register_metakon_controller(
+        lua,
+        &app,
+        command_sender.clone(),
+        application_definition.clone(),
+    )?;
 
     register_virtual_instrument_controller(lua, &app, command_sender.clone())?;
 
@@ -184,18 +194,40 @@ fn register_add_serial(
     app.set("add_serial", function)
 }
 
+fn connection_id_from_options(
+    options: &Table,
+    application_definition: &ApplicationDefinition,
+) -> mlua::Result<ConnectionId> {
+    let Some(connection_name) = options.get::<Option<String>>("connection")? else {
+        return Ok(ConnectionId::PRIMARY);
+    };
+
+    application_definition
+        .connection_id_by_name(&connection_name)
+        .ok_or_else(|| {
+            mlua::Error::RuntimeError(format!(
+                "Unknown serial connection \
+                 '{connection_name}'",
+            ))
+        })
+}
+
 fn register_metakon_controller(
     lua: &Lua,
     app: &Table,
     command_sender: Sender<UserCommand>,
+    application_definition: ApplicationDefinition,
 ) -> mlua::Result<()> {
     let function = lua.create_function(move |lua, options: Option<Table>| {
         let options = match options {
             Some(options) => options,
+
             None => lua.create_table()?,
         };
 
         validate_metakon_controller_options(&options)?;
+
+        let connection_id = connection_id_from_options(&options, &application_definition)?;
 
         let device = options
             .get::<Option<u8>>("device")?
@@ -211,14 +243,14 @@ fn register_metakon_controller(
 
         if !scale.is_finite() || scale <= 0.0 {
             return Err(mlua::Error::RuntimeError(
-                "app.metakon scale must be finite \
-                     and greater than zero"
+                "app.metakon scale must be \
+                         finite and greater than zero"
                     .to_owned(),
             ));
         }
 
         lua.create_userdata(LuaMetakon5x3 {
-            connection_id: ConnectionId::PRIMARY,
+            connection_id,
             instrument: Metakon5x3::new(device, channel),
             scale,
             command_sender: command_sender.clone(),
@@ -334,7 +366,7 @@ fn validate_metakon_controller_options(options: &Table) -> mlua::Result<()> {
     for pair in options.pairs::<String, Value>() {
         let (key, _) = pair?;
 
-        if !matches!(key.as_str(), "device" | "channel" | "scale") {
+        if !matches!(key.as_str(), "connection" | "device" | "channel" | "scale") {
             return Err(mlua::Error::RuntimeError(format!(
                 "unknown app.metakon option '{key}'",
             )));

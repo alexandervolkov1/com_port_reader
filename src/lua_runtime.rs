@@ -1,22 +1,33 @@
 use crossbeam_channel::Sender;
 use mlua::{FromLua, Function, Lua, MultiValue};
 
-use crate::{lua_execution::run_with_limit, user_command::UserCommand};
+use crate::{
+    application_definition::ApplicationDefinition, lua_execution::run_with_limit,
+    user_command::UserCommand,
+};
 
 pub struct LuaRuntime {
     lua: Lua,
+    application_definition: ApplicationDefinition,
 }
 
 impl LuaRuntime {
     pub fn new() -> Self {
-        Self { lua: Lua::new() }
+        Self::with_application_definition(ApplicationDefinition::default())
+    }
+
+    pub fn with_application_definition(application_definition: ApplicationDefinition) -> Self {
+        Self {
+            lua: Lua::new(),
+            application_definition,
+        }
     }
 
     pub(crate) fn install_application_api(
         &self,
         command_sender: Sender<UserCommand>,
     ) -> mlua::Result<()> {
-        crate::lua_api::install(&self.lua, command_sender)
+        crate::lua_api::install(&self.lua, command_sender, &self.application_definition)
     }
 
     pub fn execute(&self, source: &str) -> mlua::Result<()> {
@@ -54,15 +65,18 @@ impl Default for LuaRuntime {
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::unbounded;
+    use serialport::{DataBits, FlowControl, Parity, StopBits};
 
     use super::LuaRuntime;
     use crate::{
+        application_definition::{ApplicationDefinition, SerialConnectionDefinition},
         connection::ConnectionId,
         data::{SamplingInterval, SeriesSource},
         instrument::{
             InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
             metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
         },
+        serial_connection::SerialPortConfig,
         user_command::UserCommand,
     };
 
@@ -1018,5 +1032,58 @@ mod tests {
         );
 
         assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn selects_metakon_connection_by_name() {
+        let mut definition = ApplicationDefinition::default();
+
+        let serial_config = SerialPortConfig::new(
+            "COM8".to_owned(),
+            9_600,
+            DataBits::Eight,
+            Parity::None,
+            StopBits::One,
+            FlowControl::None,
+            250,
+        );
+
+        definition
+            .add_serial_connection(
+                SerialConnectionDefinition::new(ConnectionId::new(2), "vacuum_bus", serial_config)
+                    .unwrap(),
+            )
+            .unwrap();
+
+        let runtime = LuaRuntime::with_application_definition(definition);
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                    local controller =
+                        app.metakon({
+                            connection =
+                                "vacuum_bus",
+                            device = 15,
+                            channel = 0,
+                        })
+
+                    controller:add(
+                        "measurement",
+                        "temperature"
+                    )
+                "#,
+            )
+            .unwrap();
+
+        let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+            panic!("expected add-series command");
+        };
+
+        assert_eq!(new_series.connection_id(), ConnectionId::new(2),);
     }
 }
