@@ -82,6 +82,21 @@ impl ApplicationDefinition {
 
         Ok(())
     }
+
+    pub fn replace_serial_connections(
+        &mut self,
+        connections: impl IntoIterator<Item = SerialConnectionDefinition>,
+    ) -> Result<(), ApplicationDefinitionError> {
+        let mut validated = ApplicationDefinition::new(self.runtime.clone());
+
+        for connection in connections {
+            validated.add_serial_connection(connection)?;
+        }
+
+        self.serial_connections = validated.serial_connections;
+
+        Ok(())
+    }
 }
 
 impl Default for ApplicationDefinition {
@@ -436,6 +451,31 @@ mod tests {
         assert!(
             SerialConnectionDefinition::new(ConnectionId::PRIMARY, "primary", serial_config(""),)
                 .is_err(),
+        );
+    }
+
+    #[test]
+    fn replaces_serial_connections() {
+        let mut definition = ApplicationDefinition::default();
+
+        definition
+            .add_serial_connection(connection(1, "primary", "COM3"))
+            .unwrap();
+
+        definition
+            .replace_serial_connections([
+                connection(1, "primary", "COM7"),
+                connection(2, "secondary", "COM8"),
+            ])
+            .unwrap();
+
+        assert_eq!(definition.serial_connections().len(), 2,);
+
+        assert_eq!(
+            definition.serial_connections()[0]
+                .serial_config()
+                .port_name(),
+            "COM7",
         );
     }
 }

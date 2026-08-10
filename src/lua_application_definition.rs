@@ -1,8 +1,15 @@
+use serialport::{DataBits, FlowControl, Parity, StopBits};
 use std::{error::Error, fmt, fs, path::Path, time::Duration};
 
 use mlua::{Lua, Table, Value};
 
-use crate::application_definition::{ApplicationDefinition, RuntimeDefinition};
+use crate::{
+    application_definition::{
+        ApplicationDefinition, RuntimeDefinition, SerialConnectionDefinition,
+    },
+    connection::ConnectionId,
+    serial_connection::SerialPortConfig,
+};
 
 pub const STARTUP_SCRIPT_PATH: &str = "startup.lua";
 
@@ -53,54 +60,302 @@ pub fn apply_lua_definition(
 ) -> Result<ApplicationDefinition, LuaApplicationDefinitionError> {
     let lua = Lua::new();
 
-    let root = lua
-        .load(source)
-        .set_name("application definition")
-        .eval::<Table>()
-        .map_err(LuaApplicationDefinitionError::from)?;
+    let root = lua.load(source).eval::<Table>()?;
 
-    let Some(application) = root
-        .get::<Option<Table>>("application")
-        .map_err(LuaApplicationDefinitionError::from)?
-    else {
-        return Ok(base.clone());
-    };
+    let mut definition = base.clone();
 
-    validate_application_keys(&application)?;
+    if let Some(application) = root.get::<Option<Table>>("application")? {
+        let runtime = parse_runtime_definition(&application, definition.runtime())?;
 
-    let base_runtime = base.runtime();
+        definition.set_runtime(runtime);
+    }
+
+    if let Some(connections) = root.get::<Option<Table>>("connections")? {
+        let serial_connections = parse_serial_connections(&connections)?;
+
+        definition
+            .replace_serial_connections(serial_connections)
+            .map_err(|error| LuaApplicationDefinitionError::new(error.to_string()))?;
+    }
+
+    Ok(definition)
+}
+
+fn parse_runtime_definition(
+    application: &Table,
+    base: &RuntimeDefinition,
+) -> Result<RuntimeDefinition, LuaApplicationDefinitionError> {
+    validate_application_keys(application)?;
 
     let fps = application
         .get::<Option<u32>>("fps")
         .map_err(LuaApplicationDefinitionError::from)?
-        .unwrap_or(base_runtime.fps());
+        .unwrap_or(base.fps());
 
-    let default_poll_interval = duration_option(
-        &application,
-        "poll_interval",
-        base_runtime.default_poll_interval(),
-    )?;
+    let default_poll_interval =
+        duration_option(application, "poll_interval", base.default_poll_interval())?;
 
-    let plot_window = duration_option(&application, "plot_window", base_runtime.plot_window())?;
+    let plot_window = duration_option(application, "plot_window", base.plot_window())?;
 
     let max_plot_points_per_series = application
         .get::<Option<usize>>("max_plot_points_per_series")
         .map_err(LuaApplicationDefinitionError::from)?
-        .unwrap_or(base_runtime.max_plot_points_per_series());
+        .unwrap_or(base.max_plot_points_per_series());
 
-    let runtime = RuntimeDefinition::new(
+    RuntimeDefinition::new(
         fps,
         default_poll_interval,
         plot_window,
         max_plot_points_per_series,
     )
-    .map_err(|error| LuaApplicationDefinitionError::new(error.to_string()))?;
+    .map_err(|error| LuaApplicationDefinitionError::new(error.to_string()))
+}
 
-    let mut definition = base.clone();
+fn parse_serial_connections(
+    connections: &Table,
+) -> Result<Vec<SerialConnectionDefinition>, LuaApplicationDefinitionError> {
+    let mut entries = Vec::new();
 
-    definition.set_runtime(runtime);
+    for pair in connections.pairs::<String, Table>() {
+        let (name, options) = pair.map_err(LuaApplicationDefinitionError::from)?;
 
-    Ok(definition)
+        entries.push((name, options));
+    }
+
+    if !entries.is_empty()
+        && !entries
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("primary"))
+    {
+        return Err(LuaApplicationDefinitionError::new(
+            "Lua connections must contain a \
+                 'primary' connection",
+        ));
+    }
+
+    entries.sort_by(|(left, _), (right, _)| {
+        let left_is_primary = left.eq_ignore_ascii_case("primary");
+
+        let right_is_primary = right.eq_ignore_ascii_case("primary");
+
+        right_is_primary
+            .cmp(&left_is_primary)
+            .then_with(|| left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase()))
+    });
+
+    let mut next_connection_id = 2_u64;
+
+    let mut result = Vec::with_capacity(entries.len());
+
+    for (name, options) in entries {
+        let connection_id = if name.eq_ignore_ascii_case("primary") {
+            ConnectionId::PRIMARY
+        } else {
+            let id = ConnectionId::new(next_connection_id);
+
+            next_connection_id += 1;
+
+            id
+        };
+
+        result.push(parse_serial_connection(connection_id, name, &options)?);
+    }
+
+    Ok(result)
+}
+
+fn parse_serial_connection(
+    connection_id: ConnectionId,
+    name: String,
+    options: &Table,
+) -> Result<SerialConnectionDefinition, LuaApplicationDefinitionError> {
+    validate_serial_connection_keys(options)?;
+
+    let port_name = options
+        .get::<Option<String>>("port")
+        .map_err(LuaApplicationDefinitionError::from)?
+        .ok_or_else(|| {
+            LuaApplicationDefinitionError::new(format!(
+                "Connection '{name}' must define \
+                     a COM port",
+            ))
+        })?;
+
+    let baud_rate = options
+        .get::<Option<u32>>("baud_rate")
+        .map_err(LuaApplicationDefinitionError::from)?
+        .unwrap_or(9_600);
+
+    let data_bits = match options
+        .get::<Option<u8>>("data_bits")
+        .map_err(LuaApplicationDefinitionError::from)?
+        .unwrap_or(8)
+    {
+        5 => DataBits::Five,
+        6 => DataBits::Six,
+        7 => DataBits::Seven,
+        8 => DataBits::Eight,
+
+        value => {
+            return Err(LuaApplicationDefinitionError::new(format!(
+                "Connection '{name}' data_bits \
+                         must be 5, 6, 7 or 8, got \
+                         {value}",
+            )));
+        }
+    };
+
+    let parity_name = options
+        .get::<Option<String>>("parity")
+        .map_err(LuaApplicationDefinitionError::from)?
+        .unwrap_or_else(|| "none".to_owned());
+
+    let parity = parse_parity(&name, &parity_name)?;
+
+    let stop_bits = match options
+        .get::<Option<u8>>("stop_bits")
+        .map_err(LuaApplicationDefinitionError::from)?
+        .unwrap_or(1)
+    {
+        1 => StopBits::One,
+        2 => StopBits::Two,
+
+        value => {
+            return Err(LuaApplicationDefinitionError::new(format!(
+                "Connection '{name}' stop_bits \
+                         must be 1 or 2, got {value}",
+            )));
+        }
+    };
+
+    let flow_control_name = options
+        .get::<Option<String>>("flow_control")
+        .map_err(LuaApplicationDefinitionError::from)?
+        .unwrap_or_else(|| "none".to_owned());
+
+    let flow_control = parse_flow_control(&name, &flow_control_name)?;
+
+    let timeout_seconds = options
+        .get::<Option<f64>>("timeout")
+        .map_err(LuaApplicationDefinitionError::from)?
+        .unwrap_or(0.25);
+
+    let timeout_ms = duration_milliseconds(&name, "timeout", timeout_seconds)?;
+
+    let serial_config = SerialPortConfig::new(
+        port_name,
+        baud_rate,
+        data_bits,
+        parity,
+        stop_bits,
+        flow_control,
+        timeout_ms,
+    );
+
+    SerialConnectionDefinition::new(connection_id, name, serial_config)
+        .map_err(|error| LuaApplicationDefinitionError::new(error.to_string()))
+}
+
+fn validate_serial_connection_keys(options: &Table) -> Result<(), LuaApplicationDefinitionError> {
+    for pair in options.pairs::<String, Value>() {
+        let (key, _) = pair.map_err(LuaApplicationDefinitionError::from)?;
+
+        if !matches!(
+            key.as_str(),
+            "port"
+                | "baud_rate"
+                | "data_bits"
+                | "parity"
+                | "stop_bits"
+                | "flow_control"
+                | "timeout"
+        ) {
+            return Err(LuaApplicationDefinitionError::new(format!(
+                "Unknown serial connection \
+                         option '{key}'",
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_parity(
+    connection_name: &str,
+    value: &str,
+) -> Result<Parity, LuaApplicationDefinitionError> {
+    match value.to_ascii_lowercase().as_str() {
+        "none" => Ok(Parity::None),
+        "even" => Ok(Parity::Even),
+        "odd" => Ok(Parity::Odd),
+
+        _ => Err(LuaApplicationDefinitionError::new(format!(
+            "Connection '{connection_name}' \
+                     parity must be 'none', 'even' or \
+                     'odd', got '{value}'",
+        ))),
+    }
+}
+
+fn parse_flow_control(
+    connection_name: &str,
+    value: &str,
+) -> Result<FlowControl, LuaApplicationDefinitionError> {
+    match value.to_ascii_lowercase().as_str() {
+        "none" => Ok(FlowControl::None),
+
+        "software" => Ok(FlowControl::Software),
+
+        "hardware" => Ok(FlowControl::Hardware),
+
+        _ => Err(LuaApplicationDefinitionError::new(format!(
+            "Connection '{connection_name}' \
+                     flow_control must be 'none', \
+                     'software' or 'hardware', got \
+                     '{value}'",
+        ))),
+    }
+}
+
+fn duration_milliseconds(
+    connection_name: &str,
+    option_name: &str,
+    seconds: f64,
+) -> Result<u64, LuaApplicationDefinitionError> {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return Err(LuaApplicationDefinitionError::new(format!(
+            "Connection '{connection_name}' \
+                     option '{option_name}' must be \
+                     finite and greater than zero",
+        )));
+    }
+
+    let duration = Duration::try_from_secs_f64(seconds).map_err(|_| {
+        LuaApplicationDefinitionError::new(format!(
+            "Connection \
+                         '{connection_name}' option \
+                         '{option_name}' is outside \
+                         the supported duration range",
+        ))
+    })?;
+
+    let milliseconds = u64::try_from(duration.as_millis()).map_err(|_| {
+        LuaApplicationDefinitionError::new(format!(
+            "Connection \
+                         '{connection_name}' option \
+                         '{option_name}' is too large",
+        ))
+    })?;
+
+    if milliseconds == 0 {
+        return Err(LuaApplicationDefinitionError::new(format!(
+            "Connection '{connection_name}' \
+                     option '{option_name}' must be \
+                     at least 0.001 seconds",
+        )));
+    }
+
+    Ok(milliseconds)
 }
 
 fn validate_application_keys(application: &Table) -> Result<(), LuaApplicationDefinitionError> {
@@ -431,5 +686,123 @@ mod tests {
                      definition",
                 ),
         );
+    }
+
+    #[test]
+    fn replaces_base_connections_from_lua() {
+        let base = base_definition();
+
+        let definition = apply_lua_definition(
+            r#"
+                return {
+                    connections = {
+                        primary = {
+                            port = "COM7",
+                            baud_rate = 115200,
+                            data_bits = 7,
+                            parity = "even",
+                            stop_bits = 2,
+                            flow_control = "hardware",
+                            timeout = 0.5,
+                        },
+
+                        vacuum_bus = {
+                            port = "COM8",
+                        },
+                    },
+                }
+            "#,
+            &base,
+        )
+        .unwrap();
+
+        let connections = definition.serial_connections();
+
+        assert_eq!(connections.len(), 2);
+
+        let primary = &connections[0];
+
+        assert_eq!(primary.id(), ConnectionId::PRIMARY,);
+
+        assert_eq!(primary.name(), "primary");
+
+        let primary_serial = primary.serial_config();
+
+        assert_eq!(primary_serial.port_name(), "COM7",);
+
+        assert_eq!(primary_serial.baud_rate(), 115_200,);
+
+        assert_eq!(primary_serial.data_bits(), DataBits::Seven,);
+
+        assert_eq!(primary_serial.parity(), Parity::Even,);
+
+        assert_eq!(primary_serial.stop_bits(), StopBits::Two,);
+
+        assert_eq!(primary_serial.flow_control(), FlowControl::Hardware,);
+
+        assert_eq!(primary_serial.timeout_ms(), 500,);
+
+        let vacuum_bus = &connections[1];
+
+        assert_eq!(vacuum_bus.id(), ConnectionId::new(2),);
+
+        assert_eq!(vacuum_bus.name(), "vacuum_bus",);
+
+        assert_eq!(vacuum_bus.serial_config().port_name(), "COM8",);
+
+        assert_eq!(vacuum_bus.serial_config().baud_rate(), 9_600,);
+    }
+
+    #[test]
+    fn rejects_connections_without_primary() {
+        let base = base_definition();
+
+        let error = apply_lua_definition(
+            r#"
+                return {
+                    connections = {
+                        secondary = {
+                            port = "COM8",
+                        },
+                    },
+                }
+            "#,
+            &base,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Lua connections must contain a 'primary' \
+             connection",
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_connection_ports() {
+        let base = base_definition();
+
+        let error = apply_lua_definition(
+            r#"
+                return {
+                    connections = {
+                        primary = {
+                            port = "COM7",
+                        },
+
+                        secondary = {
+                            port = "com7",
+                        },
+                    },
+                }
+            "#,
+            &base,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains(
+            "assigned to more than one \
+                     connection",
+        ),);
     }
 }
