@@ -48,6 +48,30 @@ impl SerialPortConfig {
         &self.port_name
     }
 
+    pub const fn baud_rate(&self) -> u32 {
+        self.baud_rate
+    }
+
+    pub const fn data_bits(&self) -> DataBits {
+        self.data_bits
+    }
+
+    pub const fn parity(&self) -> Parity {
+        self.parity
+    }
+
+    pub const fn stop_bits(&self) -> StopBits {
+        self.stop_bits
+    }
+
+    pub const fn flow_control(&self) -> FlowControl {
+        self.flow_control
+    }
+
+    pub const fn timeout_ms(&self) -> u64 {
+        self.timeout_ms
+    }
+
     pub fn open(&self) -> Result<SerialConnection, SerialConnectionError> {
         let port = serialport::new(&self.port_name, self.baud_rate)
             .data_bits(self.data_bits)
