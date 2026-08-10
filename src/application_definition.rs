@@ -1,4 +1,9 @@
-use std::{error::Error, fmt, time::Duration};
+use std::{
+    error::Error,
+    fmt,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use crate::{connection::ConnectionId, serial_connection::SerialPortConfig};
 
@@ -16,6 +21,7 @@ const MAX_PLOT_POINTS_PER_SERIES: usize = 100_000;
 pub struct ApplicationDefinition {
     runtime: RuntimeDefinition,
     serial_connections: Vec<SerialConnectionDefinition>,
+    emulator: Option<EmulatorDefinition>,
 }
 
 impl ApplicationDefinition {
@@ -23,6 +29,7 @@ impl ApplicationDefinition {
         Self {
             runtime,
             serial_connections: Vec::new(),
+            emulator: None,
         }
     }
 
@@ -50,6 +57,14 @@ impl ApplicationDefinition {
             .iter()
             .find(|connection| connection.id() == connection_id)
             .map(SerialConnectionDefinition::name)
+    }
+
+    pub const fn emulator(&self) -> Option<&EmulatorDefinition> {
+        self.emulator.as_ref()
+    }
+
+    pub fn set_emulator(&mut self, emulator: Option<EmulatorDefinition>) {
+        self.emulator = emulator;
     }
 
     pub fn add_serial_connection(
@@ -288,6 +303,71 @@ impl SerialConnectionDefinition {
 
     pub const fn serial_config(&self) -> &SerialPortConfig {
         &self.serial_config
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EmulatorDefinition {
+    connection_id: ConnectionId,
+    port_name: String,
+    script_path: PathBuf,
+}
+
+impl EmulatorDefinition {
+    pub fn new(
+        connection_id: ConnectionId,
+        port_name: impl Into<String>,
+        script_path: impl Into<PathBuf>,
+    ) -> Result<Self, ApplicationDefinitionError> {
+        if connection_id.value() == 0 {
+            return Err(ApplicationDefinitionError::new(
+                "Emulator connection ID must \
+                     be greater than zero",
+            ));
+        }
+
+        let port_name = port_name.into();
+
+        if port_name.is_empty() {
+            return Err(ApplicationDefinitionError::new(
+                "Emulator COM port cannot be \
+                     empty",
+            ));
+        }
+
+        if port_name.trim() != port_name {
+            return Err(ApplicationDefinitionError::new(
+                "Emulator COM port cannot begin \
+                     or end with whitespace",
+            ));
+        }
+
+        let script_path = script_path.into();
+
+        if script_path.as_os_str().is_empty() {
+            return Err(ApplicationDefinitionError::new(
+                "Emulator script path cannot be \
+                     empty",
+            ));
+        }
+
+        Ok(Self {
+            connection_id,
+            port_name,
+            script_path,
+        })
+    }
+
+    pub const fn connection_id(&self) -> ConnectionId {
+        self.connection_id
+    }
+
+    pub fn port_name(&self) -> &str {
+        &self.port_name
+    }
+
+    pub fn script_path(&self) -> &Path {
+        &self.script_path
     }
 }
 
