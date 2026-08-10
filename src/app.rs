@@ -94,8 +94,11 @@ impl MyApp {
 
         let serial_config_store = serial_connections.primary();
 
-        let serial_settings =
-            SerialSettingsModel::new(ConnectionId::PRIMARY, serial_connections, &config.serial);
+        let serial_settings = SerialSettingsModel::new(
+            ConnectionId::PRIMARY,
+            serial_connections.clone(),
+            &config.serial,
+        );
 
         let worker_config = WorkerConfig::new(definition.runtime().default_poll_interval());
 
@@ -118,7 +121,12 @@ impl MyApp {
 
         let controls = ControlsModel::new(workers, log_handle.clone());
 
-        let command = CommandModel::new(connection_router, event_receiver, log_handle.clone());
+        let command = CommandModel::new(
+            connection_router,
+            serial_connections,
+            event_receiver,
+            log_handle.clone(),
+        );
 
         Self {
             config,

@@ -9,12 +9,14 @@ use crate::{
     },
     connection::ConnectionId,
     data::{NewSeries, SeriesId},
+    serial_connection::{SerialConnectionRegistry, SerialPortConfig},
     user_command::UserCommand,
     worker::{ConnectionRouter, WorkerEvent, WorkerHandle, WorkerHandleError},
 };
 
 pub struct CommandModel {
     connections: ConnectionRouter,
+    serial_connections: SerialConnectionRegistry,
     event_receiver: Receiver<WorkerEvent>,
     log: LogHandle,
 }
@@ -22,11 +24,13 @@ pub struct CommandModel {
 impl CommandModel {
     pub fn new(
         connections: ConnectionRouter,
+        serial_connections: SerialConnectionRegistry,
         event_receiver: Receiver<WorkerEvent>,
         log: LogHandle,
     ) -> Self {
         Self {
             connections,
+            serial_connections,
             event_receiver,
             log,
         }
@@ -39,6 +43,28 @@ impl CommandModel {
         self.connections.handle(connection_id).ok_or_else(|| {
             AcquisitionError::from(format!(
                 "Connection worker {connection_id:?} is not registered",
+            ))
+        })
+    }
+
+    fn serial_config(
+        &self,
+        connection_id: ConnectionId,
+    ) -> Result<SerialPortConfig, AcquisitionError> {
+        let store = self
+            .serial_connections
+            .store(connection_id)
+            .ok_or_else(|| {
+                AcquisitionError::from(format!(
+                    "Serial connection {connection_id} \
+                     is not registered",
+                ))
+            })?;
+
+        store.snapshot().ok_or_else(|| {
+            AcquisitionError::from(format!(
+                "Serial connection {connection_id} \
+                 has no configured COM port",
             ))
         })
     }
@@ -126,20 +152,22 @@ impl CommandModel {
                 connection_id,
                 command,
             } => {
-                let Some(config) = serial_settings.serial_config() else {
-                    self.log.error(
-                        "Cannot send COM command: \
-                         select a COM port in \
-                         Settings.",
-                    );
+                let config = match self.serial_config(connection_id) {
+                    Ok(config) => config,
 
-                    return;
+                    Err(error) => {
+                        self.log.error(error.to_string());
+
+                        return;
+                    }
                 };
+
                 let worker_handle = match self.connection_worker(connection_id) {
                     Ok(worker_handle) => worker_handle,
 
                     Err(error) => {
                         self.log.error(error.to_string());
+
                         return;
                     }
                 };
@@ -154,17 +182,16 @@ impl CommandModel {
                 request,
                 response_sender,
             } => {
-                let Some(config) = serial_settings.serial_config() else {
-                    let error = AcquisitionError::from(
-                        "Cannot read instrument: select a COM \
-                         port in Settings",
-                    );
+                let config = match self.serial_config(connection_id) {
+                    Ok(config) => config,
 
-                    self.log.error(error.to_string());
+                    Err(error) => {
+                        self.log.error(error.to_string());
 
-                    let _ = response_sender.send(Err(error));
+                        let _ = response_sender.send(Err(error));
 
-                    return;
+                        return;
+                    }
                 };
 
                 let worker_handle = match self.connection_worker(connection_id) {
@@ -187,8 +214,8 @@ impl CommandModel {
 
                 if let Err(send_error) = send_result {
                     let error = AcquisitionError::from(format!(
-                        "Failed to request instrument read: \
-                         {send_error}",
+                        "Failed to request instrument \
+                             read: {send_error}",
                     ));
 
                     self.log.error(error.to_string());
@@ -202,17 +229,16 @@ impl CommandModel {
                 request,
                 response_sender,
             } => {
-                let Some(config) = serial_settings.serial_config() else {
-                    let error = AcquisitionError::from(
-                        "Cannot write instrument: select a COM \
-                         port in Settings",
-                    );
+                let config = match self.serial_config(connection_id) {
+                    Ok(config) => config,
 
-                    self.log.error(error.to_string());
+                    Err(error) => {
+                        self.log.error(error.to_string());
 
-                    let _ = response_sender.send(Err(error));
+                        let _ = response_sender.send(Err(error));
 
-                    return;
+                        return;
+                    }
                 };
 
                 let worker_handle = match self.connection_worker(connection_id) {
@@ -235,8 +261,8 @@ impl CommandModel {
 
                 if let Err(send_error) = send_result {
                     let error = AcquisitionError::from(format!(
-                        "Failed to request instrument write: \
-                         {send_error}",
+                        "Failed to request instrument \
+                             write: {send_error}",
                     ));
 
                     self.log.error(error.to_string());
@@ -249,12 +275,7 @@ impl CommandModel {
                 connection_id,
                 response_sender,
             } => {
-                if serial_settings.serial_config().is_none() {
-                    let error = AcquisitionError::from(
-                        "Cannot describe virtual instruments: \
-                         select a COM port in Settings",
-                    );
-
+                if let Err(error) = self.serial_config(connection_id) {
                     self.log.error(error.to_string());
 
                     let _ = response_sender.send(Err(error));
@@ -279,8 +300,9 @@ impl CommandModel {
 
                 if let Err(send_error) = send_result {
                     let error = AcquisitionError::from(format!(
-                        "Failed to request virtual instrument \
-                         discovery: {send_error}",
+                        "Failed to request virtual \
+                             instrument discovery: \
+                             {send_error}",
                     ));
 
                     self.log.error(error.to_string());
