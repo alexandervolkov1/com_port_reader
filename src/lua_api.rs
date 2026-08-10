@@ -26,6 +26,12 @@ const INSTRUMENT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 const VIRTUAL_INSTRUMENT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
+#[derive(Default)]
+struct LuaSeriesOptions {
+    name: Option<String>,
+    sampling_interval: Option<SamplingInterval>,
+}
+
 pub fn install(lua: &Lua, command_sender: Sender<UserCommand>) -> mlua::Result<()> {
     let app = lua.create_table()?;
 
@@ -98,24 +104,82 @@ fn register_command(
     app.set(name, function)
 }
 
+fn parse_series_options(value: Option<Value>) -> mlua::Result<LuaSeriesOptions> {
+    match value {
+        None | Some(Value::Nil) => Ok(LuaSeriesOptions::default()),
+
+        Some(Value::String(name)) => Ok(LuaSeriesOptions {
+            name: Some(name.to_str()?.to_string()),
+            sampling_interval: None,
+        }),
+
+        Some(Value::Table(options)) => parse_series_options_table(&options),
+
+        Some(_) => Err(mlua::Error::RuntimeError(
+            "Series options must be a name string \
+             or an options table"
+                .to_owned(),
+        )),
+    }
+}
+
+fn parse_series_options_table(options: &Table) -> mlua::Result<LuaSeriesOptions> {
+    for pair in options.pairs::<String, Value>() {
+        let (key, _) = pair?;
+
+        if !matches!(key.as_str(), "name" | "interval") {
+            return Err(mlua::Error::RuntimeError(format!(
+                "Unknown series option '{key}'",
+            )));
+        }
+    }
+
+    let name = options.get::<Option<String>>("name")?;
+
+    let sampling_interval = options
+        .get::<Option<f64>>("interval")?
+        .map(SamplingInterval::from_secs_f64)
+        .transpose()
+        .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+    Ok(LuaSeriesOptions {
+        name,
+        sampling_interval,
+    })
+}
+
+fn apply_series_options(
+    mut new_series: NewSeries,
+    options: LuaSeriesOptions,
+    connection_id: ConnectionId,
+) -> NewSeries {
+    new_series = new_series.with_connection(connection_id);
+
+    if let Some(interval) = options.sampling_interval {
+        new_series = new_series.with_sampling_interval(interval);
+    }
+
+    new_series
+}
+
 fn register_add_serial(
     lua: &Lua,
     app: &Table,
     command_sender: Sender<UserCommand>,
 ) -> mlua::Result<()> {
-    let function = lua.create_function(
-        move |_, (command, name, interval_seconds): (String, Option<String>, Option<f64>)| {
-            let new_series = match name {
-                Some(name) => NewSeries::named_serial_command(command, name),
+    let function = lua.create_function(move |_, (command, options): (String, Option<Value>)| {
+        let options = parse_series_options(options)?;
 
-                None => NewSeries::unnamed_serial_command(command),
-            };
+        let new_series = match &options.name {
+            Some(name) => NewSeries::named_serial_command(command, name),
 
-            let new_series = with_sampling_interval(new_series, interval_seconds)?;
+            None => NewSeries::unnamed_serial_command(command),
+        };
 
-            send_application_command(&command_sender, UserCommand::Add(new_series))
-        },
-    )?;
+        let new_series = apply_series_options(new_series, options, ConnectionId::PRIMARY);
+
+        send_application_command(&command_sender, UserCommand::Add(new_series))
+    })?;
 
     app.set("add_serial", function)
 }
@@ -333,8 +397,7 @@ impl LuaVirtualInstrument {
     fn add_parameter_series(
         &self,
         parameter_key: &str,
-        name: Option<String>,
-        interval_seconds: Option<f64>,
+        options: LuaSeriesOptions,
     ) -> mlua::Result<()> {
         let parameter = self.parameter(parameter_key)?;
 
@@ -356,13 +419,13 @@ impl LuaVirtualInstrument {
         let request =
             InstrumentReadRequest::virtual_instrument(self.descriptor.id(), parameter.id());
 
-        let new_series = match name {
+        let new_series = match &options.name {
             Some(name) => NewSeries::named_instrument(request, name),
 
             None => NewSeries::unnamed_instrument(request),
         };
 
-        let new_series = with_sampling_interval(new_series, interval_seconds)?;
+        let new_series = apply_series_options(new_series, options, self.connection_id);
 
         send_application_command(&self.command_sender, UserCommand::Add(new_series))
     }
@@ -495,18 +558,17 @@ impl LuaMetakon5x3 {
         &self,
         parameter: Metakon5x3Register,
         scale: f64,
-        name: Option<String>,
-        interval_seconds: Option<f64>,
+        options: LuaSeriesOptions,
     ) -> mlua::Result<()> {
         let request = InstrumentReadRequest::metakon_5x3(self.instrument, parameter, scale);
 
-        let new_series = match name {
+        let new_series = match &options.name {
             Some(name) => NewSeries::named_instrument(request, name),
 
             None => NewSeries::unnamed_instrument(request),
         };
 
-        let new_series = with_sampling_interval(new_series, interval_seconds)?;
+        let new_series = apply_series_options(new_series, options, self.connection_id);
 
         self.add_series(new_series)
     }
@@ -856,20 +918,6 @@ fn virtual_instrument_value_from_lua(
     }
 }
 
-fn with_sampling_interval(
-    new_series: NewSeries,
-    interval_seconds: Option<f64>,
-) -> mlua::Result<NewSeries> {
-    let Some(interval_seconds) = interval_seconds else {
-        return Ok(new_series);
-    };
-
-    let sampling_interval = SamplingInterval::from_secs_f64(interval_seconds)
-        .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
-
-    Ok(new_series.with_sampling_interval(sampling_interval))
-}
-
 impl UserData for LuaVirtualInstrument {
     fn add_methods<M>(methods: &mut M)
     where
@@ -887,22 +935,10 @@ impl UserData for LuaVirtualInstrument {
 
         methods.add_method(
             "add",
-            |_,
-             instrument,
-             (
-                parameter_key,
-                name,
-                interval_seconds,
-            ): (
-                String,
-                Option<String>,
-                Option<f64>,
-            )| {
-                instrument.add_parameter_series(
-                    &parameter_key,
-                    name,
-                    interval_seconds,
-                )
+            |_, instrument, (parameter_key, options): (String, Option<Value>)| {
+                let options = parse_series_options(options)?;
+
+                instrument.add_parameter_series(&parameter_key, options)
             },
         );
 
@@ -938,31 +974,14 @@ impl UserData for LuaMetakon5x3 {
 
         methods.add_method(
             "add",
-            |_,
-             controller,
-             (
-                parameter_key,
-                name,
-                interval_seconds,
-            ): (
-                String,
-                Option<String>,
-                Option<f64>,
-            )| {
-                let parameter =
-                    metakon_parameter_from_key(
-                        &parameter_key,
-                    )?;
+            |_, controller, (parameter_key, options): (String, Option<Value>)| {
+                let parameter = metakon_parameter_from_key(&parameter_key)?;
 
-                let scale =
-                    controller.parameter_scale(parameter);
+                let scale = controller.parameter_scale(parameter);
 
-                controller.add_parameter_series(
-                    parameter,
-                    scale,
-                    name,
-                    interval_seconds,
-                )
+                let options = parse_series_options(options)?;
+
+                controller.add_parameter_series(parameter, scale, options)
             },
         );
 

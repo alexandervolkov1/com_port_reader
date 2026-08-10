@@ -276,6 +276,8 @@ mod tests {
             panic!("expected Add command");
         };
 
+        assert_eq!(new_series.connection_id(), ConnectionId::PRIMARY,);
+
         let (source, name, sampling_interval) = new_series.into_parts();
 
         assert_eq!(name.as_deref(), Some("sine"));
@@ -296,6 +298,8 @@ mod tests {
             panic!("expected Add command");
         };
 
+        assert_eq!(new_series.connection_id(), ConnectionId::PRIMARY,);
+
         let (source, name, sampling_interval) = new_series.into_parts();
 
         assert_eq!(name, None);
@@ -314,7 +318,8 @@ mod tests {
                 connection_id,
                 command,
             }
-                if command == "set amplitude 25",
+                if connection_id == ConnectionId::PRIMARY
+                    && command == "set amplitude 25",
         ));
 
         assert!(command_receiver.try_recv().is_err());
@@ -510,6 +515,8 @@ mod tests {
             let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
                 panic!("expected Add command");
             };
+
+            assert_eq!(new_series.connection_id(), ConnectionId::PRIMARY,);
 
             let (source, name, sampling_interval) = new_series.into_parts();
 
