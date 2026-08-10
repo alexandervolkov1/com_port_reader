@@ -1,6 +1,16 @@
 use std::{fs, path::Path, time::Duration};
 
 use serde::{Deserialize, Serialize};
+use serialport::{DataBits, FlowControl, Parity, StopBits};
+
+use crate::{
+    application_definition::{
+        ApplicationDefinition, ApplicationDefinitionError, RuntimeDefinition,
+        SerialConnectionDefinition,
+    },
+    connection::ConnectionId,
+    serial_connection::SerialPortConfig,
+};
 
 pub const CONFIG_PATH: &str = "config.toml";
 
@@ -97,6 +107,84 @@ impl AppConfig {
                 path.display(),
             )
         })
+    }
+}
+
+impl TryFrom<&AppConfig> for ApplicationDefinition {
+    type Error = ApplicationDefinitionError;
+
+    fn try_from(config: &AppConfig) -> Result<Self, Self::Error> {
+        config.validate().map_err(ApplicationDefinitionError::new)?;
+
+        let runtime = RuntimeDefinition::new(
+            config.application.fps,
+            config.application.poll_interval(),
+            Duration::from_secs(config.application.plot_window_seconds),
+            config.application.max_plot_points_per_series,
+        )?;
+
+        let mut definition = ApplicationDefinition::new(runtime);
+
+        if config.serial.main_port.is_empty() {
+            return Ok(definition);
+        }
+
+        let data_bits = match config.serial.data_bits {
+            5 => DataBits::Five,
+            6 => DataBits::Six,
+            7 => DataBits::Seven,
+            8 => DataBits::Eight,
+
+            _ => {
+                return Err(ApplicationDefinitionError::new(
+                    "Serial data bits must be \
+                         5, 6, 7 or 8",
+                ));
+            }
+        };
+
+        let parity = match config.serial.parity {
+            SerialParity::None => Parity::None,
+            SerialParity::Even => Parity::Even,
+            SerialParity::Odd => Parity::Odd,
+        };
+
+        let stop_bits = match config.serial.stop_bits {
+            1 => StopBits::One,
+            2 => StopBits::Two,
+
+            _ => {
+                return Err(ApplicationDefinitionError::new(
+                    "Serial stop bits must be \
+                         1 or 2",
+                ));
+            }
+        };
+
+        let flow_control = match config.serial.flow_control {
+            SerialFlowControl::None => FlowControl::None,
+
+            SerialFlowControl::Software => FlowControl::Software,
+
+            SerialFlowControl::Hardware => FlowControl::Hardware,
+        };
+
+        let serial_config = SerialPortConfig::new(
+            config.serial.main_port.clone(),
+            config.serial.baud_rate,
+            data_bits,
+            parity,
+            stop_bits,
+            flow_control,
+            config.serial.timeout_ms,
+        );
+
+        let connection =
+            SerialConnectionDefinition::new(ConnectionId::PRIMARY, "primary", serial_config)?;
+
+        definition.add_serial_connection(connection)?;
+
+        Ok(definition)
     }
 }
 
@@ -258,7 +346,11 @@ fn validate_port_name(field: &str, port: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::{AppConfig, SerialFlowControl, SerialParity};
+
+    use crate::{application_definition::ApplicationDefinition, connection::ConnectionId};
 
     #[test]
     fn uses_expected_defaults() {
@@ -437,6 +529,90 @@ main_port = \" COM3\"
             result.unwrap_err(),
             "application.plot_window_seconds must be between \
              1 and 1209600",
+        );
+    }
+
+    #[test]
+    fn converts_config_to_application_definition() {
+        let mut config = AppConfig::default();
+
+        config.application.fps = 60;
+        config.application.poll_interval_ms = 2_500;
+        config.application.plot_window_seconds = 7_200;
+
+        config.application.max_plot_points_per_series = 8_000;
+
+        config.serial.main_port = "COM3".to_owned();
+        config.serial.baud_rate = 115_200;
+        config.serial.data_bits = 7;
+        config.serial.parity = SerialParity::Even;
+        config.serial.stop_bits = 2;
+
+        config.serial.flow_control = SerialFlowControl::Hardware;
+
+        config.serial.timeout_ms = 500;
+
+        let definition = ApplicationDefinition::try_from(&config).unwrap();
+
+        let runtime = definition.runtime();
+
+        assert_eq!(runtime.fps(), 60);
+
+        assert_eq!(
+            runtime.default_poll_interval(),
+            Duration::from_millis(2_500),
+        );
+
+        assert_eq!(runtime.plot_window(), Duration::from_secs(7_200),);
+
+        assert_eq!(runtime.max_plot_points_per_series(), 8_000,);
+
+        let connections = definition.serial_connections();
+
+        assert_eq!(connections.len(), 1);
+
+        let connection = &connections[0];
+
+        assert_eq!(connection.id(), ConnectionId::PRIMARY,);
+
+        assert_eq!(connection.name(), "primary");
+
+        let serial = connection.serial_config();
+
+        assert_eq!(serial.port_name(), "COM3");
+        assert_eq!(serial.baud_rate(), 115_200);
+
+        assert_eq!(serial.data_bits(), serialport::DataBits::Seven,);
+
+        assert_eq!(serial.parity(), serialport::Parity::Even,);
+
+        assert_eq!(serial.stop_bits(), serialport::StopBits::Two,);
+
+        assert_eq!(serial.flow_control(), serialport::FlowControl::Hardware,);
+
+        assert_eq!(serial.timeout_ms(), 500);
+    }
+
+    #[test]
+    fn omits_unselected_serial_connection() {
+        let config = AppConfig::default();
+
+        let definition = ApplicationDefinition::try_from(&config).unwrap();
+
+        assert!(definition.serial_connections().is_empty(),);
+    }
+
+    #[test]
+    fn rejects_invalid_config_during_conversion() {
+        let mut config = AppConfig::default();
+
+        config.application.fps = 0;
+
+        let error = ApplicationDefinition::try_from(&config).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "application.fps must be between 1 and 240",
         );
     }
 }
