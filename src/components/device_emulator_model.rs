@@ -15,19 +15,15 @@ pub struct DeviceEmulatorModel {
 }
 
 impl DeviceEmulatorModel {
-    pub fn new(configured_port: &str, configured_script_path: &str, log: LogHandle) -> Self {
+    pub fn new(
+        configured_port: Option<String>,
+        configured_script_path: Option<PathBuf>,
+        log: LogHandle,
+    ) -> Self {
         Self {
-            selected_port: if configured_port.is_empty() {
-                None
-            } else {
-                Some(configured_port.to_owned())
-            },
+            selected_port: configured_port.filter(|port| !port.is_empty()),
 
-            script_path: if configured_script_path.is_empty() {
-                None
-            } else {
-                Some(PathBuf::from(configured_script_path))
-            },
+            script_path: configured_script_path.filter(|path| !path.as_os_str().is_empty()),
 
             handle: None,
             error: None,

@@ -1,5 +1,6 @@
 use eframe::egui;
 use egui_extras::{Size, StripBuilder};
+use std::path::PathBuf;
 
 use crate::{
     app_config::{AppConfig, CONFIG_PATH},
@@ -76,11 +77,22 @@ impl MyApp {
             log_handle.error(warning);
         }
 
-        let device_emulator = DeviceEmulatorModel::new(
-            &config.serial.emulator_port,
-            &config.emulator.script_path,
-            log_handle.clone(),
-        );
+        let (emulator_port, emulator_script_path) = match definition.emulator() {
+            Some(emulator) => (
+                Some(emulator.port_name().to_owned()),
+                Some(emulator.script_path().to_owned()),
+            ),
+
+            None => (
+                (!config.serial.emulator_port.is_empty())
+                    .then(|| config.serial.emulator_port.clone()),
+                (!config.emulator.script_path.is_empty())
+                    .then(|| PathBuf::from(&config.emulator.script_path)),
+            ),
+        };
+
+        let device_emulator =
+            DeviceEmulatorModel::new(emulator_port, emulator_script_path, log_handle.clone());
 
         let series = SeriesStore::new();
 
