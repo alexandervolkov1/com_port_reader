@@ -1086,4 +1086,73 @@ mod tests {
 
         assert_eq!(new_series.connection_id(), ConnectionId::new(2),);
     }
+
+    #[test]
+    fn selects_virtual_instrument_connection_by_name() {
+        let mut definition = ApplicationDefinition::default();
+
+        let serial_config = SerialPortConfig::new(
+            "COM8".to_owned(),
+            9_600,
+            DataBits::Eight,
+            Parity::None,
+            StopBits::One,
+            FlowControl::None,
+            250,
+        );
+
+        definition
+            .add_serial_connection(
+                SerialConnectionDefinition::new(ConnectionId::new(2), "virtual_bus", serial_config)
+                    .unwrap(),
+            )
+            .unwrap();
+
+        let runtime = LuaRuntime::with_application_definition(definition);
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        let responder = std::thread::spawn(move || {
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::DescribeVirtualInstruments {
+                connection_id,
+                response_sender,
+            } = command
+            else {
+                panic!(
+                    "expected virtual instrument \
+                         discovery command"
+                );
+            };
+
+            assert_eq!(connection_id, ConnectionId::new(2),);
+
+            response_sender.send(Ok(Vec::new())).unwrap();
+        });
+
+        let error = runtime
+            .execute(
+                r#"
+                    app.virtual_instrument({
+                        connection = "virtual_bus",
+                        id = 1,
+                    })
+                "#,
+            )
+            .unwrap_err()
+            .to_string();
+
+        responder.join().unwrap();
+
+        assert!(
+            error.contains(
+                "Virtual instrument with id 1 \
+                 was not found",
+            ),
+            "{error}",
+        );
+    }
 }

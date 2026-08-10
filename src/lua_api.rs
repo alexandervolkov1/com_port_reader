@@ -89,7 +89,12 @@ pub fn install(
         application_definition.clone(),
     )?;
 
-    register_virtual_instrument_controller(lua, &app, command_sender.clone())?;
+    register_virtual_instrument_controller(
+        lua,
+        &app,
+        command_sender.clone(),
+        application_definition.clone(),
+    )?;
 
     register_delete_series(lua, &app, command_sender.clone())?;
 
@@ -264,26 +269,28 @@ fn register_virtual_instrument_controller(
     lua: &Lua,
     app: &Table,
     command_sender: Sender<UserCommand>,
+    application_definition: ApplicationDefinition,
 ) -> mlua::Result<()> {
     let function = lua.create_function(move |lua, options: Option<Table>| {
         let options = match options {
             Some(options) => options,
+
             None => lua.create_table()?,
         };
 
         validate_virtual_instrument_options(&options)?;
 
+        let connection_id = connection_id_from_options(&options, &application_definition)?;
+
         let id = options.get::<Option<u16>>("id")?.unwrap_or(1);
 
         if id == 0 {
             return Err(mlua::Error::RuntimeError(
-                "app.virtual_instrument id must be \
-                     greater than zero"
+                "app.virtual_instrument id \
+                         must be greater than zero"
                     .to_owned(),
             ));
         }
-
-        let connection_id = ConnectionId::PRIMARY;
 
         let (response_sender, response_receiver) = bounded(1);
 
@@ -301,24 +308,26 @@ fn register_virtual_instrument_controller(
 
             Ok(Err(error)) => {
                 return Err(mlua::Error::RuntimeError(format!(
-                    "Virtual instrument discovery \
-                             failed: {error}",
+                    "Virtual instrument \
+                                     discovery failed: \
+                                     {error}",
                 )));
             }
 
             Err(RecvTimeoutError::Timeout) => {
                 return Err(mlua::Error::RuntimeError(
-                    "Timed out waiting for virtual \
-                             instrument discovery"
+                    "Timed out waiting for \
+                                 virtual instrument \
+                                 discovery"
                         .to_owned(),
                 ));
             }
 
             Err(RecvTimeoutError::Disconnected) => {
                 return Err(mlua::Error::RuntimeError(
-                    "Virtual instrument discovery \
-                             response channel is \
-                             disconnected"
+                    "Virtual instrument \
+                                 discovery response \
+                                 channel is disconnected"
                         .to_owned(),
                 ));
             }
@@ -331,8 +340,8 @@ fn register_virtual_instrument_controller(
             .find(|descriptor| descriptor.id() == requested_id)
             .ok_or_else(|| {
                 mlua::Error::RuntimeError(format!(
-                    "Virtual instrument with id {id} \
-                         was not found",
+                    "Virtual instrument with \
+                             id {id} was not found",
                 ))
             })?;
 
@@ -351,10 +360,11 @@ fn validate_virtual_instrument_options(options: &Table) -> mlua::Result<()> {
     for pair in options.pairs::<String, Value>() {
         let (key, _) = pair?;
 
-        if key != "id" {
+        if !matches!(key.as_str(), "connection" | "id") {
             return Err(mlua::Error::RuntimeError(format!(
-                "unknown app.virtual_instrument \
-                     option '{key}'",
+                "unknown \
+                         app.virtual_instrument \
+                         option '{key}'",
             )));
         }
     }
