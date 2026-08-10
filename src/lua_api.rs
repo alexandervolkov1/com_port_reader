@@ -80,7 +80,12 @@ pub fn install(
 
     register_log(lua, &app, command_sender.clone())?;
 
-    register_add_serial(lua, &app, command_sender.clone())?;
+    register_add_serial(
+        lua,
+        &app,
+        command_sender.clone(),
+        application_definition.clone(),
+    )?;
 
     register_metakon_controller(
         lua,
@@ -100,7 +105,7 @@ pub fn install(
 
     register_rename_series(lua, &app, command_sender.clone())?;
 
-    register_send_serial(lua, &app, command_sender)?;
+    register_send_serial(lua, &app, command_sender, application_definition.clone())?;
 
     lua.globals().set("app", app)
 }
@@ -139,16 +144,63 @@ fn parse_series_options(value: Option<Value>) -> mlua::Result<LuaSeriesOptions> 
 }
 
 fn parse_series_options_table(options: &Table) -> mlua::Result<LuaSeriesOptions> {
+    validate_series_option_keys(options, false)?;
+
+    parse_series_option_values(options)
+}
+
+fn parse_serial_series_options(
+    value: Option<Value>,
+    application_definition: &ApplicationDefinition,
+) -> mlua::Result<(LuaSeriesOptions, ConnectionId)> {
+    match value {
+        None | Some(Value::Nil) => Ok((LuaSeriesOptions::default(), ConnectionId::PRIMARY)),
+
+        Some(Value::String(name)) => Ok((
+            LuaSeriesOptions {
+                name: Some(name.to_str()?.to_string()),
+                sampling_interval: None,
+            },
+            ConnectionId::PRIMARY,
+        )),
+
+        Some(Value::Table(options)) => {
+            validate_series_option_keys(&options, true)?;
+
+            let series_options = parse_series_option_values(&options)?;
+
+            let connection_id = connection_id_from_options(&options, application_definition)?;
+
+            Ok((series_options, connection_id))
+        }
+
+        Some(_) => Err(mlua::Error::RuntimeError(
+            "Series options must be a name \
+                 string or an options table"
+                .to_owned(),
+        )),
+    }
+}
+
+fn validate_series_option_keys(options: &Table, allow_connection: bool) -> mlua::Result<()> {
     for pair in options.pairs::<String, Value>() {
         let (key, _) = pair?;
 
-        if !matches!(key.as_str(), "name" | "interval") {
+        let known_option = matches!(key.as_str(), "name" | "interval")
+            || (allow_connection && key == "connection");
+
+        if !known_option {
             return Err(mlua::Error::RuntimeError(format!(
-                "Unknown series option '{key}'",
+                "Unknown series option \
+                         '{key}'",
             )));
         }
     }
 
+    Ok(())
+}
+
+fn parse_series_option_values(options: &Table) -> mlua::Result<LuaSeriesOptions> {
     let name = options.get::<Option<String>>("name")?;
 
     let sampling_interval = options
@@ -181,9 +233,11 @@ fn register_add_serial(
     lua: &Lua,
     app: &Table,
     command_sender: Sender<UserCommand>,
+    application_definition: ApplicationDefinition,
 ) -> mlua::Result<()> {
     let function = lua.create_function(move |_, (command, options): (String, Option<Value>)| {
-        let options = parse_series_options(options)?;
+        let (options, connection_id) =
+            parse_serial_series_options(options, &application_definition)?;
 
         let new_series = match &options.name {
             Some(name) => NewSeries::named_serial_command(command, name),
@@ -191,7 +245,7 @@ fn register_add_serial(
             None => NewSeries::unnamed_serial_command(command),
         };
 
-        let new_series = apply_series_options(new_series, options, ConnectionId::PRIMARY);
+        let new_series = apply_series_options(new_series, options, connection_id);
 
         send_application_command(&command_sender, UserCommand::Add(new_series))
     })?;
@@ -1090,16 +1144,42 @@ fn register_log(lua: &Lua, app: &Table, command_sender: Sender<UserCommand>) -> 
     app.set("log", function)
 }
 
+fn validate_send_serial_options(options: &Table) -> mlua::Result<()> {
+    for pair in options.pairs::<String, Value>() {
+        let (key, _) = pair?;
+
+        if key != "connection" {
+            return Err(mlua::Error::RuntimeError(format!(
+                "unknown app.send_serial \
+                         option '{key}'",
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 fn register_send_serial(
     lua: &Lua,
     app: &Table,
     command_sender: Sender<UserCommand>,
+    application_definition: ApplicationDefinition,
 ) -> mlua::Result<()> {
-    let function = lua.create_function(move |_, command: String| {
+    let function = lua.create_function(move |_, (command, options): (String, Option<Table>)| {
+        let connection_id = match options {
+            Some(options) => {
+                validate_send_serial_options(&options)?;
+
+                connection_id_from_options(&options, &application_definition)?
+            }
+
+            None => ConnectionId::PRIMARY,
+        };
+
         send_application_command(
             &command_sender,
             UserCommand::SendSerial {
-                connection_id: ConnectionId::PRIMARY,
+                connection_id,
                 command,
             },
         )

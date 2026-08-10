@@ -1155,4 +1155,73 @@ mod tests {
             "{error}",
         );
     }
+
+    #[test]
+    fn selects_connection_for_serial_commands() {
+        let mut definition = ApplicationDefinition::default();
+
+        let serial_config = SerialPortConfig::new(
+            "COM8".to_owned(),
+            9_600,
+            DataBits::Eight,
+            Parity::None,
+            StopBits::One,
+            FlowControl::None,
+            250,
+        );
+
+        definition
+            .add_serial_connection(
+                SerialConnectionDefinition::new(ConnectionId::new(2), "vacuum_bus", serial_config)
+                    .unwrap(),
+            )
+            .unwrap();
+
+        let runtime = LuaRuntime::with_application_definition(definition);
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute(
+                r#"
+                    app.add_serial(
+                        "read pressure",
+                        {
+                            connection =
+                                "vacuum_bus",
+                            name = "pressure",
+                            interval = 2.0,
+                        }
+                    )
+
+                    app.send_serial(
+                        "reset",
+                        {
+                            connection =
+                                "vacuum_bus",
+                        }
+                    )
+                "#,
+            )
+            .unwrap();
+
+        let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+            panic!("expected Add command");
+        };
+
+        assert_eq!(new_series.connection_id(), ConnectionId::new(2),);
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::SendSerial {
+                connection_id,
+                command,
+            }
+                if connection_id
+                    == ConnectionId::new(2)
+                    && command == "reset",
+        ));
+    }
 }
