@@ -4,6 +4,7 @@ use egui_extras::{Size, StripBuilder};
 use crate::{
     app_config::{AppConfig, CONFIG_PATH},
     app_log::{LogHandle, LogModel},
+    application_definition::ApplicationDefinition,
     components::{
         command_model::CommandModel, controls_model::ControlsModel, controls_view,
         device_emulator_model::DeviceEmulatorModel, help_model::HelpModel, help_view, log_view,
@@ -35,6 +36,7 @@ pub struct MyApp {
     device_emulator: DeviceEmulatorModel,
     help: HelpModel,
     config: AppConfig,
+    definition: ApplicationDefinition,
     lua_console: LuaConsoleModel,
     lua_command_receiver: crossbeam_channel::Receiver<UserCommand>,
     log_panel_open: bool,
@@ -48,6 +50,11 @@ pub struct MyApp {
 impl MyApp {
     pub fn new() -> Self {
         let (config, config_warning) = AppConfig::load_or_default(CONFIG_PATH);
+
+        let definition = ApplicationDefinition::try_from(&config).expect(
+            "loaded application configuration must \
+                 produce a valid application definition",
+        );
 
         let (log, log_handle) = LogModel::new();
 
@@ -82,7 +89,7 @@ impl MyApp {
         let serial_settings =
             SerialSettingsModel::new(ConnectionId::PRIMARY, serial_connections, &config.serial);
 
-        let worker_config = WorkerConfig::new(config.application.poll_interval());
+        let worker_config = WorkerConfig::new(definition.runtime().default_poll_interval());
 
         let worker = spawn_serial_connection_worker(
             serial_config_store,
@@ -107,6 +114,7 @@ impl MyApp {
 
         Self {
             config,
+            definition,
             controls,
             plot: PlotModel::new(),
             command,
@@ -136,6 +144,13 @@ impl MyApp {
                 &mut self.device_emulator,
             );
         }
+    }
+
+    fn refresh_application_definition(&mut self) {
+        self.definition = ApplicationDefinition::try_from(&self.config).expect(
+            "settings UI must preserve a valid \
+                     application configuration",
+        );
     }
 }
 
@@ -202,8 +217,8 @@ impl eframe::App for MyApp {
                                 ui,
                                 &mut self.plot,
                                 &self.series,
-                                self.config.application.max_plot_points_per_series,
-                                self.config.application.plot_window_seconds as f64,
+                                self.definition.runtime().max_plot_points_per_series(),
+                                self.definition.runtime().plot_window().as_secs_f64(),
                             );
                         });
 
@@ -227,8 +242,8 @@ impl eframe::App for MyApp {
                                 ui,
                                 &mut self.plot,
                                 &self.series,
-                                self.config.application.max_plot_points_per_series,
-                                self.config.application.plot_window_seconds as f64,
+                                self.definition.runtime().max_plot_points_per_series(),
+                                self.definition.runtime().plot_window().as_secs_f64(),
                             );
                         });
 
@@ -253,9 +268,11 @@ impl eframe::App for MyApp {
             &self.log_handle,
         );
 
+        self.refresh_application_definition();
+
         help_view::show_window(ui.ctx(), &mut self.help);
 
         ui.ctx()
-            .request_repaint_after(self.config.application.repaint_interval());
+            .request_repaint_after(self.definition.runtime().repaint_interval());
     }
 }
