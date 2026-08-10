@@ -139,14 +139,6 @@ impl Worker {
                     let result = series
                         .with_mut(|all_series| append_series_samples(all_series, &sample_batch));
 
-                    let result = match result {
-                        Ok(()) => series.with_mut(|all_series| {
-                            append_series_samples(all_series, &sample_batch)
-                        }),
-
-                        Err(error) => Err(error),
-                    };
-
                     match result {
                         Ok(()) => match sink.write_batch(&sample_batch, &series_metadata) {
                             Ok(()) => {
