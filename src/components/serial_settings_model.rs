@@ -147,10 +147,6 @@ impl SerialSettingsModel {
         self.publish_config();
     }
 
-    pub fn settings(&self) -> SerialSettings {
-        self.settings
-    }
-
     pub fn settings_mut(&mut self) -> &mut SerialSettings {
         &mut self.settings
     }

@@ -201,12 +201,8 @@ impl MyApp {
         let commands = self.lua_command_receiver.try_iter().collect::<Vec<_>>();
 
         for command in commands {
-            self.command.execute(
-                command,
-                &mut self.controls,
-                &self.serial_settings,
-                &mut self.device_emulator,
-            );
+            self.command
+                .execute(command, &mut self.controls, &mut self.device_emulator);
         }
     }
 
@@ -274,7 +270,6 @@ impl eframe::App for MyApp {
                 ui,
                 &mut self.controls,
                 &self.command,
-                &self.serial_settings,
                 &mut self.device_emulator,
             );
 
@@ -336,11 +331,17 @@ impl eframe::App for MyApp {
             ui.ctx(),
             &mut self.serial_settings,
             &mut self.device_emulator,
+            &self.command,
+            &mut self.controls,
             &self.worker_handle,
             acquisition_running,
             &mut self.config,
             &self.log_handle,
         );
+
+        if settings_saved {
+            self.reload_application_definition();
+        }
 
         if settings_saved {
             self.reload_application_definition();

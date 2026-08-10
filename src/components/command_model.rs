@@ -4,10 +4,7 @@ use crate::{
     acquisition::AcquisitionError,
     app_log::LogHandle,
     application_definition::ApplicationDefinition,
-    components::{
-        controls_model::ControlsModel, device_emulator_model::DeviceEmulatorModel,
-        serial_settings_model::SerialSettingsModel,
-    },
+    components::{controls_model::ControlsModel, device_emulator_model::DeviceEmulatorModel},
     connection::ConnectionId,
     data::{NewSeries, SeriesId},
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
@@ -75,6 +72,22 @@ impl CommandModel {
         })
     }
 
+    fn emulator_connection_id(&self) -> ConnectionId {
+        self.application_definition
+            .emulator()
+            .map_or(ConnectionId::PRIMARY, |emulator| emulator.connection_id())
+    }
+
+    fn emulator_serial_config(&self) -> Result<SerialPortConfig, AcquisitionError> {
+        self.serial_config(self.emulator_connection_id())
+    }
+
+    pub fn emulator_client_port(&self) -> Option<String> {
+        self.emulator_serial_config()
+            .ok()
+            .map(|config| config.port_name().to_owned())
+    }
+
     fn primary_worker(&self) -> WorkerHandle {
         self.connections
             .handle(ConnectionId::PRIMARY)
@@ -121,7 +134,6 @@ impl CommandModel {
         &self,
         command: UserCommand,
         controls: &mut ControlsModel,
-        serial_settings: &SerialSettingsModel,
         device_emulator: &mut DeviceEmulatorModel,
     ) {
         match command {
@@ -165,7 +177,20 @@ impl CommandModel {
             }
 
             UserCommand::StartEmulator => {
-                device_emulator.start(serial_settings.settings(), serial_settings.selected_port());
+                let serial_config = match self.emulator_serial_config() {
+                    Ok(serial_config) => serial_config,
+
+                    Err(error) => {
+                        self.log.error(format!(
+                            "Cannot start emulator: \
+                                     {error}",
+                        ));
+
+                        return;
+                    }
+                };
+
+                device_emulator.start(&serial_config);
             }
 
             UserCommand::StopEmulator => {

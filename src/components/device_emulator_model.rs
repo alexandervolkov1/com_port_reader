@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     app_log::LogHandle,
-    components::serial_settings_model::SerialSettings,
     device_emulator_handle::{DeviceEmulatorHandle, DeviceEmulatorPortConfig},
+    serial_connection::SerialPortConfig,
 };
 
 pub struct DeviceEmulatorModel {
@@ -79,7 +79,7 @@ impl DeviceEmulatorModel {
         self.error.as_deref()
     }
 
-    pub fn start(&mut self, settings: SerialSettings, client_port: Option<&str>) {
+    pub fn start(&mut self, serial_config: &SerialPortConfig) {
         self.poll();
 
         if self.handle.is_some() {
@@ -98,7 +98,9 @@ impl DeviceEmulatorModel {
             return;
         };
 
-        if Some(port_name.as_str()) == client_port {
+        let client_port = serial_config.port_name();
+
+        if port_name.eq_ignore_ascii_case(client_port) {
             self.report_error(
                 "The application and emulator must use \
                  different COM ports.",
@@ -109,11 +111,11 @@ impl DeviceEmulatorModel {
 
         let config = DeviceEmulatorPortConfig {
             port_name: port_name.clone(),
-            baud_rate: settings.baud_rate,
-            data_bits: settings.data_bits,
-            parity: settings.parity,
-            stop_bits: settings.stop_bits,
-            flow_control: settings.flow_control,
+            baud_rate: serial_config.baud_rate(),
+            data_bits: serial_config.data_bits(),
+            parity: serial_config.parity(),
+            stop_bits: serial_config.stop_bits(),
+            flow_control: serial_config.flow_control(),
         };
 
         let model_description = format!("Lua model '{}'", script_path.display(),);

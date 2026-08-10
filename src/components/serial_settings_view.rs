@@ -3,12 +3,14 @@ use rfd::FileDialog;
 use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 use super::{
+    command_model::CommandModel, controls_model::ControlsModel,
     device_emulator_model::DeviceEmulatorModel, serial_settings_model::SerialSettingsModel,
 };
 
 use crate::{
     app_config::{AppConfig, ApplicationSettings, CONFIG_PATH},
     app_log::LogHandle,
+    user_command::UserCommand,
     worker::WorkerHandle,
 };
 
@@ -40,6 +42,8 @@ pub fn show_window(
     context: &egui::Context,
     model: &mut SerialSettingsModel,
     emulator: &mut DeviceEmulatorModel,
+    commands: &CommandModel,
+    controls: &mut ControlsModel,
     worker_handle: &WorkerHandle,
     acquisition_running: bool,
     config: &mut AppConfig,
@@ -95,7 +99,7 @@ pub fn show_window(
 
             ui.separator();
 
-            show_emulator_controls(ui, model, emulator, acquisition_running);
+            show_emulator_controls(ui, model, emulator, commands, controls, acquisition_running);
 
             ui.separator();
 
@@ -302,6 +306,8 @@ fn show_emulator_controls(
     ui: &mut egui::Ui,
     serial: &SerialSettingsModel,
     emulator: &mut DeviceEmulatorModel,
+    commands: &CommandModel,
+    controls: &mut ControlsModel,
     acquisition_running: bool,
 ) {
     ui.heading("Device emulator");
@@ -368,19 +374,22 @@ fn show_emulator_controls(
     });
 
     ui.horizontal(|ui| {
-        let can_start = emulator.can_start(serial.selected_port());
+        let client_port = commands.emulator_client_port();
+
+        let can_start = emulator.can_start(client_port.as_deref());
+
         if ui
             .add_enabled(can_start, egui::Button::new("Start emulator"))
             .clicked()
         {
-            emulator.start(serial.settings(), serial.selected_port());
+            commands.execute(UserCommand::StartEmulator, controls, emulator);
         }
 
         if ui
             .add_enabled(emulator.is_running(), egui::Button::new("Stop emulator"))
             .clicked()
         {
-            emulator.stop();
+            commands.execute(UserCommand::StopEmulator, controls, emulator);
         }
 
         if emulator.is_running() {

@@ -30,10 +30,6 @@ impl ConnectionWorkerEvent {
     pub const fn event(&self) -> &WorkerEvent {
         &self.event
     }
-
-    pub fn into_event(self) -> WorkerEvent {
-        self.event
-    }
 }
 
 impl std::fmt::Display for ConnectionWorkerEvent {
