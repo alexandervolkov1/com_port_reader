@@ -38,6 +38,13 @@ impl ApplicationDefinition {
         &self.serial_connections
     }
 
+    pub fn connection_id_by_name(&self, name: &str) -> Option<ConnectionId> {
+        self.serial_connections
+            .iter()
+            .find(|connection| connection.name().eq_ignore_ascii_case(name))
+            .map(SerialConnectionDefinition::id)
+    }
+
     pub fn add_serial_connection(
         &mut self,
         connection: SerialConnectionDefinition,
@@ -477,5 +484,35 @@ mod tests {
                 .port_name(),
             "COM7",
         );
+    }
+
+    #[test]
+    fn resolves_connection_id_by_name() {
+        let mut definition = ApplicationDefinition::default();
+
+        definition
+            .add_serial_connection(connection(1, "primary", "COM3"))
+            .unwrap();
+
+        definition
+            .add_serial_connection(connection(2, "vacuum_bus", "COM4"))
+            .unwrap();
+
+        assert_eq!(
+            definition.connection_id_by_name("primary",),
+            Some(ConnectionId::PRIMARY),
+        );
+
+        assert_eq!(
+            definition.connection_id_by_name("VACUUM_BUS",),
+            Some(ConnectionId::new(2)),
+        );
+    }
+
+    #[test]
+    fn reports_unknown_connection_name() {
+        let definition = ApplicationDefinition::default();
+
+        assert_eq!(definition.connection_id_by_name("missing",), None,);
     }
 }
