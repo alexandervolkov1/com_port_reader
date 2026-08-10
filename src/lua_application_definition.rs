@@ -61,6 +61,7 @@ pub fn apply_lua_definition(
     let lua = Lua::new();
 
     let root = lua.load(source).eval::<Table>()?;
+    validate_root_keys(&root)?;
 
     let mut definition = base.clone();
 
@@ -79,6 +80,21 @@ pub fn apply_lua_definition(
     }
 
     Ok(definition)
+}
+
+fn validate_root_keys(root: &Table) -> Result<(), LuaApplicationDefinitionError> {
+    for pair in root.pairs::<String, Value>() {
+        let (key, _) = pair.map_err(LuaApplicationDefinitionError::from)?;
+
+        if !matches!(key.as_str(), "application" | "connections") {
+            return Err(LuaApplicationDefinitionError::new(format!(
+                "Unknown application \
+                         definition section '{key}'",
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 fn parse_runtime_definition(
@@ -804,5 +820,34 @@ mod tests {
             "assigned to more than one \
                      connection",
         ),);
+    }
+
+    #[test]
+    fn rejects_unknown_root_section() {
+        let base = base_definition();
+
+        let error = apply_lua_definition(
+            r#"
+                return {
+                    application = {
+                        fps = 30,
+                    },
+
+                    connetions = {
+                        primary = {
+                            port = "COM7",
+                        },
+                    },
+                }
+            "#,
+            &base,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Unknown application definition section \
+             'connetions'",
+        );
     }
 }
