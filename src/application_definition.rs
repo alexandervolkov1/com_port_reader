@@ -30,6 +30,10 @@ impl ApplicationDefinition {
         &self.runtime
     }
 
+    pub fn set_runtime(&mut self, runtime: RuntimeDefinition) {
+        self.runtime = runtime;
+    }
+
     pub fn serial_connections(&self) -> &[SerialConnectionDefinition] {
         &self.serial_connections
     }
