@@ -7,13 +7,13 @@ use crate::{
     serial_connection::SerialConfigStore,
 };
 
-use super::{Worker, WorkerConfig, WorkerEvent, WorkerHandle};
+use super::{ConnectionWorkerEvent, Worker, WorkerConfig, WorkerHandle};
 
 const CONNECTION_COMMAND_CAPACITY: usize = 32;
 
 pub fn spawn_serial_connection_worker(
     config_store: SerialConfigStore,
-    event_sender: Sender<WorkerEvent>,
+    event_sender: Sender<ConnectionWorkerEvent>,
     series: SeriesStore,
     sink: Box<dyn SampleSink>,
     worker_config: WorkerConfig,

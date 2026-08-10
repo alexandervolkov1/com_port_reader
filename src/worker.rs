@@ -33,10 +33,33 @@ mod serial;
 pub use command::{ConnectionCommand, WorkerCommand};
 pub use config::WorkerConfig;
 pub use connections::{ConnectionWorkers, ConnectionWorkersError};
-pub use event::WorkerEvent;
+pub use event::{ConnectionWorkerEvent, WorkerEvent};
 pub use handle::{WorkerHandle, WorkerHandleError};
 pub use router::ConnectionRouter;
 pub use serial::spawn_serial_connection_worker;
+
+#[derive(Clone)]
+struct WorkerEventSender {
+    connection_id: ConnectionId,
+    sender: Sender<ConnectionWorkerEvent>,
+}
+
+impl WorkerEventSender {
+    const fn new(connection_id: ConnectionId, sender: Sender<ConnectionWorkerEvent>) -> Self {
+        Self {
+            connection_id,
+            sender,
+        }
+    }
+
+    fn send(
+        &self,
+        event: WorkerEvent,
+    ) -> Result<(), crossbeam_channel::SendError<ConnectionWorkerEvent>> {
+        self.sender
+            .send(ConnectionWorkerEvent::new(self.connection_id, event))
+    }
+}
 
 enum AcquisitionState {
     Stopped,
@@ -61,13 +84,15 @@ impl Worker {
     pub fn spawn(
         commands: WorkerHandle,
         command_receiver: Receiver<WorkerCommand>,
-        event_sender: Sender<WorkerEvent>,
+        event_sender: Sender<ConnectionWorkerEvent>,
         series: SeriesStore,
         mut source: Box<dyn AcquisitionSource>,
         mut sink: Box<dyn SampleSink>,
         config: WorkerConfig,
     ) -> Self {
         let connection_id = commands.connection_id();
+
+        let event_sender = WorkerEventSender::new(connection_id, event_sender);
 
         let running = Arc::new(AtomicBool::new(false));
 
@@ -615,7 +640,7 @@ fn update_series_health(
     schedules: &mut HashMap<SeriesId, SeriesSchedule>,
     polled_series: &[SeriesMetadata],
     failures: &[SeriesAcquisitionFailure],
-    event_sender: &Sender<WorkerEvent>,
+    event_sender: &WorkerEventSender,
 ) {
     for series in polled_series {
         let Some(schedule) = schedules.get_mut(&series.id) else {
@@ -675,7 +700,7 @@ fn handle_connection_command(
     command: ConnectionCommand,
     acquisition_running: bool,
     source: &mut dyn AcquisitionSource,
-    event_sender: &Sender<WorkerEvent>,
+    event_sender: &WorkerEventSender,
 ) {
     match command {
         ConnectionCommand::SendSerialText { config, command } => {

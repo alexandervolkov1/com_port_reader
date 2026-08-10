@@ -4,9 +4,47 @@ use crate::instrument::{InstrumentReadRequest, InstrumentValue, InstrumentWriteR
 use crate::serial_connection::SerialConnectionError;
 use crate::{
     acquisition::AcquisitionError,
+    connection::ConnectionId,
     data::{AddSeriesError, RenameSeriesError, SeriesId},
     sample_sink::SampleSinkError,
 };
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConnectionWorkerEvent {
+    connection_id: ConnectionId,
+    event: WorkerEvent,
+}
+
+impl ConnectionWorkerEvent {
+    pub(crate) const fn new(connection_id: ConnectionId, event: WorkerEvent) -> Self {
+        Self {
+            connection_id,
+            event,
+        }
+    }
+
+    pub const fn connection_id(&self) -> ConnectionId {
+        self.connection_id
+    }
+
+    pub const fn event(&self) -> &WorkerEvent {
+        &self.event
+    }
+
+    pub fn into_event(self) -> WorkerEvent {
+        self.event
+    }
+}
+
+impl std::fmt::Display for ConnectionWorkerEvent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Connection {}: {}",
+            self.connection_id, self.event,
+        )
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkerEvent {
@@ -259,5 +297,24 @@ impl std::fmt::Display for WorkerEvent {
                 )
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ConnectionWorkerEvent, WorkerEvent};
+
+    use crate::connection::ConnectionId;
+
+    #[test]
+    fn attaches_connection_to_worker_event() {
+        let event =
+            ConnectionWorkerEvent::new(ConnectionId::new(2), WorkerEvent::AcquisitionStarted);
+
+        assert_eq!(event.connection_id(), ConnectionId::new(2),);
+
+        assert_eq!(event.event(), &WorkerEvent::AcquisitionStarted,);
+
+        assert_eq!(event.to_string(), "Connection 2: Acquisition started.",);
     }
 }

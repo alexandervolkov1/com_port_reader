@@ -11,13 +11,15 @@ use crate::{
     data::{NewSeries, SeriesId},
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
     user_command::UserCommand,
-    worker::{ConnectionRouter, WorkerEvent, WorkerHandle, WorkerHandleError},
+    worker::{
+        ConnectionRouter, ConnectionWorkerEvent, WorkerEvent, WorkerHandle, WorkerHandleError,
+    },
 };
 
 pub struct CommandModel {
     connections: ConnectionRouter,
     serial_connections: SerialConnectionRegistry,
-    event_receiver: Receiver<WorkerEvent>,
+    event_receiver: Receiver<ConnectionWorkerEvent>,
     log: LogHandle,
 }
 
@@ -25,7 +27,7 @@ impl CommandModel {
     pub fn new(
         connections: ConnectionRouter,
         serial_connections: SerialConnectionRegistry,
-        event_receiver: Receiver<WorkerEvent>,
+        event_receiver: Receiver<ConnectionWorkerEvent>,
         log: LogHandle,
     ) -> Self {
         Self {
@@ -76,12 +78,14 @@ impl CommandModel {
     }
 
     pub fn poll_events(&mut self, controls: &mut ControlsModel) {
-        while let Ok(event) = self.event_receiver.try_recv() {
-            controls.handle_worker_event(&event);
+        while let Ok(connection_event) = self.event_receiver.try_recv() {
+            let event = connection_event.event();
 
-            let message = event.to_string();
+            controls.handle_worker_event(event);
 
-            if worker_event_is_error(&event) {
+            let message = connection_event.to_string();
+
+            if worker_event_is_error(event) {
                 self.log.error(message);
             } else {
                 self.log.info(message);
