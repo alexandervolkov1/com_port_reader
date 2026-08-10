@@ -1,8 +1,51 @@
-use std::{error::Error, fmt, time::Duration};
+use std::{error::Error, fmt, fs, path::Path, time::Duration};
 
 use mlua::{Lua, Table, Value};
 
 use crate::application_definition::{ApplicationDefinition, RuntimeDefinition};
+
+pub const STARTUP_SCRIPT_PATH: &str = "startup.lua";
+
+pub fn load_lua_definition_or_base(
+    path: impl AsRef<Path>,
+    base: &ApplicationDefinition,
+) -> (ApplicationDefinition, Option<String>) {
+    let path = path.as_ref();
+
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return (base.clone(), None);
+        }
+
+        Err(error) => {
+            return (
+                base.clone(),
+                Some(format!(
+                    "Failed to read Lua application \
+                     definition '{}': {error}. \
+                     TOML settings will be used.",
+                    path.display(),
+                )),
+            );
+        }
+    };
+
+    match apply_lua_definition(&source, base) {
+        Ok(definition) => (definition, None),
+
+        Err(error) => (
+            base.clone(),
+            Some(format!(
+                "Failed to load Lua application \
+                 definition '{}': {error}. \
+                 TOML settings will be used.",
+                path.display(),
+            )),
+        ),
+    }
+}
 
 pub fn apply_lua_definition(
     source: &str,
@@ -135,11 +178,11 @@ impl From<mlua::Error> for LuaApplicationDefinitionError {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{fs, path::PathBuf, time::Duration};
 
     use serialport::{DataBits, FlowControl, Parity, StopBits};
 
-    use super::apply_lua_definition;
+    use super::{apply_lua_definition, load_lua_definition_or_base};
 
     use crate::{
         application_definition::{ApplicationDefinition, SerialConnectionDefinition},
@@ -167,6 +210,10 @@ mod tests {
         definition.add_serial_connection(connection).unwrap();
 
         definition
+    }
+
+    fn temporary_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("com_port_reader_{name}_{}.lua", std::process::id(),))
     }
 
     #[test]
@@ -313,5 +360,76 @@ mod tests {
         let error = apply_lua_definition("return 42", &base).unwrap_err();
 
         assert!(!error.to_string().is_empty());
+    }
+
+    #[test]
+    fn loads_definition_from_file() {
+        let path = temporary_path("valid_definition");
+
+        fs::write(
+            &path,
+            r#"
+                return {
+                    application = {
+                        fps = 75,
+                        poll_interval = 1.5,
+                    },
+                }
+            "#,
+        )
+        .unwrap();
+
+        let base = base_definition();
+
+        let (definition, warning) = load_lua_definition_or_base(&path, &base);
+
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(warning, None);
+
+        assert_eq!(definition.runtime().fps(), 75,);
+
+        assert_eq!(
+            definition.runtime().default_poll_interval(),
+            Duration::from_millis(1_500),
+        );
+    }
+
+    #[test]
+    fn uses_base_when_file_is_missing() {
+        let path = temporary_path("missing_definition");
+
+        let _ = fs::remove_file(&path);
+
+        let base = base_definition();
+
+        let (definition, warning) = load_lua_definition_or_base(&path, &base);
+
+        assert_eq!(definition, base);
+        assert_eq!(warning, None);
+    }
+
+    #[test]
+    fn uses_base_when_file_is_invalid() {
+        let path = temporary_path("invalid_definition");
+
+        fs::write(&path, "return { application = { fps = 0 } }").unwrap();
+
+        let base = base_definition();
+
+        let (definition, warning) = load_lua_definition_or_base(&path, &base);
+
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(definition, base);
+
+        assert!(
+            warning
+                .expect("invalid file must produce warning")
+                .contains(
+                    "Failed to load Lua application \
+                     definition",
+                ),
+        );
     }
 }

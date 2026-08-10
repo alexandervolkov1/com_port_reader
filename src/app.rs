@@ -13,6 +13,7 @@ use crate::{
     },
     connection::ConnectionId,
     data::SeriesStore,
+    lua_application_definition::{STARTUP_SCRIPT_PATH, load_lua_definition_or_base},
     lua_worker::LuaWorker,
     sample_sink::NullSampleSink,
     serial_connection::SerialConnectionRegistry,
@@ -51,10 +52,13 @@ impl MyApp {
     pub fn new() -> Self {
         let (config, config_warning) = AppConfig::load_or_default(CONFIG_PATH);
 
-        let definition = ApplicationDefinition::try_from(&config).expect(
+        let base_definition = ApplicationDefinition::try_from(&config).expect(
             "loaded application configuration must \
-                 produce a valid application definition",
+                     produce a valid application definition",
         );
+
+        let (definition, lua_definition_warning) =
+            load_lua_definition_or_base(STARTUP_SCRIPT_PATH, &base_definition);
 
         let (log, log_handle) = LogModel::new();
 
@@ -69,6 +73,10 @@ impl MyApp {
             LuaConsoleModel::new(lua_worker.handle(), lua_event_receiver, log_handle.clone());
 
         if let Some(warning) = config_warning {
+            log_handle.error(warning);
+        }
+
+        if let Some(warning) = lua_definition_warning {
             log_handle.error(warning);
         }
 
@@ -146,11 +154,21 @@ impl MyApp {
         }
     }
 
-    fn refresh_application_definition(&mut self) {
-        self.definition = ApplicationDefinition::try_from(&self.config).expect(
-            "settings UI must preserve a valid \
-                     application configuration",
+    fn reload_application_definition(&mut self) {
+        let base_definition = ApplicationDefinition::try_from(&self.config).expect(
+            "saved application settings must \
+                     produce a valid application \
+                     definition",
         );
+
+        let (definition, warning) =
+            load_lua_definition_or_base(STARTUP_SCRIPT_PATH, &base_definition);
+
+        self.definition = definition;
+
+        if let Some(warning) = warning {
+            self.log_handle.error(warning);
+        }
     }
 }
 
@@ -258,7 +276,7 @@ impl eframe::App for MyApp {
 
         let acquisition_running = self.controls.is_running();
 
-        serial_settings_view::show_window(
+        let settings_saved = serial_settings_view::show_window(
             ui.ctx(),
             &mut self.serial_settings,
             &mut self.device_emulator,
@@ -268,7 +286,9 @@ impl eframe::App for MyApp {
             &self.log_handle,
         );
 
-        self.refresh_application_definition();
+        if settings_saved {
+            self.reload_application_definition();
+        }
 
         help_view::show_window(ui.ctx(), &mut self.help);
 

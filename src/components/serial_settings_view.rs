@@ -44,12 +44,12 @@ pub fn show_window(
     acquisition_running: bool,
     config: &mut AppConfig,
     log: &LogHandle,
-) {
+) -> bool {
     let mut open = model.settings_open();
     let mut save_requested = false;
 
     if !open {
-        return;
+        return false;
     }
 
     let serial_settings_locked = acquisition_running || emulator.is_running();
@@ -64,10 +64,7 @@ pub fn show_window(
 
             show_application_settings(ui, &mut config.application);
 
-            ui.small(
-                "FPS and plot point limit apply while editing. \
-                 Poll interval applies when settings are saved.",
-            );
+            ui.small("Application settings apply when saved.");
 
             ui.separator();
 
@@ -150,6 +147,8 @@ pub fn show_window(
             }
         }
     }
+
+    save_requested
 }
 
 fn show_main_port_controls(
