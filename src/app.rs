@@ -41,10 +41,6 @@ pub struct MyApp {
     lua_console: LuaConsoleModel,
     lua_command_receiver: crossbeam_channel::Receiver<UserCommand>,
     log_panel_open: bool,
-
-    // Must be dropped after the application-command
-    // receiver so pending synchronous Lua operations
-    // are disconnected before the Lua thread is joined.
     _lua_worker: LuaWorker,
 }
 
@@ -92,25 +88,64 @@ impl MyApp {
 
         let serial_connections = SerialConnectionRegistry::new();
 
-        let serial_config_store = serial_connections.primary();
-
         let serial_settings = SerialSettingsModel::new(
             ConnectionId::PRIMARY,
             serial_connections.clone(),
             &config.serial,
         );
 
+        for connection in definition.serial_connections() {
+            let connection_id = connection.id();
+
+            let store = if connection_id == ConnectionId::PRIMARY {
+                serial_connections.primary()
+            } else {
+                serial_connections.register(connection_id).expect(
+                    "validated application definition \
+                             must contain unique connection IDs",
+                )
+            };
+
+            store.set(Some(connection.serial_config().clone()));
+        }
+
         let worker_config = WorkerConfig::new(definition.runtime().default_poll_interval());
 
-        let worker = spawn_serial_connection_worker(
-            serial_config_store,
-            event_sender,
+        let primary_worker = spawn_serial_connection_worker(
+            serial_connections.primary(),
+            event_sender.clone(),
             series.clone(),
             Box::new(NullSampleSink::new()),
             worker_config,
         );
 
-        let workers = ConnectionWorkers::new(worker);
+        let mut workers = ConnectionWorkers::new(primary_worker);
+
+        for connection in definition.serial_connections() {
+            let connection_id = connection.id();
+
+            if connection_id == ConnectionId::PRIMARY {
+                continue;
+            }
+
+            let config_store = serial_connections.store(connection_id).expect(
+                "serial connection store was registered \
+                     before spawning its worker",
+            );
+
+            let worker = spawn_serial_connection_worker(
+                config_store,
+                event_sender.clone(),
+                series.clone(),
+                Box::new(NullSampleSink::new()),
+                worker_config,
+            );
+
+            workers.insert(worker).expect(
+                "validated application definition must \
+                 contain unique connection IDs",
+            );
+        }
 
         let connection_router = workers.router();
 
