@@ -5,12 +5,11 @@ use crate::{
     app_log::LogModel,
     application_definition::ApplicationDefinition,
     application_paths::ApplicationPaths,
-    application_runtime::ApplicationRuntime,
+    application_runtime::{ApplicationRuntime, CommandDispatcher},
     components::{
-        command_model::CommandModel, controls_model::ControlsModel, controls_view,
-        device_emulator_model::DeviceEmulatorModel, help_model::HelpModel, help_view, log_view,
-        lua_console_model::LuaConsoleModel, lua_console_view, plot_model::PlotModel, plot_view,
-        series_view,
+        controls_model::ControlsModel, controls_view, device_emulator_model::DeviceEmulatorModel,
+        help_model::HelpModel, help_view, log_view, lua_console_model::LuaConsoleModel,
+        lua_console_view, plot_model::PlotModel, plot_view, series_view,
     },
     connection::ConnectionId,
     data::SeriesStore,
@@ -165,7 +164,7 @@ impl MyApp {
 
         let controls = ControlsModel::new(workers, log_handle.clone());
 
-        let command = CommandModel::new(
+        let command_dispatcher = CommandDispatcher::new(
             connection_router,
             serial_connections,
             definition.clone(),
@@ -173,8 +172,12 @@ impl MyApp {
             log_handle.clone(),
         );
 
-        let runtime =
-            ApplicationRuntime::new(controls, command, device_emulator, lua_command_receiver);
+        let runtime = ApplicationRuntime::new(
+            controls,
+            command_dispatcher,
+            device_emulator,
+            lua_command_receiver,
+        );
 
         Self {
             runtime,

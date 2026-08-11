@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-pub struct CommandModel {
+pub(crate) struct CommandDispatcher {
     connections: ConnectionRouter,
     serial_connections: SerialConnectionRegistry,
     application_definition: ApplicationDefinition,
@@ -22,7 +22,7 @@ pub struct CommandModel {
     log: LogHandle,
 }
 
-impl CommandModel {
+impl CommandDispatcher {
     pub fn new(
         connections: ConnectionRouter,
         serial_connections: SerialConnectionRegistry,

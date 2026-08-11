@@ -4,7 +4,6 @@ use crossbeam_channel::Receiver;
 
 use crate::{
     components::{
-        command_model::CommandModel,
         controls_model::{ControlsModel, RecordingTransition},
         device_emulator_model::DeviceEmulatorModel,
     },
@@ -12,23 +11,27 @@ use crate::{
     user_command::UserCommand,
 };
 
+mod command_dispatcher;
+
+pub(crate) use command_dispatcher::CommandDispatcher;
+
 pub struct ApplicationRuntime {
     controls: ControlsModel,
-    commands: CommandModel,
+    dispatcher: CommandDispatcher,
     device_emulator: DeviceEmulatorModel,
     lua_command_receiver: Receiver<UserCommand>,
 }
 
 impl ApplicationRuntime {
-    pub fn new(
+    pub(crate) fn new(
         controls: ControlsModel,
-        commands: CommandModel,
+        dispatcher: CommandDispatcher,
         device_emulator: DeviceEmulatorModel,
         lua_command_receiver: Receiver<UserCommand>,
     ) -> Self {
         Self {
             controls,
-            commands,
+            dispatcher,
             device_emulator,
             lua_command_receiver,
         }
@@ -37,7 +40,7 @@ impl ApplicationRuntime {
     pub fn poll(&mut self) {
         self.device_emulator.poll();
 
-        self.commands.poll_events(&mut self.controls);
+        self.dispatcher.poll_events(&mut self.controls);
 
         let commands = self.lua_command_receiver.try_iter().collect::<Vec<_>>();
 
@@ -47,7 +50,7 @@ impl ApplicationRuntime {
     }
 
     pub fn execute(&mut self, command: UserCommand) {
-        self.commands
+        self.dispatcher
             .execute(command, &mut self.controls, &mut self.device_emulator);
     }
 
@@ -72,10 +75,10 @@ impl ApplicationRuntime {
     }
 
     pub fn set_series_visibility(&self, id: SeriesId, visible: bool) {
-        self.commands.set_visibility(id, visible);
+        self.dispatcher.set_visibility(id, visible);
     }
 
     pub fn remove_series(&self, id: SeriesId) {
-        self.commands.remove_series(id);
+        self.dispatcher.remove_series(id);
     }
 }
