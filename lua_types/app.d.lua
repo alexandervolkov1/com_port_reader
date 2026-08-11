@@ -1,9 +1,71 @@
 ---@meta
 
+---@alias SerialParity
+---| '"none"'
+---| '"even"'
+---| '"odd"'
+
+---@alias SerialFlowControl
+---| '"none"'
+---| '"software"'
+---| '"hardware"'
+
+---@alias ParameterAccess
+---| '"read_only"'
+---| '"write_only"'
+---| '"read_write"'
+
+---@alias ParameterValueType
+---| '"boolean"'
+---| '"integer"'
+---| '"number"'
+
+---@alias InstrumentValue
+---| boolean
+---| integer
+---| number
+
+---@class RuntimeDefinition
+---@field fps? integer GUI refresh rate. Default: 30.
+---@field poll_interval? number Default series polling interval in seconds. Default: 1.0.
+---@field plot_window? number Live plot window in seconds. Default: 3600.0.
+---@field max_plot_points_per_series? integer Maximum number of points prepared for one visible series. Default: 4000.
+
+---@class SerialConnectionDefinition
+---@field port string COM port name.
+---@field baud_rate? integer Baud rate. Default: 9600.
+---@field data_bits? integer Data bits: 5, 6, 7 or 8. Default: 8.
+---@field parity? SerialParity Default: "none".
+---@field stop_bits? integer Stop bits: 1 or 2. Default: 1.
+---@field flow_control? SerialFlowControl Default: "none".
+---@field timeout? number Read timeout in seconds. Default: 0.25.
+
+---@class EmulatorDefinition
+---@field connection string Name of the client connection whose serial-line settings are used.
+---@field port string Server side of the virtual COM-port pair.
+---@field script string Path to the Lua virtual-instrument model.
+
+---@class ApplicationDefinition
+---@field application? RuntimeDefinition
+---@field connections? table<string, SerialConnectionDefinition>
+---@field emulator? EmulatorDefinition
+---@field setup? fun() Called once after the application Lua API is installed.
+
+---@class SeriesOptions
+---@field name? string Optional unique series name.
+---@field interval? number Polling interval in seconds. The application default is used when omitted.
+
+---@class SerialSeriesOptions: SeriesOptions
+---@field connection? string Serial connection name. Default: "primary".
+
+---@class SerialCommandOptions
+---@field connection? string Serial connection name. Default: "primary".
+
 ---@class Metakon5x3Options
+---@field connection? string Serial connection name. Default: "primary".
 ---@field device? integer Device address from 0 to 255. Default: 1.
 ---@field channel? integer Device channel from 0 to 255. Default: 0.
----@field scale? number Multiplier applied to measurement, setpoint and comparator threshold series. Default: 1.0.
+---@field scale? number Positive multiplier applied to scaled parameters. Default: 1.0.
 
 ---@alias Metakon5x3Parameter
 ---| '"channel_type"'
@@ -22,121 +84,122 @@
 ---| '"lower_hysteresis"'
 ---| '"lower_output"'
 
+---@class InstrumentParameterInfo
+---@field key string Machine-readable parameter key.
+---@field name string Human-readable parameter name.
+---@field access ParameterAccess
+---@field value_type ParameterValueType
+---@field series? boolean Whether the parameter can be added as a periodic series.
+---@field unit? string Physical unit.
+---@field minimum? number Minimum accepted value.
+---@field maximum? number Maximum accepted value.
+---@field scale? number Scale used by the typed instrument driver.
+
 ---@class Metakon5x3
 local Metakon5x3 = {}
 
----Adds a periodically sampled instrument parameter.
----@param parameter Metakon5x3Parameter
----@param name? string Optional unique series name.
-function Metakon5x3:add(parameter, name) end
+---Returns the typed Metakon parameter descriptors.
+---@return InstrumentParameterInfo[]
+function Metakon5x3:parameters() end
 
----Reads one instrument parameter immediately.
+---Adds a periodically sampled Metakon parameter.
 ---
----The operation is queued behind any periodic acquisition
----that is currently due. The result or communication error
----is also written to the application log.
+---The second argument may be:
+---* omitted;
+---* a series name string;
+---* a SeriesOptions table.
 ---@param parameter Metakon5x3Parameter
----@return number|boolean
+---@param options? string|SeriesOptions
+function Metakon5x3:add(
+    parameter,
+    options
+)
+end
+
+---Reads one Metakon parameter immediately.
+---
+---The operation is queued behind periodic polling
+---that is already due. The result or communication
+---error is also written to the application log.
+---@param parameter Metakon5x3Parameter
+---@return InstrumentValue
 function Metakon5x3:read(parameter) end
 
----Writes one instrument parameter and reads it back.
+---Writes one writable Metakon parameter.
 ---
----Returns the actual value reported by the instrument
----after writing.
+---After writing, the driver reads the parameter back
+---and returns the actual value reported by the device.
 ---@param parameter Metakon5x3Parameter
----@param value integer|boolean
----@return integer|boolean
-function Metakon5x3:write(parameter, value) end
+---@param value InstrumentValue
+---@return InstrumentValue
+function Metakon5x3:write(
+    parameter,
+    value
+)
+end
 
----Changes the output power.
----
----The value must be an integer from -100 to 100.
----The instrument can alter the written value according
----to its current operating mode and control algorithm.
----@param value integer
-function Metakon5x3:output_power(value) end
+---@class VirtualInstrumentOptions
+---@field connection? string Serial connection name. Default: "primary".
+---@field id? integer One-based virtual instrument ID. Default: 1.
 
----Changes the upper-comparator setpoint.
----
----The value must be an integer from -999 to 9999.
----The controller scale is not applied when writing.
----@param value integer
-function Metakon5x3:upper_setpoint(value) end
+---@class VirtualInstrument
+local VirtualInstrument = {}
 
----Changes the upper-comparator hysteresis.
----
----The value must be an integer from 0 to 255.
----The controller scale is not applied when writing.
----@param value integer
-function Metakon5x3:upper_hysteresis(value) end
+---Returns the one-based virtual instrument ID.
+---@return integer
+function VirtualInstrument:id() end
 
----Changes the upper-comparator output state.
----
----The instrument can alter the written state according
----to its current control algorithm.
----@param value boolean
-function Metakon5x3:upper_output(value) end
+---Returns the instrument name declared by its Lua model.
+---@return string
+function VirtualInstrument:name() end
 
----Changes the lower-comparator setpoint.
----
----The value must be an integer from -999 to 9999.
----The controller scale is not applied when writing.
----@param value integer
-function Metakon5x3:lower_setpoint(value) end
+---Returns parameter descriptors discovered from the emulator.
+---@return InstrumentParameterInfo[]
+function VirtualInstrument:parameters() end
 
----Changes the lower-comparator hysteresis.
+---Adds a readable series-enabled virtual parameter.
 ---
----The value must be an integer from 0 to 255.
----The controller scale is not applied when writing.
----@param value integer
-function Metakon5x3:lower_hysteresis(value) end
+---The second argument may be:
+---* omitted;
+---* a series name string;
+---* a SeriesOptions table.
+---@param parameter string
+---@param options? string|SeriesOptions
+function VirtualInstrument:add(
+    parameter,
+    options
+)
+end
 
----Changes the lower-comparator output state.
----
----The instrument can alter the written state according
----to its current control algorithm.
----@param value boolean
-function Metakon5x3:lower_output(value) end
+---Reads one virtual instrument parameter immediately.
+---@param parameter string
+---@return InstrumentValue
+function VirtualInstrument:read(parameter) end
 
----Changes the PID setpoint.
+---Writes one writable virtual instrument parameter.
 ---
----The value must be an integer from -999 to 9999.
----The controller scale is not applied when writing.
----@param value integer
-function Metakon5x3:setpoint(value) end
-
----Changes the PID proportional band.
----
----The value must be an integer from 1 to 9999.
----@param value integer
-function Metakon5x3:proportional_band(value) end
-
----Changes the PID integral time.
----
----The value is specified in seconds and must be
----an integer from 1 to 30000.
----@param value integer
-function Metakon5x3:integral_time(value) end
-
----Changes the PID derivative time.
----
----The value is specified in seconds and must be
----an integer from 0 to 255.
----@param value integer
-function Metakon5x3:derivative_time(value) end
+---Returns the actual value returned by the virtual model.
+---@param parameter string
+---@param value InstrumentValue
+---@return InstrumentValue
+function VirtualInstrument:write(
+    parameter,
+    value
+)
+end
 
 ---@class ApplicationApi
 app = {}
 
----Starts periodic data acquisition.
+---Starts periodic acquisition on every configured connection.
 function app.start() end
 
----Stops periodic data acquisition.
+---Stops periodic acquisition on every configured connection.
 ---
 ---Active CSV recording remains open but is paused.
 function app.stop() end
 
----Removes all series and their accumulated samples.
+---Removes every series and all accumulated samples.
 function app.clear() end
 
 ---Writes an informational message to the application log.
@@ -144,12 +207,14 @@ function app.clear() end
 function app.log(message) end
 
 ---Starts CSV recording and creates a new protocol file.
+---
+---Recording currently belongs to the primary worker.
 function app.start_rec() end
 
----Stops CSV recording and closes the current protocol file.
+---Flushes and closes the active CSV protocol file.
 function app.stop_rec() end
 
----Starts the selected device emulator.
+---Starts the emulator configured in startup.lua.
 function app.start_emu() end
 
 ---Stops the running device emulator.
@@ -158,40 +223,52 @@ function app.stop_emu() end
 ---Adds a periodically sampled text-command serial series.
 ---
 ---The response must contain one finite number.
----@param command string Command sent during every acquisition cycle.
----@param name? string Optional unique series name.
+---
+---The second argument may be:
+---* omitted;
+---* a series name string;
+---* a SerialSeriesOptions table.
+---@param command string
+---@param options? string|SerialSeriesOptions
 function app.add_serial(
     command,
-    name
+    options
 )
 end
 
 ---Creates a typed Metakon 5X3 controller.
----
----Default values:
----device = 1
----channel = 0
----scale = 1.0
 ---@param options? Metakon5x3Options
 ---@return Metakon5x3
 function app.metakon(options) end
 
+---Discovers and creates a virtual instrument controller.
+---
+---The server or device emulator must already be running.
+---@param options? VirtualInstrumentOptions
+---@return VirtualInstrument
+function app.virtual_instrument(options) end
+
 ---Deletes a series by name.
----@param name string Existing series name.
+---@param name string
 function app.delete(name) end
 
 ---Renames an existing series.
----@param current_name string Existing series name.
----@param new_name string New unique series name.
+---@param current_name string
+---@param new_name string
 function app.rename(
     current_name,
     new_name
 )
 end
 
----Sends one text command through the selected serial port.
+---Sends one text command through a serial connection.
 ---
----The response or communication error is written to
----the application log.
----@param command string Command text.
-function app.send_serial(command) end
+---The response or communication error is written
+---to the application log.
+---@param command string
+---@param options? SerialCommandOptions
+function app.send_serial(
+    command,
+    options
+)
+end

@@ -1,10 +1,157 @@
 use eframe::egui;
 
-use super::help_model::HelpModel;
+use super::help_model::{HelpLanguage, HelpModel};
+
+const STARTUP_EXAMPLE: &str = r#"local definition = {
+    application = {
+        fps = 20,
+        poll_interval = 1.0,
+        plot_window = 3600.0,
+        max_plot_points_per_series = 1000,
+    },
+
+    connections = {
+        primary = {
+            port = "COM3",
+            baud_rate = 9600,
+            data_bits = 8,
+            parity = "none",
+            stop_bits = 1,
+            flow_control = "none",
+            timeout = 0.25,
+        },
+    },
+
+    emulator = {
+        connection = "primary",
+        port = "COM4",
+        script = "emulator_scripts/sine_generator.lua",
+    },
+}
+
+function definition.setup()
+    app.log("Application initialized.")
+end
+
+return definition"#;
+
+const SERIAL_SERIES_EXAMPLE: &str = r#"app.add_serial(
+    "read temperature",
+    {
+        name = "temperature",
+        connection = "primary",
+        interval = 0.5,
+    }
+)"#;
+
+const METAKON_EXAMPLE: &str = r#"controller = app.metakon({
+    connection = "primary",
+    device = 15,
+    channel = 0,
+    scale = 1.0,
+})
+
+controller:add(
+    "measurement",
+    {
+        name = "temperature",
+        interval = 1.0,
+    }
+)
+
+controller:add("setpoint", "setpoint")
+controller:add("output_power", "power")
+
+app.start()"#;
+
+const METAKON_REPL_EXAMPLE: &str = r#"controller:read("measurement")
+controller:write("setpoint", 150)
+controller:write("proportional_band", 20)"#;
+
+const VIRTUAL_INSTRUMENT_EXAMPLE: &str = r#"app.start_emu()
+
+generator = app.virtual_instrument({
+    connection = "primary",
+    id = 1,
+})
+
+generator:write("amplitude", 100.0)
+generator:write("period", 300.0)
+generator:write("phase", 0.0)
+
+generator:add(
+    "value",
+    {
+        name = "virtual_sine",
+        interval = 0.25,
+    }
+)
+
+app.start()"#;
+
+const VIRTUAL_MODEL_EXAMPLE: &str = r#"local amplitude = 1.0
+
+instruments = {
+    {
+        name = "Generator",
+
+        parameters = {
+            {
+                key = "value",
+                name = "Signal value",
+                type = "number",
+                access = "read_only",
+                series = true,
+                unit = "V",
+                min = -1000.0,
+                max = 1000.0,
+            },
+
+            {
+                key = "amplitude",
+                name = "Amplitude",
+                type = "number",
+                access = "read_write",
+                min = 0.0,
+                max = 1000.0,
+            },
+        },
+    },
+}
+
+function read(
+    instrument_id,
+    parameter,
+    time
+)
+    if parameter == "value" then
+        return amplitude * math.sin(time)
+    end
+
+    if parameter == "amplitude" then
+        return amplitude
+    end
+
+    error("unknown parameter: " .. parameter)
+end
+
+function write(
+    instrument_id,
+    parameter,
+    value,
+    time
+)
+    if parameter == "amplitude" then
+        amplitude = value
+        return amplitude
+    end
+
+    error("parameter is not writable: " .. parameter)
+end"#;
 
 pub fn show_menu_button(ui: &mut egui::Ui, model: &mut HelpModel) {
     ui.menu_button("Help", |ui| {
-        if ui.button("Lua reference").clicked() {
+        if ui.button("Lua reference / Справка Lua").clicked() {
             model.open_command_reference();
             ui.close();
         }
@@ -18,20 +165,43 @@ pub fn show_window(context: &egui::Context, model: &mut HelpModel) {
         return;
     }
 
-    egui::Window::new("Lua reference")
+    let mut language = model.language();
+
+    egui::Window::new("Lua reference / Справка Lua")
         .open(&mut open)
-        .default_size(egui::vec2(760.0, 650.0))
+        .default_size(egui::vec2(780.0, 680.0))
         .resizable(true)
         .show(context, |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut language, HelpLanguage::English, "English");
+
+                ui.selectable_value(&mut language, HelpLanguage::Russian, "Русский");
+            });
+
+            ui.separator();
+
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
-                .show(ui, show_lua_reference);
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+
+                    match language {
+                        HelpLanguage::English => {
+                            show_english_reference(ui);
+                        }
+
+                        HelpLanguage::Russian => {
+                            show_russian_reference(ui);
+                        }
+                    }
+                });
         });
 
+    model.set_language(language);
     model.set_command_reference_open(open);
 }
 
-fn show_lua_reference(ui: &mut egui::Ui) {
+fn show_english_reference(ui: &mut egui::Ui) {
     ui.heading("Lua environments");
 
     ui.label(
@@ -40,641 +210,897 @@ fn show_lua_reference(ui: &mut egui::Ui) {
     );
 
     ui.label(
-        "Application scripts control acquisition, \
-         recording, series, instruments and the \
-         device emulator through the global 'app' \
+        "Application scripts and the REPL control \
+         acquisition, series, instruments, recording \
+         and the device emulator through the global \
+         'app' table.",
+    );
+
+    ui.label(
+        "Device-model scripts run inside the emulator \
+         and describe virtual instruments. They do \
+         not have access to the application 'app' \
          table.",
     );
 
-    ui.label(
-        "Device model scripts implement the behaviour \
-         of a virtual instrument. They communicate \
-         with the application through the configured \
-         virtual COM-port pair.",
-    );
-
-    ui.separator();
-
-    ui.heading("Lua REPL");
+    section(ui, "Application configuration");
 
     ui.label(
-        "Enter a Lua expression or a multiline Lua \
-         statement in the editor.",
+        "The application reads startup.lua from the \
+         current working directory. The script must \
+         return one table.",
     );
 
     ui.label(
-        "Press Ctrl+Enter or click Execute to run \
-         the entered code.",
+        "Supported root sections are application, \
+         connections, emulator and setup.",
     );
 
     ui.label(
-        "Commands, returned values and Lua errors are \
-         displayed in the REPL history.",
+        "Keep the top level of startup.lua free of \
+         side effects. It is evaluated once for \
+         validation and once by the application Lua \
+         runtime. Put application actions inside \
+         setup().",
+    );
+
+    code(ui, STARTUP_EXAMPLE);
+
+    ui.label(
+        "Relative paths, including the emulator model \
+         path, are resolved from the current working \
+         directory.",
+    );
+
+    section(ui, "Runtime options");
+
+    reference(
+        ui,
+        "fps",
+        "GUI repaint rate from 1 to 240 frames per \
+         second. Default: 30.",
+    );
+
+    reference(
+        ui,
+        "poll_interval",
+        "Default polling interval in seconds. \
+         Default: 1.0.",
+    );
+
+    reference(
+        ui,
+        "plot_window",
+        "Live plot window in seconds. Default: \
+         3600.0.",
+    );
+
+    reference(
+        ui,
+        "max_plot_points_per_series",
+        "Maximum number of prepared points for one \
+         visible series. Default: 4000.",
+    );
+
+    section(ui, "Serial connections");
+
+    ui.label(
+        "Every entry in the connections table creates \
+         one independent acquisition worker and one \
+         serial connection.",
     );
 
     ui.label(
-        "Actions affecting the application are also \
-         written to the application log.",
+        "Commands to instruments on the same \
+         connection are executed sequentially. \
+         Different connections are processed by \
+         independent worker threads.",
+    );
+
+    ui.label(
+        "A non-empty connections table must contain \
+         a connection named 'primary'. Other names \
+         may be chosen freely and are used by the \
+         Lua API.",
+    );
+
+    reference(ui, "port", "Required COM port name.");
+
+    reference(ui, "baud_rate", "Baud rate. Default: 9600.");
+
+    reference(ui, "data_bits", "Data bits: 5, 6, 7 or 8. Default: 8.");
+
+    reference(
+        ui,
+        "parity",
+        "\"none\", \"even\" or \"odd\". Default: \
+         \"none\".",
+    );
+
+    reference(ui, "stop_bits", "One or two stop bits. Default: 1.");
+
+    reference(
+        ui,
+        "flow_control",
+        "\"none\", \"software\" or \"hardware\". \
+         Default: \"none\".",
+    );
+
+    reference(ui, "timeout", "Read timeout in seconds. Default: 0.25.");
+
+    section(ui, "Setup function");
+
+    reference(
+        ui,
+        "setup = function() ... end",
+        "Runs once after the application Lua API has \
+         been installed. It may add series, start the \
+         emulator, start acquisition or define global \
+         REPL helpers.",
+    );
+
+    ui.label(
+        "If setup fails, the Lua runtime reports the \
+         error and is disconnected. Commands sent \
+         before the failure may already have reached \
+         the application.",
+    );
+
+    section(ui, "Lua REPL");
+
+    ui.label(
+        "The REPL and files selected with Run script \
+         share one persistent Lua runtime.",
     );
 
     ui.label(
         "Variables and functions remain available \
-         between REPL commands and executed scripts.",
+         between commands and executed scripts.",
     );
 
     ui.label(
-        "Use 'Run script...' to execute a Lua file. \
-         The file is evaluated by the same runtime \
-         as the REPL.",
+        "Press Ctrl+Enter or click Execute to run the \
+         current multiline input.",
     );
 
-    ui.separator();
+    ui.label(
+        "Returned values and Lua errors appear in the \
+         REPL history. Application actions are also \
+         written to the application log.",
+    );
 
-    ui.heading("Acquisition");
+    section(ui, "Application commands");
 
     reference(
         ui,
         "app.start()",
-        "Starts periodic acquisition using the poll \
-         interval configured in Settings.",
+        "Starts periodic acquisition on every \
+         configured connection.",
     );
 
     reference(
         ui,
         "app.stop()",
-        "Stops periodic acquisition. Active CSV \
-         recording remains open and paused.",
+        "Stops periodic acquisition. Active recording \
+         remains open and paused.",
     );
 
     reference(
         ui,
         "app.clear()",
-        "Removes all series and their accumulated \
-         samples.",
+        "Removes all series and accumulated samples.",
     );
 
     reference(
         ui,
         "app.log(message)",
-        "Writes an informational message from Lua to \
-         the application log.",
-    );
-
-    ui.separator();
-
-    ui.heading("Serial series");
-
-    reference(
-        ui,
-        "app.add_serial(command)",
-        "Adds a periodically sampled text-command \
-         serial series. A unique name is generated \
-         automatically.",
+        "Writes an informational message to the \
+         application log.",
     );
 
     reference(
         ui,
-        "app.add_serial(command, name)",
-        "Adds a periodically sampled text-command \
-         serial series with an explicit name.",
+        "app.start_emu()",
+        "Starts the emulator configured in startup.lua.",
     );
 
-    ui.monospace(
-        "app.add_serial(\n\
-         \x20   \"read temperature\",\n\
-         \x20   \"temperature\"\n\
-         )",
-    );
+    reference(ui, "app.stop_emu()", "Stops the running emulator.");
 
-    ui.add_space(8.0);
+    section(ui, "Series options");
 
     ui.label(
-        "The response must be parseable as one finite \
-         f64 value.",
+        "A series argument may be omitted, specified \
+         as a name string, or specified as an options \
+         table.",
     );
 
-    ui.label(
-        "Series names must be unique and cannot \
-         contain whitespace.",
-    );
-
-    ui.separator();
-
-    ui.heading("Metakon 5X3 controller");
+    reference(ui, "name", "Optional unique series name.");
 
     reference(
         ui,
-        "controller = app.metakon()",
-        "Creates a Metakon 5X3 controller using the \
-         default device, channel and scale.",
+        "interval",
+        "Optional polling interval in seconds. The \
+         application default is used when omitted.",
     );
+
+    ui.label(
+        "Text-command serial series additionally \
+         accept the connection option.",
+    );
+
+    code(ui, SERIAL_SERIES_EXAMPLE);
+
+    section(ui, "Text serial commands");
 
     reference(
         ui,
-        "controller = app.metakon(options)",
-        "Creates a controller with explicitly \
-         configured instrument parameters.",
-    );
-
-    ui.monospace(
-        "controller = app.metakon({\n\
-         \x20   device = 15,\n\
-         \x20   channel = 0,\n\
-         \x20   scale = 1.0,\n\
-         })",
-    );
-
-    ui.add_space(8.0);
-
-    ui.strong("Defaults:");
-
-    ui.monospace(
-        "device = 1\n\
-         channel = 0\n\
-         scale = 1.0",
-    );
-
-    ui.add_space(8.0);
-
-    ui.label(
-        "Assign the controller to a global variable \
-         if it must remain available from the REPL \
-         after a script finishes.",
-    );
-
-    ui.label(
-        "The Rust driver selects register addresses, \
-         data types and valid value ranges. Lua code \
-         does not need to know the register map.",
-    );
-
-    ui.label(
-        "Before the first operation on a device \
-         channel, the driver verifies that it is a \
-         Metakon 5X3 channel.",
-    );
-
-    ui.label(
-        "Unknown app.metakon option names are \
-         rejected.",
-    );
-
-    ui.separator();
-
-    ui.heading("Metakon parameters");
-
-    reference(
-        ui,
-        "controller:add(parameter)",
-        "Adds a periodically sampled instrument \
-         parameter with an automatically generated \
-         series name.",
+        "app.add_serial(command, options)",
+        "Adds a periodically sampled text command. \
+         Its response must contain one finite number.",
     );
 
     reference(
         ui,
-        "controller:add(parameter, name)",
-        "Adds a periodically sampled instrument \
-         parameter with an explicit series name.",
+        "app.send_serial(command, options)",
+        "Sends one text command immediately and writes \
+         its response or error to the application log.",
+    );
+
+    code(
+        ui,
+        r#"app.send_serial(
+    "status",
+    {
+        connection = "primary",
+    }
+)"#,
+    );
+
+    section(ui, "Metakon 5X3");
+
+    reference(
+        ui,
+        "app.metakon(options)",
+        "Creates a typed Metakon 5X3 controller.",
+    );
+
+    ui.label(
+        "Controller options are connection, device, \
+         channel and scale. Defaults are primary, 1, \
+         0 and 1.0.",
+    );
+
+    reference(
+        ui,
+        "controller:parameters()",
+        "Returns typed parameter descriptors, access \
+         modes, ranges and effective scales.",
+    );
+
+    reference(
+        ui,
+        "controller:add(parameter, options)",
+        "Adds a readable parameter as a periodic \
+         series.",
     );
 
     reference(
         ui,
         "controller:read(parameter)",
-        "Reads one instrument parameter immediately \
-         and returns a number or Boolean value to Lua. \
-         The result or communication error is also \
-         written to the application log.",
+        "Performs one queued read and returns a number \
+         or Boolean value.",
     );
 
-    ui.monospace(
-        "controller:add(\"measurement\", \"temperature\")\n\
-         controller:add(\"setpoint\", \"setpoint\")\n\
-         controller:add(\"output_power\", \"power\")",
+    reference(
+        ui,
+        "controller:write(parameter, value)",
+        "Performs one queued write, reads the parameter \
+         back and returns its actual value.",
     );
 
-    ui.add_space(8.0);
-
-    ui.monospace(
-        "local temperature = \
-         controller:read(\"measurement\")\n\
-         local heater_on = \
-         controller:read(\"pwm_positive\")",
+    ui.label(
+        "Periodic polling that is already due has \
+         priority over interactive reads and writes.",
     );
-
-    ui.add_space(8.0);
 
     ui.label(
         "Available parameters: channel_type, \
          measurement, setpoint, proportional_band, \
          integral_time, derivative_time, output_power, \
          pwm_positive, pwm_negative, upper_setpoint, \
-         upper_hysteresis, upper_output, lower_setpoint, \
-         lower_hysteresis and lower_output.",
+         upper_hysteresis, upper_output, \
+         lower_setpoint, lower_hysteresis and \
+         lower_output.",
     );
 
-    ui.label(
-        "The controller scale is applied to measurement, \
-         setpoint and comparator threshold values.",
-    );
+    code(ui, METAKON_EXAMPLE);
+    code(ui, METAKON_REPL_EXAMPLE);
 
-    ui.label(
-        "Boolean parameters return true or false from \
-         read(). In periodic series they are stored as \
-         1 or 0.",
-    );
-
-    ui.label(
-        "Output power ranges from -100 to 100. PWM states \
-         show the instantaneous output state at the \
-         polling moment.",
-    );
-
-    ui.label(
-        "Parameter names are stable Lua identifiers. \
-         Register addresses and wire data types remain \
-         inside the Rust driver.",
-    );
-
-    ui.label(
-        "Periodic acquisition has priority over an \
-         immediate read request.",
-    );
-
-    ui.label(
-        "When acquisition is stopped, an immediate read \
-         opens the selected COM port temporarily and \
-         closes it after the operation.",
-    );
-
-    ui.separator();
-
-    ui.heading("PID control");
+    section(ui, "Virtual instruments");
 
     reference(
         ui,
-        "controller:setpoint(value)",
-        "Changes the PID setpoint. The value must be \
-         an integer from -999 to 9999.",
+        "app.virtual_instrument(options)",
+        "Discovers a virtual instrument through the \
+         selected connection. The emulator or another \
+         compatible server must already be running.",
+    );
+
+    ui.label(
+        "Options are connection and the one-based \
+         instrument id. Both default to primary and 1.",
     );
 
     reference(
         ui,
-        "controller:proportional_band(value)",
-        "Changes the PID proportional band. The value \
-         must be an integer from 1 to 9999.",
+        "instrument:id()",
+        "Returns the one-based instrument ID.",
     );
 
     reference(
         ui,
-        "controller:integral_time(value)",
-        "Changes the PID integral time in seconds. \
-         The value must be an integer from 1 to \
-         30000.",
+        "instrument:name()",
+        "Returns the model-defined instrument name.",
     );
 
     reference(
         ui,
-        "controller:derivative_time(value)",
-        "Changes the PID derivative time in seconds. \
-         The value must be an integer from 0 to 255.",
+        "instrument:parameters()",
+        "Returns discovered parameter descriptors.",
     );
 
-    ui.monospace(
-        "controller:setpoint(150)\n\
-         controller:proportional_band(250)\n\
-         controller:integral_time(120)\n\
-         controller:derivative_time(10)",
+    reference(
+        ui,
+        "instrument:add(parameter, options)",
+        "Adds a readable parameter marked as \
+         series-enabled.",
     );
 
-    ui.add_space(8.0);
+    reference(
+        ui,
+        "instrument:read(parameter)",
+        "Reads one parameter immediately.",
+    );
+
+    reference(
+        ui,
+        "instrument:write(parameter, value)",
+        "Writes one parameter and returns the actual \
+         value returned by the model.",
+    );
+
+    code(ui, VIRTUAL_INSTRUMENT_EXAMPLE);
+
+    section(ui, "Virtual instrument models");
 
     ui.label(
-        "The controller scale is not applied when \
-         writing PID parameters.",
-    );
-
-    ui.separator();
-
-    ui.heading("Output-power control");
-
-    reference(
-        ui,
-        "controller:output_power(value)",
-        "Writes the output power. The value must be \
-         an integer from -100 to 100.",
-    );
-
-    ui.monospace("controller:output_power(50)");
-
-    ui.add_space(8.0);
-
-    ui.label(
-        "The instrument can change the written output \
-         power according to its operating mode and \
-         control algorithm.",
+        "The emulator model path is selected by the \
+         emulator.script field in startup.lua.",
     );
 
     ui.label(
-        "After every write, the application reads the \
-         register back and reports the resulting \
-         value.",
-    );
-
-    ui.separator();
-
-    ui.heading("Comparator control");
-
-    reference(
-        ui,
-        "controller:upper_setpoint(value)",
-        "Changes the upper-comparator setpoint. The \
-         value must be an integer from -999 to 9999.",
-    );
-
-    reference(
-        ui,
-        "controller:upper_hysteresis(value)",
-        "Changes the upper-comparator hysteresis. The \
-         value must be an integer from 0 to 255.",
-    );
-
-    reference(
-        ui,
-        "controller:upper_output(value)",
-        "Writes the upper-comparator output state. \
-         The value must be true or false.",
-    );
-
-    reference(
-        ui,
-        "controller:lower_setpoint(value)",
-        "Changes the lower-comparator setpoint. The \
-         value must be an integer from -999 to 9999.",
-    );
-
-    reference(
-        ui,
-        "controller:lower_hysteresis(value)",
-        "Changes the lower-comparator hysteresis. The \
-         value must be an integer from 0 to 255.",
-    );
-
-    reference(
-        ui,
-        "controller:lower_output(value)",
-        "Writes the lower-comparator output state. \
-         The value must be true or false.",
-    );
-
-    ui.monospace(
-        "controller:upper_setpoint(200)\n\
-         controller:upper_hysteresis(5)\n\
-         controller:upper_output(true)\n\n\
-         controller:lower_setpoint(100)\n\
-         controller:lower_hysteresis(5)\n\
-         controller:lower_output(false)",
-    );
-
-    ui.add_space(8.0);
-
-    ui.label(
-        "The controller scale is not applied when \
-         writing comparator parameters.",
+        "A model must define a global instruments \
+         array. Array positions become one-based \
+         instrument IDs.",
     );
 
     ui.label(
-        "The instrument may change a written output \
-         state according to its current algorithm.",
-    );
-
-    ui.separator();
-
-    ui.heading("Metakon command scheduling");
-
-    ui.label(
-        "Metakon read and write operations are queued \
-         in the acquisition worker.",
+        "Every instrument contains a name and a \
+         non-empty parameters array.",
     );
 
     ui.label(
-        "Periodic acquisition has priority over \
-         interactive read and write commands.",
+        "Parameter fields are key, name, type, access, \
+         series, unit, min and max. Name defaults to \
+         key, access defaults to read_only and series \
+         defaults to false.",
     );
 
     ui.label(
-        "After every write, the driver reads the same \
-         parameter back and reports its actual value \
-         or an error.",
-    );
-
-    ui.separator();
-
-    ui.heading("Series management");
-
-    reference(
-        ui,
-        "app.delete(name)",
-        "Deletes the named series and all its \
-         accumulated samples.",
+        "Supported types are boolean, integer and \
+         number. Supported access modes are read_only, \
+         write_only and read_write. Min and max must \
+         either both be present or both be absent.",
     );
 
     reference(
         ui,
-        "app.rename(current_name, new_name)",
-        "Renames an existing series without changing \
-         its samples.",
+        "read(instrument_id, parameter, time)",
+        "Required when the model has at least one \
+         readable parameter. Time is elapsed seconds \
+         since emulator startup.",
     );
-
-    ui.monospace(
-        "app.rename(\n\
-         \x20   \"temperature\",\n\
-         \x20   \"furnace_temperature\"\n\
-         )\n\n\
-         app.delete(\"furnace_temperature\")",
-    );
-
-    ui.separator();
-
-    ui.heading("Serial commands");
 
     reference(
         ui,
-        "app.send_serial(command)",
-        "Sends one text command to the application \
-         COM port and writes its response to the log.",
+        "write(instrument_id, parameter, value, time)",
+        "Required when the model has at least one \
+         writable parameter. It must return the actual \
+         stored value.",
     );
 
-    ui.monospace(
-        "app.send_serial(\n\
-         \x20   \"set amplitude 25\"\n\
-         )",
-    );
+    code(ui, VIRTUAL_MODEL_EXAMPLE);
 
-    ui.add_space(8.0);
-
-    ui.label(
-        "The application COM port and serial-line \
-         settings are selected in Settings.",
-    );
-
-    ui.separator();
-
-    ui.heading("CSV recording");
+    section(ui, "CSV recording");
 
     reference(
         ui,
         "app.start_rec()",
-        "Creates a new protocol file and starts CSV \
-         recording. If acquisition is stopped, \
-         recording remains paused until acquisition \
-         starts.",
+        "Creates a timestamped CSV protocol file. \
+         Recording currently belongs to the primary \
+         connection worker.",
     );
 
     reference(
         ui,
         "app.stop_rec()",
-        "Flushes and closes the active protocol file.",
+        "Flushes and closes the active CSV file.",
     );
 
     ui.label(
-        "Protocol files are grouped by date inside \
-         the protocols directory.",
+        "Stopping acquisition pauses recording without \
+         closing the file.",
+    );
+}
+
+fn show_russian_reference(ui: &mut egui::Ui) {
+    ui.heading("Среды Lua");
+
+    ui.label(
+        "Приложение использует две независимые среды \
+         Lua.",
     );
 
-    ui.separator();
+    ui.label(
+        "Сценарии приложения и REPL управляют опросом, \
+         сериями, приборами, записью и эмулятором через \
+         глобальную таблицу 'app'.",
+    );
 
-    ui.heading("Device emulator");
+    ui.label(
+        "Сценарии моделей выполняются внутри эмулятора \
+         и описывают виртуальные приборы. Таблица 'app' \
+         в них недоступна.",
+    );
+
+    section(ui, "Конфигурация приложения");
+
+    ui.label(
+        "Приложение читает startup.lua из текущей \
+         рабочей папки. Сценарий должен вернуть одну \
+         таблицу.",
+    );
+
+    ui.label(
+        "Поддерживаются корневые разделы application, \
+         connections, emulator и setup.",
+    );
+
+    ui.label(
+        "Верхний уровень startup.lua не должен иметь \
+         побочных эффектов: он выполняется один раз \
+         для проверки и ещё раз в рабочей среде Lua. \
+         Действия приложения помещайте в setup().",
+    );
+
+    code(ui, STARTUP_EXAMPLE);
+
+    ui.label(
+        "Относительные пути, включая путь к модели \
+         эмулятора, отсчитываются от текущей рабочей \
+         папки.",
+    );
+
+    section(ui, "Параметры приложения");
+
+    reference(
+        ui,
+        "fps",
+        "Частота перерисовки интерфейса от 1 до 240 \
+         кадров в секунду. По умолчанию: 30.",
+    );
+
+    reference(
+        ui,
+        "poll_interval",
+        "Интервал опроса серий по умолчанию в секундах. \
+         По умолчанию: 1.0.",
+    );
+
+    reference(
+        ui,
+        "plot_window",
+        "Размер текущего окна графика в секундах. \
+         По умолчанию: 3600.0.",
+    );
+
+    reference(
+        ui,
+        "max_plot_points_per_series",
+        "Максимальное число подготовленных точек одной \
+         видимой серии. По умолчанию: 4000.",
+    );
+
+    section(ui, "Последовательные подключения");
+
+    ui.label(
+        "Каждая запись в таблице connections создаёт \
+         независимый worker и отдельное подключение к \
+         последовательному порту.",
+    );
+
+    ui.label(
+        "Команды приборам одного подключения \
+         выполняются последовательно. Разные \
+         подключения обслуживаются независимыми \
+         потоками.",
+    );
+
+    ui.label(
+        "Непустая таблица connections должна содержать \
+         подключение с именем 'primary'. Остальные \
+         имена выбираются произвольно и используются \
+         в Lua API.",
+    );
+
+    reference(ui, "port", "Обязательное имя COM-порта.");
+
+    reference(ui, "baud_rate", "Скорость обмена. По умолчанию: 9600.");
+
+    reference(
+        ui,
+        "data_bits",
+        "Число бит данных: 5, 6, 7 или 8. По \
+         умолчанию: 8.",
+    );
+
+    reference(
+        ui,
+        "parity",
+        "\"none\", \"even\" или \"odd\". По умолчанию: \
+         \"none\".",
+    );
+
+    reference(
+        ui,
+        "stop_bits",
+        "Один или два стоповых бита. По умолчанию: 1.",
+    );
+
+    reference(
+        ui,
+        "flow_control",
+        "\"none\", \"software\" или \"hardware\". По \
+         умолчанию: \"none\".",
+    );
+
+    reference(
+        ui,
+        "timeout",
+        "Тайм-аут чтения в секундах. По умолчанию: \
+         0.25.",
+    );
+
+    section(ui, "Функция setup");
+
+    reference(
+        ui,
+        "setup = function() ... end",
+        "Вызывается один раз после установки Lua API. \
+         Может добавлять серии, запускать эмулятор и \
+         опрос, а также объявлять глобальные функции \
+         для REPL.",
+    );
+
+    ui.label(
+        "Если setup завершится ошибкой, среда Lua \
+         сообщит об ошибке и отключится. Команды, \
+         отправленные до ошибки, уже могли попасть в \
+         приложение.",
+    );
+
+    section(ui, "Lua REPL");
+
+    ui.label(
+        "REPL и файлы, выбранные кнопкой Run script, \
+         используют одну сохраняющую состояние среду \
+         Lua.",
+    );
+
+    ui.label(
+        "Переменные и функции остаются доступны между \
+         командами и запусками сценариев.",
+    );
+
+    ui.label(
+        "Для выполнения многострочного ввода нажмите \
+         Ctrl+Enter или кнопку Execute.",
+    );
+
+    ui.label(
+        "Возвращённые значения и ошибки Lua появляются \
+         в истории REPL. Действия с приложением также \
+         записываются в журнал.",
+    );
+
+    section(ui, "Команды приложения");
+
+    reference(
+        ui,
+        "app.start()",
+        "Запускает периодический опрос всех настроенных \
+         подключений.",
+    );
+
+    reference(
+        ui,
+        "app.stop()",
+        "Останавливает опрос. Активная запись остаётся \
+         открытой и приостановленной.",
+    );
+
+    reference(ui, "app.clear()", "Удаляет все серии и накопленные точки.");
+
+    reference(
+        ui,
+        "app.log(message)",
+        "Записывает информационное сообщение в журнал \
+         приложения.",
+    );
 
     reference(
         ui,
         "app.start_emu()",
-        "Starts the device emulator using the port \
-         and Lua model selected in Settings.",
+        "Запускает эмулятор, описанный в startup.lua.",
     );
 
-    reference(ui, "app.stop_emu()", "Stops the running device emulator.");
+    reference(ui, "app.stop_emu()", "Останавливает работающий эмулятор.");
+
+    section(ui, "Параметры серий");
 
     ui.label(
-        "Calling app.start_emu() while the emulator \
-         is already running does not reload its \
-         model.",
+        "Аргумент серии можно опустить, передать как \
+         строку с именем или как таблицу параметров.",
     );
 
-    ui.label(
-        "To reload an edited device model and reset \
-         its state, stop and start the emulator.",
-    );
+    reference(ui, "name", "Необязательное уникальное имя серии.");
 
-    ui.monospace(
-        "app.stop_emu()\n\
-         app.start_emu()",
-    );
-
-    ui.separator();
-
-    ui.heading("Metakon application script");
-
-    ui.label(
-        "Application scripts are normally stored in \
-         the lua_scripts directory and executed with \
-         'Run script...'.",
-    );
-
-    ui.monospace(
-        "app.stop()\n\
-         app.clear()\n\n\
-         controller = app.metakon({\n\
-         \x20   device = 15,\n\
-         \x20   channel = 0,\n\
-         \x20   scale = 1.0,\n\
-         })\n\n\
-         controller:add(\"measurement\", \"temperature\")\n\
-         controller:add(\"setpoint\", \"setpoint\")\n\
-         controller:add(\"output_power\", \"power\")\n\n\
-         controller:add(\"proportional_band\", \"pid_p\")\n\
-         controller:add(\"integral_time\", \"pid_i\")\n\
-         controller:add(\"derivative_time\", \"pid_d\")\n\n\
-         app.start()",
-    );
-
-    ui.add_space(8.0);
-
-    ui.label(
-        "Because controller is global in this \
-         example, it remains available from the \
-         REPL:",
-    );
-
-    ui.monospace(
-        "controller:read(\"measurement\")\n\
-         controller:setpoint(150)",
-    );
-
-    ui.separator();
-
-    ui.heading("Device model scripts");
-
-    ui.label(
-        "Device models are normally stored in the \
-         emulator_scripts directory and selected \
-         in Settings.",
+    reference(
+        ui,
+        "interval",
+        "Необязательный интервал опроса в секундах. При \
+         отсутствии используется интервал приложения.",
     );
 
     ui.label(
-        "A device model must define the global \
-         function:",
+        "Текстовые серии последовательного порта также \
+         принимают параметр connection.",
+    );
+
+    code(ui, SERIAL_SERIES_EXAMPLE);
+
+    section(ui, "Текстовые команды порта");
+
+    reference(
+        ui,
+        "app.add_serial(command, options)",
+        "Добавляет периодически выполняемую текстовую \
+         команду. Ответ должен содержать одно конечное \
+         число.",
     );
 
     reference(
         ui,
-        "handle(command, time)",
-        "Receives one command and elapsed time in \
-         seconds since the emulator started. It must \
-         return one response string.",
+        "app.send_serial(command, options)",
+        "Однократно отправляет текстовую команду и \
+         записывает ответ или ошибку в журнал.",
     );
 
-    ui.monospace(
-        "local value = 42.0\n\n\
-         function handle(command, time)\n\
-         \x20   if command == \"read value\" then\n\
-         \x20       return tostring(value)\n\
-         \x20   end\n\n\
-         \x20   return \"error unknown command: \"\n\
-         \x20       .. command\n\
-         end",
+    code(
+        ui,
+        r#"app.send_serial(
+    "status",
+    {
+        connection = "primary",
+    }
+)"#,
     );
 
-    ui.add_space(8.0);
+    section(ui, "МЕТАКОН 5X3");
+
+    reference(
+        ui,
+        "app.metakon(options)",
+        "Создаёт типизированный контроллер МЕТАКОН \
+         5X3.",
+    );
 
     ui.label(
-        "The emulator reloads the selected model only \
-         when it starts. Script state is preserved \
-         between commands while the emulator remains \
-         running.",
+        "Параметры контроллера: connection, device, \
+         channel и scale. Значения по умолчанию: \
+         primary, 1, 0 и 1.0.",
     );
 
+    reference(
+        ui,
+        "controller:parameters()",
+        "Возвращает типизированные описания параметров, \
+         режимы доступа, диапазоны и масштабы.",
+    );
+
+    reference(
+        ui,
+        "controller:add(parameter, options)",
+        "Добавляет читаемый параметр как периодическую \
+         серию.",
+    );
+
+    reference(
+        ui,
+        "controller:read(parameter)",
+        "Выполняет одно чтение из очереди и возвращает \
+         число или логическое значение.",
+    );
+
+    reference(
+        ui,
+        "controller:write(parameter, value)",
+        "Выполняет запись, читает параметр обратно и \
+         возвращает фактическое значение.",
+    );
+
+    ui.label(
+        "Периодический опрос, срок которого уже \
+         наступил, имеет приоритет перед разовыми \
+         чтениями и записями.",
+    );
+
+    ui.label(
+        "Доступные параметры: channel_type, \
+         measurement, setpoint, proportional_band, \
+         integral_time, derivative_time, output_power, \
+         pwm_positive, pwm_negative, upper_setpoint, \
+         upper_hysteresis, upper_output, \
+         lower_setpoint, lower_hysteresis и \
+         lower_output.",
+    );
+
+    code(ui, METAKON_EXAMPLE);
+    code(ui, METAKON_REPL_EXAMPLE);
+
+    section(ui, "Виртуальные приборы");
+
+    reference(
+        ui,
+        "app.virtual_instrument(options)",
+        "Обнаруживает виртуальный прибор через \
+         выбранное подключение. Эмулятор или другой \
+         совместимый сервер уже должен работать.",
+    );
+
+    ui.label(
+        "Параметры: connection и нумеруемый с единицы \
+         идентификатор прибора. По умолчанию \
+         используются primary и 1.",
+    );
+
+    reference(ui, "instrument:id()", "Возвращает идентификатор прибора.");
+
+    reference(ui, "instrument:name()", "Возвращает имя прибора из модели.");
+
+    reference(
+        ui,
+        "instrument:parameters()",
+        "Возвращает обнаруженные описания параметров.",
+    );
+
+    reference(
+        ui,
+        "instrument:add(parameter, options)",
+        "Добавляет читаемый параметр, разрешённый для \
+         построения серии.",
+    );
+
+    reference(
+        ui,
+        "instrument:read(parameter)",
+        "Однократно читает параметр.",
+    );
+
+    reference(
+        ui,
+        "instrument:write(parameter, value)",
+        "Записывает параметр и возвращает фактическое \
+         значение из модели.",
+    );
+
+    code(ui, VIRTUAL_INSTRUMENT_EXAMPLE);
+
+    section(ui, "Модели виртуальных приборов");
+
+    ui.label(
+        "Путь к модели задаётся полем emulator.script \
+         файла startup.lua.",
+    );
+
+    ui.label(
+        "Модель должна определить глобальный массив \
+         instruments. Позиции в массиве становятся \
+         идентификаторами приборов, начиная с единицы.",
+    );
+
+    ui.label(
+        "Каждый прибор содержит имя и непустой массив \
+         parameters.",
+    );
+
+    ui.label(
+        "Поля параметра: key, name, type, access, \
+         series, unit, min и max. По умолчанию name \
+         совпадает с key, access равен read_only, а \
+         series равен false.",
+    );
+
+    ui.label(
+        "Типы: boolean, integer и number. Режимы \
+         доступа: read_only, write_only и read_write. \
+         Поля min и max должны присутствовать либо \
+         вместе, либо отсутствовать вместе.",
+    );
+
+    reference(
+        ui,
+        "read(instrument_id, parameter, time)",
+        "Обязательна при наличии хотя бы одного \
+         читаемого параметра. time — время в секундах \
+         с момента запуска эмулятора.",
+    );
+
+    reference(
+        ui,
+        "write(instrument_id, parameter, value, time)",
+        "Обязательна при наличии хотя бы одного \
+         записываемого параметра. Должна вернуть \
+         фактически сохранённое значение.",
+    );
+
+    code(ui, VIRTUAL_MODEL_EXAMPLE);
+
+    section(ui, "Запись CSV");
+
+    reference(
+        ui,
+        "app.start_rec()",
+        "Создаёт CSV-файл протокола с временной меткой. \
+         Сейчас запись относится к worker основного \
+         подключения.",
+    );
+
+    reference(
+        ui,
+        "app.stop_rec()",
+        "Сбрасывает буфер и закрывает активный CSV-файл.",
+    );
+
+    ui.label(
+        "Остановка опроса приостанавливает запись, но \
+         не закрывает файл.",
+    );
+}
+
+fn section(ui: &mut egui::Ui, title: &str) {
     ui.separator();
-
-    ui.heading("Execution limits");
-
-    ui.label(
-        "One Lua execution is normally limited to \
-         500 ms. Instrument reads may additionally \
-         wait for their configured communication \
-         timeout.",
-    );
-
-    ui.label(
-        "Lua scripts should configure the application \
-         and return promptly. Long technological \
-         procedures will use a non-blocking event \
-         model in a later stage.",
-    );
+    ui.heading(title);
 }
 
 fn reference(ui: &mut egui::Ui, syntax: &str, description: &str) {
     ui.monospace(syntax);
     ui.label(description);
+    ui.add_space(6.0);
+}
+
+fn code(ui: &mut egui::Ui, source: &str) {
+    ui.add_space(4.0);
+    ui.monospace(source);
     ui.add_space(8.0);
 }
