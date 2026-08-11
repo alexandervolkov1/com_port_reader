@@ -63,8 +63,17 @@ impl ApplicationDefinition {
         self.emulator.as_ref()
     }
 
-    pub fn set_emulator(&mut self, emulator: Option<EmulatorDefinition>) {
+    pub fn set_emulator(
+        &mut self,
+        emulator: Option<EmulatorDefinition>,
+    ) -> Result<(), ApplicationDefinitionError> {
+        if let Some(emulator) = &emulator {
+            validate_emulator(&self.serial_connections, emulator)?;
+        }
+
         self.emulator = emulator;
+
+        Ok(())
     }
 
     pub fn add_serial_connection(
@@ -107,6 +116,17 @@ impl ApplicationDefinition {
             )));
         }
 
+        if self.emulator.as_ref().is_some_and(|emulator| {
+            emulator
+                .port_name()
+                .eq_ignore_ascii_case(connection.serial_config().port_name())
+        }) {
+            return Err(ApplicationDefinitionError::new(format!(
+                "COM port '{}' is reserved for the emulator",
+                connection.serial_config().port_name(),
+            )));
+        }
+
         self.serial_connections.push(connection);
 
         Ok(())
@@ -122,10 +142,44 @@ impl ApplicationDefinition {
             validated.add_serial_connection(connection)?;
         }
 
+        if let Some(emulator) = &self.emulator {
+            validate_emulator(&validated.serial_connections, emulator)?;
+        }
+
         self.serial_connections = validated.serial_connections;
 
         Ok(())
     }
+}
+
+fn validate_emulator(
+    connections: &[SerialConnectionDefinition],
+    emulator: &EmulatorDefinition,
+) -> Result<(), ApplicationDefinitionError> {
+    if !connections
+        .iter()
+        .any(|connection| connection.id() == emulator.connection_id())
+    {
+        return Err(ApplicationDefinitionError::new(format!(
+            "Emulator connection {} is not defined",
+            emulator.connection_id(),
+        )));
+    }
+
+    if let Some(connection) = connections.iter().find(|connection| {
+        connection
+            .serial_config()
+            .port_name()
+            .eq_ignore_ascii_case(emulator.port_name())
+    }) {
+        return Err(ApplicationDefinitionError::new(format!(
+            "Emulator COM port '{}' is already used by connection '{}'",
+            emulator.port_name(),
+            connection.name(),
+        )));
+    }
+
+    Ok(())
 }
 
 impl Default for ApplicationDefinition {
@@ -398,7 +452,9 @@ mod tests {
 
     use serialport::{DataBits, FlowControl, Parity, StopBits};
 
-    use super::{ApplicationDefinition, RuntimeDefinition, SerialConnectionDefinition};
+    use super::{
+        ApplicationDefinition, EmulatorDefinition, RuntimeDefinition, SerialConnectionDefinition,
+    };
 
     use crate::{connection::ConnectionId, serial_connection::SerialPortConfig};
 
@@ -623,6 +679,43 @@ mod tests {
         assert_eq!(
             definition.connection_name_by_id(ConnectionId::new(99),),
             None,
+        );
+    }
+
+    #[test]
+    fn rejects_emulator_with_unknown_connection() {
+        let mut definition = ApplicationDefinition::default();
+
+        definition
+            .add_serial_connection(connection(1, "primary", "COM3"))
+            .unwrap();
+
+        let emulator =
+            EmulatorDefinition::new(ConnectionId::new(2), "COM4", "emulator_scripts/device.lua")
+                .unwrap();
+
+        let error = definition.set_emulator(Some(emulator)).unwrap_err();
+
+        assert_eq!(error.to_string(), "Emulator connection 2 is not defined",);
+    }
+
+    #[test]
+    fn rejects_emulator_port_used_by_connection() {
+        let mut definition = ApplicationDefinition::default();
+
+        definition
+            .add_serial_connection(connection(1, "primary", "COM3"))
+            .unwrap();
+
+        let emulator =
+            EmulatorDefinition::new(ConnectionId::PRIMARY, "com3", "emulator_scripts/device.lua")
+                .unwrap();
+
+        let error = definition.set_emulator(Some(emulator)).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Emulator COM port 'com3' is already used by connection 'primary'",
         );
     }
 }

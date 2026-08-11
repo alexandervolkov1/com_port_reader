@@ -111,7 +111,9 @@ pub fn apply_lua_definition(
     if let Some(emulator) = root.get::<Option<Table>>("emulator")? {
         let emulator_definition = parse_emulator_definition(&emulator, &definition)?;
 
-        definition.set_emulator(Some(emulator_definition));
+        definition
+            .set_emulator(Some(emulator_definition))
+            .map_err(|error| LuaApplicationDefinitionError::new(error.to_string()))?;
     }
 
     Ok(definition)
