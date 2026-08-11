@@ -11,7 +11,6 @@ use crate::{
         lua_console_model::LuaConsoleModel, lua_console_view, plot_model::PlotModel, plot_view,
         series_view,
     },
-    data::SeriesStore,
     lua_application_definition::load_lua_definition_or_base,
 };
 
@@ -21,7 +20,6 @@ const TOGGLE_WIDTH: f32 = 22.0;
 pub struct MyApp {
     runtime: ApplicationRuntime,
     plot: PlotModel,
-    series: SeriesStore,
     series_panel_open: bool,
     log: LogModel,
     help: HelpModel,
@@ -60,11 +58,8 @@ impl MyApp {
             .emulator()
             .map(|emulator| application_paths.resolve(emulator.script_path()));
 
-        let series = SeriesStore::new();
-
         let (runtime, lua_event_receiver) = ApplicationRuntime::build(
             &definition,
-            series.clone(),
             log_handle.clone(),
             emulator_script_path,
             startup_source,
@@ -77,7 +72,6 @@ impl MyApp {
         Self {
             runtime,
             plot: PlotModel::new(),
-            series,
             series_panel_open: false,
             log,
             help: HelpModel::default(),
@@ -134,7 +128,7 @@ impl eframe::App for MyApp {
                             plot_view::show(
                                 ui,
                                 &mut self.plot,
-                                &self.series,
+                                self.runtime.series(),
                                 self.definition.runtime().max_plot_points_per_series(),
                                 self.definition.runtime().plot_window().as_secs_f64(),
                             );
@@ -147,7 +141,12 @@ impl eframe::App for MyApp {
                         });
 
                         strip.cell(|ui| {
-                            series_view::show(ui, &self.series, &self.runtime, &mut self.plot);
+                            series_view::show(
+                                ui,
+                                self.runtime.series(),
+                                &self.runtime,
+                                &mut self.plot,
+                            );
                         });
                     });
             } else {
@@ -159,7 +158,7 @@ impl eframe::App for MyApp {
                             plot_view::show(
                                 ui,
                                 &mut self.plot,
-                                &self.series,
+                                self.runtime.series(),
                                 self.definition.runtime().max_plot_points_per_series(),
                                 self.definition.runtime().plot_window().as_secs_f64(),
                             );

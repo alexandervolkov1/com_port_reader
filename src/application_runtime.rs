@@ -24,6 +24,7 @@ pub(crate) use device_emulator_service::DeviceEmulatorService;
 
 pub struct ApplicationRuntime {
     lua_worker: LuaWorker,
+    series: SeriesStore,
     acquisition: AcquisitionController,
     dispatcher: CommandDispatcher,
     device_emulator: DeviceEmulatorService,
@@ -33,7 +34,6 @@ pub struct ApplicationRuntime {
 impl ApplicationRuntime {
     pub(crate) fn build(
         definition: &ApplicationDefinition,
-        series: SeriesStore,
         log: LogHandle,
         emulator_script_path: Option<PathBuf>,
         startup_source: Option<String>,
@@ -48,6 +48,8 @@ impl ApplicationRuntime {
             definition.clone(),
             startup_source,
         )?;
+
+        let series = SeriesStore::new();
 
         let emulator_port = definition
             .emulator()
@@ -127,6 +129,7 @@ impl ApplicationRuntime {
 
         let runtime = Self::new(
             lua_worker,
+            series,
             acquisition,
             dispatcher,
             device_emulator,
@@ -138,6 +141,7 @@ impl ApplicationRuntime {
 
     fn new(
         lua_worker: LuaWorker,
+        series: SeriesStore,
         acquisition: AcquisitionController,
         dispatcher: CommandDispatcher,
         device_emulator: DeviceEmulatorService,
@@ -145,6 +149,7 @@ impl ApplicationRuntime {
     ) -> Self {
         Self {
             lua_worker,
+            series,
             acquisition,
             dispatcher,
             device_emulator,
@@ -199,5 +204,9 @@ impl ApplicationRuntime {
 
     pub(crate) fn lua_handle(&self) -> LuaWorkerHandle {
         self.lua_worker.handle()
+    }
+
+    pub(crate) const fn series(&self) -> &SeriesStore {
+        &self.series
     }
 }
