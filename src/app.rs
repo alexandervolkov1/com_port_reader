@@ -5,21 +5,15 @@ use crate::{
     app_log::LogModel,
     application_definition::ApplicationDefinition,
     application_paths::ApplicationPaths,
-    application_runtime::{
-        AcquisitionController, ApplicationRuntime, CommandDispatcher, DeviceEmulatorService,
-    },
+    application_runtime::ApplicationRuntime,
     components::{
         controls_view, help_model::HelpModel, help_view, log_view,
         lua_console_model::LuaConsoleModel, lua_console_view, plot_model::PlotModel, plot_view,
         series_view,
     },
-    connection::ConnectionId,
     data::SeriesStore,
     lua_application_definition::load_lua_definition_or_base,
     lua_worker::LuaWorker,
-    sample_sink::NullSampleSink,
-    serial_connection::SerialConnectionRegistry,
-    worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
 };
 
 const SERIES_PANEL_WIDTH: f32 = 150.0;
@@ -42,19 +36,14 @@ impl MyApp {
     pub fn new(application_paths: ApplicationPaths) -> Self {
         let base_definition = ApplicationDefinition::default();
 
-        let startup_script_path = application_paths.startup_script();
-
-        let loaded_definition = load_lua_definition_or_base(startup_script_path, &base_definition);
+        let loaded_definition =
+            load_lua_definition_or_base(application_paths.startup_script(), &base_definition);
 
         let (definition, startup_source, lua_definition_warning) = loaded_definition.into_parts();
 
-        let startup_script_loaded = startup_source.is_some();
-
         let startup_script_missing = startup_source.is_none() && lua_definition_warning.is_none();
 
-        let log_directory = application_paths.resolve("logs");
-
-        let (log, log_handle) = LogModel::new(log_directory);
+        let (log, log_handle) = LogModel::new(application_paths.resolve("logs"));
 
         let (lua_event_sender, lua_event_receiver) = crossbeam_channel::unbounded();
 
@@ -75,120 +64,37 @@ impl MyApp {
             log_handle.error(warning);
         }
 
-        if startup_script_loaded {
-            log_handle.info(format!(
-                "Lua startup file loaded from '{}'.",
-                startup_script_path.display(),
-            ));
-        }
-
         if startup_script_missing {
             log_handle.error(format!(
                 "Lua startup file '{}' was not found. \
                  Internal defaults are active; serial \
                  connections and emulator are not configured.",
-                startup_script_path.display(),
+                application_paths.startup_script().display(),
             ));
         }
 
-        let (emulator_port, emulator_script_path) = match definition.emulator() {
-            Some(emulator) => (
-                Some(emulator.port_name().to_owned()),
-                Some(application_paths.resolve(emulator.script_path())),
-            ),
-
-            None => (None, None),
-        };
-
-        let device_emulator =
-            DeviceEmulatorService::new(emulator_port, emulator_script_path, log_handle.clone());
+        let emulator_script_path = definition
+            .emulator()
+            .map(|emulator| application_paths.resolve(emulator.script_path()));
 
         let series = SeriesStore::new();
 
-        let (event_sender, event_receiver) = crossbeam_channel::unbounded();
-
-        let serial_connections = SerialConnectionRegistry::new();
-
-        for connection in definition.serial_connections() {
-            let connection_id = connection.id();
-
-            let store = if connection_id == ConnectionId::PRIMARY {
-                serial_connections.primary()
-            } else {
-                serial_connections.register(connection_id).expect(
-                    "validated application definition \
-                             must contain unique connection IDs",
-                )
-            };
-
-            store.set(Some(connection.serial_config().clone()));
-        }
-
-        let worker_config = WorkerConfig::new(definition.runtime().default_poll_interval());
-
-        let primary_worker = spawn_serial_connection_worker(
-            serial_connections.primary(),
-            event_sender.clone(),
+        let runtime = ApplicationRuntime::build(
+            &definition,
             series.clone(),
-            Box::new(NullSampleSink::new()),
-            worker_config,
-        );
-
-        let mut workers = ConnectionWorkers::new(primary_worker);
-
-        for connection in definition.serial_connections() {
-            let connection_id = connection.id();
-
-            if connection_id == ConnectionId::PRIMARY {
-                continue;
-            }
-
-            let config_store = serial_connections.store(connection_id).expect(
-                "serial connection store was registered \
-                     before spawning its worker",
-            );
-
-            let worker = spawn_serial_connection_worker(
-                config_store,
-                event_sender.clone(),
-                series.clone(),
-                Box::new(NullSampleSink::new()),
-                worker_config,
-            );
-
-            workers.insert(worker).expect(
-                "validated application definition must \
-                 contain unique connection IDs",
-            );
-        }
-
-        let connection_router = workers.router();
-
-        let acquisition = AcquisitionController::new(workers, log_handle.clone());
-
-        let command_dispatcher = CommandDispatcher::new(
-            connection_router,
-            serial_connections,
-            definition.clone(),
-            event_receiver,
-            log_handle.clone(),
-        );
-
-        let runtime = ApplicationRuntime::new(
-            acquisition,
-            command_dispatcher,
-            device_emulator,
+            log_handle,
+            emulator_script_path,
             lua_command_receiver,
         );
 
         Self {
             runtime,
-            definition,
             plot: PlotModel::new(),
             series,
             series_panel_open: false,
             log,
             help: HelpModel::default(),
+            definition,
             lua_console,
             log_panel_open: false,
             _lua_worker: lua_worker,

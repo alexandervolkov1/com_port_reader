@@ -1,8 +1,17 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crossbeam_channel::Receiver;
 
-use crate::{data::SeriesId, user_command::UserCommand};
+use crate::{
+    app_log::LogHandle,
+    application_definition::ApplicationDefinition,
+    connection::ConnectionId,
+    data::{SeriesId, SeriesStore},
+    sample_sink::NullSampleSink,
+    serial_connection::SerialConnectionRegistry,
+    user_command::UserCommand,
+    worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
+};
 
 mod acquisition_controller;
 mod command_dispatcher;
@@ -20,6 +29,97 @@ pub struct ApplicationRuntime {
 }
 
 impl ApplicationRuntime {
+    pub(crate) fn build(
+        definition: &ApplicationDefinition,
+        series: SeriesStore,
+        log: LogHandle,
+        emulator_script_path: Option<PathBuf>,
+        lua_command_receiver: Receiver<UserCommand>,
+    ) -> Self {
+        let emulator_port = definition
+            .emulator()
+            .map(|emulator| emulator.port_name().to_owned());
+
+        let device_emulator =
+            DeviceEmulatorService::new(emulator_port, emulator_script_path, log.clone());
+
+        let (event_sender, event_receiver) = crossbeam_channel::unbounded();
+
+        let serial_connections = SerialConnectionRegistry::new();
+
+        for connection in definition.serial_connections() {
+            let connection_id = connection.id();
+
+            let store = if connection_id == ConnectionId::PRIMARY {
+                serial_connections.primary()
+            } else {
+                serial_connections.register(connection_id).expect(
+                    "validated application definition \
+                     must contain unique connection IDs",
+                )
+            };
+
+            store.set(Some(connection.serial_config().clone()));
+        }
+
+        let worker_config = WorkerConfig::new(definition.runtime().default_poll_interval());
+
+        let primary_worker = spawn_serial_connection_worker(
+            serial_connections.primary(),
+            event_sender.clone(),
+            series.clone(),
+            Box::new(NullSampleSink::new()),
+            worker_config,
+        );
+
+        let mut workers = ConnectionWorkers::new(primary_worker);
+
+        for connection in definition.serial_connections() {
+            let connection_id = connection.id();
+
+            if connection_id == ConnectionId::PRIMARY {
+                continue;
+            }
+
+            let config_store = serial_connections.store(connection_id).expect(
+                "serial connection store was registered \
+                 before spawning its worker",
+            );
+
+            let worker = spawn_serial_connection_worker(
+                config_store,
+                event_sender.clone(),
+                series.clone(),
+                Box::new(NullSampleSink::new()),
+                worker_config,
+            );
+
+            workers.insert(worker).expect(
+                "validated application definition must \
+                 contain unique connection IDs",
+            );
+        }
+
+        let connection_router = workers.router();
+
+        let acquisition = AcquisitionController::new(workers, log.clone());
+
+        let dispatcher = CommandDispatcher::new(
+            connection_router,
+            serial_connections,
+            definition.clone(),
+            event_receiver,
+            log,
+        );
+
+        Self::new(
+            acquisition,
+            dispatcher,
+            device_emulator,
+            lua_command_receiver,
+        )
+    }
+
     pub(crate) fn new(
         acquisition: AcquisitionController,
         dispatcher: CommandDispatcher,
