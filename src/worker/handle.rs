@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, path::PathBuf, time::Duration};
+use std::{error::Error, fmt, path::PathBuf};
 
 use crossbeam_channel::Sender;
 
@@ -83,14 +83,6 @@ impl WorkerHandle {
 
     pub fn stop_recording(&self) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::StopRecording)
-    }
-
-    pub fn test_serial_port(&self, config: SerialPortConfig) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::TestSerialPort(config))
-    }
-
-    pub fn set_poll_interval(&self, poll_interval: Duration) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::SetPollInterval(poll_interval))
     }
 
     pub fn send_serial_text(

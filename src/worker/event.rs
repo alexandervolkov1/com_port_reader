@@ -62,11 +62,6 @@ pub enum WorkerEvent {
     },
     SeriesRenameFailed(RenameSeriesError),
     SampleSinkFailed(SampleSinkError),
-    SerialPortTestSucceeded(String),
-    SerialPortTestFailed {
-        port_name: String,
-        error: SerialConnectionError,
-    },
 
     SerialTextCommandSucceeded {
         port_name: String,
@@ -170,18 +165,6 @@ impl std::fmt::Display for WorkerEvent {
 
             Self::SampleSinkFailed(error) => {
                 write!(formatter, "Sample output failed: {error}")
-            }
-
-            Self::SerialPortTestSucceeded(port_name) => {
-                write!(formatter, "COM port '{port_name}' opened successfully.",)
-            }
-
-            Self::SerialPortTestFailed { port_name, error } => {
-                write!(
-                    formatter,
-                    "Failed to open COM port '{port_name}': \
-                     {error}",
-                )
             }
 
             Self::SerialTextCommandSucceeded {

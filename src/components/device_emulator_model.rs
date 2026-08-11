@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::{
     app_log::LogHandle,
@@ -9,7 +9,6 @@ use crate::{
 pub struct DeviceEmulatorModel {
     selected_port: Option<String>,
     handle: Option<DeviceEmulatorHandle>,
-    error: Option<String>,
     log: LogHandle,
     script_path: Option<PathBuf>,
 }
@@ -22,61 +21,10 @@ impl DeviceEmulatorModel {
     ) -> Self {
         Self {
             selected_port: configured_port.filter(|port| !port.is_empty()),
-
             script_path: configured_script_path.filter(|path| !path.as_os_str().is_empty()),
-
             handle: None,
-            error: None,
             log,
         }
-    }
-
-    pub fn selected_port(&self) -> Option<&str> {
-        self.selected_port.as_deref()
-    }
-
-    pub fn set_selected_port(&mut self, selected_port: Option<String>) {
-        if self.is_running() {
-            return;
-        }
-
-        self.selected_port = selected_port;
-        self.error = None;
-    }
-
-    pub fn synchronize_ports(&mut self, ports: &[String], client_port: Option<&str>) {
-        if self.is_running() {
-            return;
-        }
-
-        let conflicts_with_client = self.selected_port.as_deref() == client_port;
-
-        if self.selected_port.is_none() || conflicts_with_client {
-            self.selected_port = ports
-                .iter()
-                .find(|port| Some(port.as_str()) != client_port)
-                .cloned();
-
-            self.error = None;
-        }
-    }
-
-    pub fn is_running(&self) -> bool {
-        self.handle
-            .as_ref()
-            .is_some_and(DeviceEmulatorHandle::is_running)
-    }
-
-    pub fn can_start(&self, client_port: Option<&str>) -> bool {
-        !self.is_running()
-            && self.script_path.is_some()
-            && self
-                .selected_port()
-                .is_some_and(|port| Some(port) != client_port)
-    }
-
-    pub fn error(&self) -> Option<&str> {
-        self.error.as_deref()
     }
 
     pub fn start(&mut self, serial_config: &SerialPortConfig) {
@@ -123,8 +71,6 @@ impl DeviceEmulatorModel {
         match DeviceEmulatorHandle::start(config, script_path) {
             Ok(handle) => {
                 self.handle = Some(handle);
-                self.error = None;
-
                 self.log.info(format!(
                     "Device emulator started on {port_name} \
                      using {model_description}.",
@@ -148,22 +94,18 @@ impl DeviceEmulatorModel {
         let port_name = self.selected_port.clone();
 
         match handle.stop() {
-            Ok(()) => {
-                self.error = None;
-
-                match port_name {
-                    Some(port_name) => {
-                        self.log.info(format!(
-                            "Device emulator stopped on \
+            Ok(()) => match port_name {
+                Some(port_name) => {
+                    self.log.info(format!(
+                        "Device emulator stopped on \
                              {port_name}.",
-                        ));
-                    }
-
-                    None => {
-                        self.log.info("Device emulator stopped.");
-                    }
+                    ));
                 }
-            }
+
+                None => {
+                    self.log.info("Device emulator stopped.");
+                }
+            },
 
             Err(error) => {
                 self.report_error(format!("Device emulator failed: {error}",));
@@ -214,23 +156,7 @@ impl DeviceEmulatorModel {
         }
     }
 
-    fn report_error(&mut self, message: impl Into<String>) {
-        let message = message.into();
-
-        self.log.error(message.clone());
-        self.error = Some(message);
-    }
-
-    pub fn script_path(&self) -> Option<&Path> {
-        self.script_path.as_deref()
-    }
-
-    pub fn set_script_path(&mut self, path: PathBuf) {
-        if self.is_running() {
-            return;
-        }
-
-        self.script_path = Some(path);
-        self.error = None;
+    fn report_error(&self, message: impl Into<String>) {
+        self.log.error(message);
     }
 }

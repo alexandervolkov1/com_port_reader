@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 
 use crossbeam_channel::Sender;
 
@@ -12,7 +12,6 @@ use crate::{
 pub enum WorkerCommand {
     Start,
     Stop,
-    SetPollInterval(Duration),
     AddSeries(NewSeries),
     RemoveSeries(SeriesId),
     SetVisibility {
@@ -28,7 +27,6 @@ pub enum WorkerCommand {
     },
     StartCsvRecording(PathBuf),
     StopRecording,
-    TestSerialPort(SerialPortConfig),
     Connection(ConnectionCommand),
 }
 

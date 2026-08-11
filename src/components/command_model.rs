@@ -82,12 +82,6 @@ impl CommandModel {
         self.serial_config(self.emulator_connection_id())
     }
 
-    pub fn emulator_client_port(&self) -> Option<String> {
-        self.emulator_serial_config()
-            .ok()
-            .map(|config| config.port_name().to_owned())
-    }
-
     fn primary_worker(&self) -> WorkerHandle {
         self.connections
             .handle(ConnectionId::PRIMARY)
@@ -399,7 +393,6 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
             | WorkerEvent::SeriesNotFound(_)
             | WorkerEvent::SeriesRenameFailed(_)
             | WorkerEvent::SampleSinkFailed(_)
-            | WorkerEvent::SerialPortTestFailed { .. }
             | WorkerEvent::SerialTextCommandFailed { .. }
             | WorkerEvent::InstrumentReadFailed { .. }
             | WorkerEvent::InstrumentWriteFailed { .. }

@@ -2,7 +2,7 @@ use eframe::egui;
 use egui_extras::{Size, StripBuilder};
 
 use crate::{
-    app_log::{LogHandle, LogModel},
+    app_log::LogModel,
     application_definition::ApplicationDefinition,
     components::{
         command_model::CommandModel, controls_model::ControlsModel, controls_view,
@@ -30,7 +30,6 @@ pub struct MyApp {
     series: SeriesStore,
     series_panel_open: bool,
     log: LogModel,
-    log_handle: LogHandle,
     device_emulator: DeviceEmulatorModel,
     help: HelpModel,
     definition: ApplicationDefinition,
@@ -49,12 +48,6 @@ impl MyApp {
         let (definition, startup_source, lua_definition_warning) = loaded_definition.into_parts();
 
         let startup_script_missing = startup_source.is_none() && lua_definition_warning.is_none();
-
-        let loaded_definition = load_lua_definition_or_base(STARTUP_SCRIPT_PATH, &base_definition);
-
-        let (definition, startup_source, lua_definition_warning) = loaded_definition.into_parts();
-
-        let lua_configuration_active = startup_source.is_some();
 
         let (log, log_handle) = LogModel::new();
 
@@ -177,7 +170,6 @@ impl MyApp {
             series,
             series_panel_open: false,
             log,
-            log_handle,
             device_emulator,
             help: HelpModel::default(),
             lua_console,

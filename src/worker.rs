@@ -105,7 +105,7 @@ impl Worker {
         let initial_default_poll_interval = config.poll_interval();
 
         let thread = thread::spawn(move || {
-            let mut default_poll_interval = initial_default_poll_interval;
+            let default_poll_interval = initial_default_poll_interval;
 
             let mut series_schedules: HashMap<SeriesId, SeriesSchedule> = HashMap::new();
 
@@ -293,18 +293,6 @@ impl Worker {
                 };
 
                 match command_result {
-                    Ok(WorkerCommand::SetPollInterval(new_interval)) => {
-                        if new_interval.is_zero() {
-                            continue;
-                        }
-
-                        default_poll_interval = new_interval;
-
-                        if let AcquisitionState::Running { next_poll } = &mut state {
-                            *next_poll = Instant::now() + new_interval;
-                        }
-                    }
-
                     Ok(WorkerCommand::Start) => {
                         if matches!(state, AcquisitionState::Stopped) {
                             match source.start() {
@@ -461,22 +449,6 @@ impl Worker {
                             Ok(id) => WorkerEvent::SeriesRenamed { id, name: new_name },
 
                             Err(error) => WorkerEvent::SeriesRenameFailed(error),
-                        };
-
-                        let _ = event_sender.send(event);
-                    }
-
-                    Ok(WorkerCommand::TestSerialPort(config)) => {
-                        let port_name = config.port_name().to_owned();
-
-                        let event = match config.open() {
-                            Ok(port) => {
-                                drop(port);
-
-                                WorkerEvent::SerialPortTestSucceeded(port_name)
-                            }
-
-                            Err(error) => WorkerEvent::SerialPortTestFailed { port_name, error },
                         };
 
                         let _ = event_sender.send(event);
