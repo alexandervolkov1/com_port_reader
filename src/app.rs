@@ -5,6 +5,7 @@ use crate::{
     app_log::LogModel,
     application_definition::ApplicationDefinition,
     application_paths::ApplicationPaths,
+    application_runtime::ApplicationRuntime,
     components::{
         command_model::CommandModel, controls_model::ControlsModel, controls_view,
         device_emulator_model::DeviceEmulatorModel, help_model::HelpModel, help_view, log_view,
@@ -17,7 +18,6 @@ use crate::{
     lua_worker::LuaWorker,
     sample_sink::NullSampleSink,
     serial_connection::SerialConnectionRegistry,
-    user_command::UserCommand,
     worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
 };
 
@@ -25,17 +25,14 @@ const SERIES_PANEL_WIDTH: f32 = 150.0;
 const TOGGLE_WIDTH: f32 = 22.0;
 
 pub struct MyApp {
-    controls: ControlsModel,
+    runtime: ApplicationRuntime,
     plot: PlotModel,
-    command: CommandModel,
     series: SeriesStore,
     series_panel_open: bool,
     log: LogModel,
-    device_emulator: DeviceEmulatorModel,
     help: HelpModel,
     definition: ApplicationDefinition,
     lua_console: LuaConsoleModel,
-    lua_command_receiver: crossbeam_channel::Receiver<UserCommand>,
     log_panel_open: bool,
     _lua_worker: LuaWorker,
 }
@@ -176,38 +173,27 @@ impl MyApp {
             log_handle.clone(),
         );
 
+        let runtime =
+            ApplicationRuntime::new(controls, command, device_emulator, lua_command_receiver);
+
         Self {
+            runtime,
             definition,
-            controls,
             plot: PlotModel::new(),
-            command,
             series,
             series_panel_open: false,
             log,
-            device_emulator,
             help: HelpModel::default(),
             lua_console,
-            lua_command_receiver,
             log_panel_open: false,
             _lua_worker: lua_worker,
-        }
-    }
-
-    fn poll_lua_commands(&mut self) {
-        let commands = self.lua_command_receiver.try_iter().collect::<Vec<_>>();
-
-        for command in commands {
-            self.command
-                .execute(command, &mut self.controls, &mut self.device_emulator);
         }
     }
 }
 
 impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.device_emulator.poll();
-        self.command.poll_events(&mut self.controls);
-        self.poll_lua_commands();
+        self.runtime.poll();
         self.lua_console.poll_events();
         self.log.poll();
 
@@ -237,12 +223,7 @@ impl eframe::App for MyApp {
         egui::CentralPanel::default().show(ui, |ui| {
             lua_console_view::show_panel(ui, &mut self.lua_console);
 
-            controls_view::show(
-                ui,
-                &mut self.controls,
-                &self.command,
-                &mut self.device_emulator,
-            );
+            controls_view::show(ui, &mut self.runtime);
 
             ui.separator();
 
@@ -269,7 +250,7 @@ impl eframe::App for MyApp {
                         });
 
                         strip.cell(|ui| {
-                            series_view::show(ui, &self.series, &self.command, &mut self.plot);
+                            series_view::show(ui, &self.series, &self.runtime, &mut self.plot);
                         });
                     });
             } else {

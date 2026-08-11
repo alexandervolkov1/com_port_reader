@@ -1,36 +1,27 @@
 use eframe::egui;
 
 use crate::{
-    components::{
-        command_model::CommandModel,
-        controls_model::{ControlsModel, RecordingTransition},
-        device_emulator_model::DeviceEmulatorModel,
-    },
+    application_runtime::ApplicationRuntime, components::controls_model::RecordingTransition,
     user_command::UserCommand,
 };
 
-pub fn show(
-    ui: &mut egui::Ui,
-    controls: &mut ControlsModel,
-    commands: &CommandModel,
-    device_emulator: &mut DeviceEmulatorModel,
-) {
+pub fn show(ui: &mut egui::Ui, runtime: &mut ApplicationRuntime) {
     ui.horizontal(|ui| {
-        let running = controls.is_running();
+        let running = runtime.is_running();
 
         if ui
             .add_enabled(!running, egui::Button::new("Start"))
             .clicked()
         {
-            commands.execute(UserCommand::Start, controls, device_emulator);
+            runtime.execute(UserCommand::Start);
         }
 
         if ui.add_enabled(running, egui::Button::new("Stop")).clicked() {
-            commands.execute(UserCommand::Stop, controls, device_emulator);
+            runtime.execute(UserCommand::Stop);
         }
 
         if ui.button("Clear").clicked() {
-            commands.execute(UserCommand::Clear, controls, device_emulator);
+            runtime.execute(UserCommand::Clear);
         }
 
         if running {
@@ -41,9 +32,9 @@ pub fn show(
     });
 
     ui.horizontal(|ui| {
-        let recording = controls.is_recording();
+        let recording = runtime.is_recording();
 
-        let transition = controls.recording_transition();
+        let transition = runtime.recording_transition();
 
         let transition_pending = transition.is_some();
 
@@ -54,7 +45,7 @@ pub fn show(
             )
             .clicked()
         {
-            commands.execute(UserCommand::StartRecording, controls, device_emulator);
+            runtime.execute(UserCommand::StartRecording);
         }
 
         if ui
@@ -64,7 +55,7 @@ pub fn show(
             )
             .clicked()
         {
-            commands.execute(UserCommand::StopRecording, controls, device_emulator);
+            runtime.execute(UserCommand::StopRecording);
         }
 
         match transition {
@@ -76,7 +67,7 @@ pub fn show(
                 ui.colored_label(egui::Color32::from_rgb(190, 130, 0), "CSV: … Stopping");
             }
 
-            None => match (recording, controls.is_running()) {
+            None => match (recording, runtime.is_running()) {
                 (true, true) => {
                     ui.colored_label(egui::Color32::from_rgb(190, 30, 30), "CSV: ● Writing");
                 }
@@ -92,11 +83,11 @@ pub fn show(
         }
     });
 
-    if let Some(path) = controls.recording_file() {
+    if let Some(path) = runtime.recording_file() {
         ui.label(format!("Protocol: {}", path.display(),));
     }
 
-    if let Some(error) = controls.recording_error() {
+    if let Some(error) = runtime.recording_error() {
         ui.colored_label(egui::Color32::RED, error);
     }
 }
