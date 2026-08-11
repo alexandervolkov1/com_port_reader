@@ -2,14 +2,13 @@ use std::{
     collections::VecDeque,
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Write},
-    path::Path,
+    path::PathBuf,
 };
 
 use chrono::{Local, NaiveDate};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
 const MAX_LOG_ENTRIES: usize = 2_000;
-const LOG_DIRECTORY: &str = "logs";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LogLevel {
@@ -77,14 +76,14 @@ pub struct LogModel {
 }
 
 impl LogModel {
-    pub fn new() -> (Self, LogHandle) {
+    pub fn new(log_directory: impl Into<PathBuf>) -> (Self, LogHandle) {
         let (sender, receiver) = unbounded();
 
         (
             Self {
                 receiver,
                 entries: VecDeque::new(),
-                file_writer: LogFileWriter::default(),
+                file_writer: LogFileWriter::new(log_directory),
                 file_logging_enabled: true,
             },
             LogHandle { sender },
@@ -109,8 +108,8 @@ impl LogModel {
                 self.push_entry(LogEntry::new(
                     LogLevel::Error,
                     format!(
-                        "Application log file disabled: \
-                         {error}",
+                        "Application log file \
+                         disabled: {error}",
                     ),
                 ));
             }
@@ -134,17 +133,19 @@ impl LogModel {
     }
 }
 
-#[derive(Default)]
 struct LogFileWriter {
+    directory: PathBuf,
     current_file: Option<CurrentLogFile>,
 }
 
-struct CurrentLogFile {
-    date: NaiveDate,
-    writer: BufWriter<File>,
-}
-
 impl LogFileWriter {
+    fn new(directory: impl Into<PathBuf>) -> Self {
+        Self {
+            directory: directory.into(),
+            current_file: None,
+        }
+    }
+
     fn write(&mut self, text: &str) -> io::Result<()> {
         let current_date = Local::now().date_naive();
 
@@ -165,11 +166,11 @@ impl LogFileWriter {
     }
 
     fn open_file(&mut self, date: NaiveDate) -> io::Result<()> {
-        let directory = Path::new(LOG_DIRECTORY);
+        fs::create_dir_all(&self.directory)?;
 
-        fs::create_dir_all(directory)?;
-
-        let path = directory.join(format!("application {}.log", date.format("%Y-%m-%d"),));
+        let path = self
+            .directory
+            .join(format!("application {}.log", date.format("%Y-%m-%d"),));
 
         let file = OpenOptions::new().create(true).append(true).open(path)?;
 
@@ -179,5 +180,50 @@ impl LogFileWriter {
         });
 
         Ok(())
+    }
+}
+
+struct CurrentLogFile {
+    date: NaiveDate,
+    writer: BufWriter<File>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    use super::LogFileWriter;
+
+    static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn writes_to_configured_directory() {
+        let directory = std::env::temp_dir().join(format!(
+            "com_port_reader_log_test_{}_{}",
+            std::process::id(),
+            NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed,),
+        ));
+
+        let mut writer = LogFileWriter::new(&directory);
+
+        writer.write("test entry").unwrap();
+
+        drop(writer);
+
+        let files = fs::read_dir(&directory)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(files.len(), 1);
+
+        let contents = fs::read_to_string(files[0].path()).unwrap();
+
+        assert_eq!(contents, "test entry\n");
+
+        fs::remove_dir_all(directory).unwrap();
     }
 }

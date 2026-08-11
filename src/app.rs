@@ -54,7 +54,9 @@ impl MyApp {
 
         let startup_script_missing = startup_source.is_none() && lua_definition_warning.is_none();
 
-        let (log, log_handle) = LogModel::new();
+        let log_directory = application_paths.resolve("logs");
+
+        let (log, log_handle) = LogModel::new(log_directory);
 
         let (lua_event_sender, lua_event_receiver) = crossbeam_channel::unbounded();
 
