@@ -1,5 +1,5 @@
 use crossbeam_channel::Sender;
-use mlua::{FromLua, Function, Lua, MultiValue};
+use mlua::{FromLua, Function, Lua, MultiValue, Table};
 
 use crate::{
     application_definition::ApplicationDefinition, lua_execution::run_with_limit,
@@ -52,6 +52,20 @@ impl LuaRuntime {
                 .cloned()
                 .map(|value| tostring.call::<String>(value))
                 .collect()
+        })
+    }
+
+    pub(crate) fn execute_startup(&self, source: &str) -> mlua::Result<()> {
+        run_with_limit(&self.lua, || {
+            let definition = self.lua.load(source).eval::<Table>()?;
+
+            let setup = definition.get::<Option<Function>>("setup")?;
+
+            if let Some(setup) = setup {
+                setup.call::<()>(())?;
+            }
+
+            Ok(())
         })
     }
 }
@@ -1222,6 +1236,41 @@ mod tests {
                 if connection_id
                     == ConnectionId::new(2)
                     && command == "reset",
+        ));
+    }
+
+    #[test]
+    fn executes_startup_setup_function() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        runtime.install_application_api(command_sender).unwrap();
+
+        runtime
+            .execute_startup(
+                r#"
+                    return {
+                        setup = function()
+                            app.start()
+                            app.log(
+                                "Setup completed"
+                            )
+                        end,
+                    }
+                "#,
+            )
+            .unwrap();
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::Start,
+        ));
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::Log { message }
+                if message == "Setup completed",
         ));
     }
 }

@@ -64,6 +64,7 @@ impl LuaWorker {
         event_sender: Sender<LuaEvent>,
         application_command_sender: Sender<UserCommand>,
         application_definition: ApplicationDefinition,
+        startup_source: Option<String>,
     ) -> std::io::Result<Self> {
         let (command_sender, command_receiver) = bounded(COMMAND_CHANNEL_CAPACITY);
 
@@ -79,6 +80,7 @@ impl LuaWorker {
                     event_sender,
                     application_command_sender,
                     application_definition,
+                    startup_source,
                 );
             })?;
 
@@ -108,11 +110,22 @@ fn run_lua_worker(
     event_sender: Sender<LuaEvent>,
     application_command_sender: Sender<UserCommand>,
     application_definition: ApplicationDefinition,
+    startup_source: Option<String>,
 ) {
     let runtime = LuaRuntime::with_application_definition(application_definition);
 
     if let Err(error) = runtime.install_application_api(application_command_sender) {
         let _ = event_sender.send(LuaEvent::InitializationFailed(error.to_string()));
+
+        return;
+    }
+
+    if let Some(source) = startup_source
+        && let Err(error) = runtime.execute_startup(&source)
+    {
+        let _ = event_sender.send(LuaEvent::InitializationFailed(format!(
+            "Lua setup failed: {error}",
+        )));
 
         return;
     }
@@ -153,6 +166,7 @@ mod tests {
             event_sender,
             application_command_sender,
             ApplicationDefinition::default(),
+            None,
         )
         .unwrap()
     }
@@ -243,6 +257,7 @@ mod tests {
             event_sender,
             application_command_sender,
             ApplicationDefinition::default(),
+            None,
         )
         .unwrap();
 

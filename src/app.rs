@@ -54,8 +54,9 @@ impl MyApp {
                      produce a valid application definition",
         );
 
-        let (definition, lua_definition_warning) =
-            load_lua_definition_or_base(STARTUP_SCRIPT_PATH, &base_definition);
+        let loaded_definition = load_lua_definition_or_base(STARTUP_SCRIPT_PATH, &base_definition);
+
+        let (definition, startup_source, lua_definition_warning) = loaded_definition.into_parts();
 
         let (log, log_handle) = LogModel::new();
 
@@ -63,8 +64,13 @@ impl MyApp {
 
         let (lua_command_sender, lua_command_receiver) = crossbeam_channel::unbounded();
 
-        let lua_worker = LuaWorker::spawn(lua_event_sender, lua_command_sender, definition.clone())
-            .expect("failed to spawn Lua worker thread");
+        let lua_worker = LuaWorker::spawn(
+            lua_event_sender,
+            lua_command_sender,
+            definition.clone(),
+            startup_source,
+        )
+        .expect("failed to spawn Lua worker thread");
 
         let lua_console =
             LuaConsoleModel::new(lua_worker.handle(), lua_event_receiver, log_handle.clone());
@@ -213,8 +219,9 @@ impl MyApp {
                      definition",
         );
 
-        let (definition, warning) =
-            load_lua_definition_or_base(STARTUP_SCRIPT_PATH, &base_definition);
+        let loaded_definition = load_lua_definition_or_base(STARTUP_SCRIPT_PATH, &base_definition);
+
+        let (definition, _startup_source, warning) = loaded_definition.into_parts();
 
         self.definition = definition;
 

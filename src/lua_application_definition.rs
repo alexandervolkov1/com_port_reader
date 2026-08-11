@@ -13,26 +13,52 @@ use crate::{
 
 pub const STARTUP_SCRIPT_PATH: &str = "startup.lua";
 
+pub struct LoadedLuaDefinition {
+    definition: ApplicationDefinition,
+    source: Option<String>,
+    warning: Option<String>,
+}
+
+impl LoadedLuaDefinition {
+    fn new(
+        definition: ApplicationDefinition,
+        source: Option<String>,
+        warning: Option<String>,
+    ) -> Self {
+        Self {
+            definition,
+            source,
+            warning,
+        }
+    }
+
+    pub fn into_parts(self) -> (ApplicationDefinition, Option<String>, Option<String>) {
+        (self.definition, self.source, self.warning)
+    }
+}
+
 pub fn load_lua_definition_or_base(
     path: impl AsRef<Path>,
     base: &ApplicationDefinition,
-) -> (ApplicationDefinition, Option<String>) {
+) -> LoadedLuaDefinition {
     let path = path.as_ref();
 
     let source = match fs::read_to_string(path) {
         Ok(source) => source,
 
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return (base.clone(), None);
+            return LoadedLuaDefinition::new(base.clone(), None, None);
         }
 
         Err(error) => {
-            return (
+            return LoadedLuaDefinition::new(
                 base.clone(),
+                None,
                 Some(format!(
-                    "Failed to read Lua application \
-                     definition '{}': {error}. \
-                     TOML settings will be used.",
+                    "Failed to read Lua \
+                         application definition \
+                         '{}': {error}. TOML \
+                         settings will be used.",
                     path.display(),
                 )),
             );
@@ -40,14 +66,16 @@ pub fn load_lua_definition_or_base(
     };
 
     match apply_lua_definition(&source, base) {
-        Ok(definition) => (definition, None),
+        Ok(definition) => LoadedLuaDefinition::new(definition, Some(source), None),
 
-        Err(error) => (
+        Err(error) => LoadedLuaDefinition::new(
             base.clone(),
+            None,
             Some(format!(
-                "Failed to load Lua application \
-                 definition '{}': {error}. \
-                 TOML settings will be used.",
+                "Failed to load Lua \
+                     application definition '{}': \
+                     {error}. TOML settings will be \
+                     used.",
                 path.display(),
             )),
         ),
@@ -740,11 +768,12 @@ mod tests {
 
         let base = base_definition();
 
-        let (definition, warning) = load_lua_definition_or_base(&path, &base);
+        let (definition, source, warning) = load_lua_definition_or_base(&path, &base).into_parts();
 
         let _ = fs::remove_file(&path);
 
-        assert_eq!(warning, None);
+        assert!(warning.is_none());
+        assert!(source.is_some());
 
         assert_eq!(definition.runtime().fps(), 75,);
 
@@ -762,10 +791,11 @@ mod tests {
 
         let base = base_definition();
 
-        let (definition, warning) = load_lua_definition_or_base(&path, &base);
+        let (definition, source, warning) = load_lua_definition_or_base(&path, &base).into_parts();
 
         assert_eq!(definition, base);
-        assert_eq!(warning, None);
+        assert!(source.is_none());
+        assert!(warning.is_none());
     }
 
     #[test]
@@ -776,15 +806,16 @@ mod tests {
 
         let base = base_definition();
 
-        let (definition, warning) = load_lua_definition_or_base(&path, &base);
+        let (definition, source, warning) = load_lua_definition_or_base(&path, &base).into_parts();
 
         let _ = fs::remove_file(&path);
 
         assert_eq!(definition, base);
+        assert!(source.is_none());
 
         assert!(
             warning
-                .expect("invalid file must produce warning")
+                .expect("invalid file must produce warning",)
                 .contains(
                     "Failed to load Lua application \
                      definition",
