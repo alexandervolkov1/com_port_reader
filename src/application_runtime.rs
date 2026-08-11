@@ -1,12 +1,13 @@
 use std::path::{Path, PathBuf};
 
-use crossbeam_channel::Receiver;
+use crossbeam_channel::{Receiver, unbounded};
 
 use crate::{
     app_log::LogHandle,
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
     data::{SeriesId, SeriesStore},
+    lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle},
     sample_sink::NullSampleSink,
     serial_connection::SerialConnectionRegistry,
     user_command::UserCommand,
@@ -22,6 +23,7 @@ pub(crate) use command_dispatcher::CommandDispatcher;
 pub(crate) use device_emulator_service::DeviceEmulatorService;
 
 pub struct ApplicationRuntime {
+    lua_worker: LuaWorker,
     acquisition: AcquisitionController,
     dispatcher: CommandDispatcher,
     device_emulator: DeviceEmulatorService,
@@ -34,8 +36,19 @@ impl ApplicationRuntime {
         series: SeriesStore,
         log: LogHandle,
         emulator_script_path: Option<PathBuf>,
-        lua_command_receiver: Receiver<UserCommand>,
-    ) -> Self {
+        startup_source: Option<String>,
+    ) -> std::io::Result<(Self, Receiver<LuaEvent>)> {
+        let (lua_event_sender, lua_event_receiver) = unbounded();
+
+        let (lua_command_sender, lua_command_receiver) = unbounded();
+
+        let lua_worker = LuaWorker::spawn(
+            lua_event_sender,
+            lua_command_sender,
+            definition.clone(),
+            startup_source,
+        )?;
+
         let emulator_port = definition
             .emulator()
             .map(|emulator| emulator.port_name().to_owned());
@@ -112,21 +125,26 @@ impl ApplicationRuntime {
             log,
         );
 
-        Self::new(
+        let runtime = Self::new(
+            lua_worker,
             acquisition,
             dispatcher,
             device_emulator,
             lua_command_receiver,
-        )
+        );
+
+        Ok((runtime, lua_event_receiver))
     }
 
-    pub(crate) fn new(
+    fn new(
+        lua_worker: LuaWorker,
         acquisition: AcquisitionController,
         dispatcher: CommandDispatcher,
         device_emulator: DeviceEmulatorService,
         lua_command_receiver: Receiver<UserCommand>,
     ) -> Self {
         Self {
+            lua_worker,
             acquisition,
             dispatcher,
             device_emulator,
@@ -177,5 +195,9 @@ impl ApplicationRuntime {
 
     pub fn remove_series(&self, id: SeriesId) {
         self.dispatcher.remove_series(id);
+    }
+
+    pub(crate) fn lua_handle(&self) -> LuaWorkerHandle {
+        self.lua_worker.handle()
     }
 }

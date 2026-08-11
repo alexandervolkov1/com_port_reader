@@ -13,7 +13,6 @@ use crate::{
     },
     data::SeriesStore,
     lua_application_definition::load_lua_definition_or_base,
-    lua_worker::LuaWorker,
 };
 
 const SERIES_PANEL_WIDTH: f32 = 150.0;
@@ -29,7 +28,6 @@ pub struct MyApp {
     definition: ApplicationDefinition,
     lua_console: LuaConsoleModel,
     log_panel_open: bool,
-    _lua_worker: LuaWorker,
 }
 
 impl MyApp {
@@ -44,21 +42,6 @@ impl MyApp {
         let startup_script_missing = startup_source.is_none() && lua_definition_warning.is_none();
 
         let (log, log_handle) = LogModel::new(application_paths.resolve("logs"));
-
-        let (lua_event_sender, lua_event_receiver) = crossbeam_channel::unbounded();
-
-        let (lua_command_sender, lua_command_receiver) = crossbeam_channel::unbounded();
-
-        let lua_worker = LuaWorker::spawn(
-            lua_event_sender,
-            lua_command_sender,
-            definition.clone(),
-            startup_source,
-        )
-        .expect("failed to spawn Lua worker thread");
-
-        let lua_console =
-            LuaConsoleModel::new(lua_worker.handle(), lua_event_receiver, log_handle.clone());
 
         if let Some(warning) = lua_definition_warning {
             log_handle.error(warning);
@@ -79,13 +62,17 @@ impl MyApp {
 
         let series = SeriesStore::new();
 
-        let runtime = ApplicationRuntime::build(
+        let (runtime, lua_event_receiver) = ApplicationRuntime::build(
             &definition,
             series.clone(),
-            log_handle,
+            log_handle.clone(),
             emulator_script_path,
-            lua_command_receiver,
-        );
+            startup_source,
+        )
+        .expect("failed to build application runtime");
+
+        let lua_console =
+            LuaConsoleModel::new(runtime.lua_handle(), lua_event_receiver, log_handle);
 
         Self {
             runtime,
@@ -97,7 +84,6 @@ impl MyApp {
             definition,
             lua_console,
             log_panel_open: false,
-            _lua_worker: lua_worker,
         }
     }
 }
