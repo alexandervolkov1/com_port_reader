@@ -4,7 +4,7 @@ use crate::{
     acquisition::AcquisitionError,
     app_log::LogHandle,
     application_definition::ApplicationDefinition,
-    components::{controls_model::ControlsModel, device_emulator_model::DeviceEmulatorModel},
+    components::device_emulator_model::DeviceEmulatorModel,
     connection::ConnectionId,
     data::{NewSeries, SeriesId},
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
@@ -13,6 +13,8 @@ use crate::{
         ConnectionRouter, ConnectionWorkerEvent, WorkerEvent, WorkerHandle, WorkerHandleError,
     },
 };
+
+use super::AcquisitionController;
 
 pub(crate) struct CommandDispatcher {
     connections: ConnectionRouter,
@@ -108,7 +110,7 @@ impl CommandDispatcher {
         }
     }
 
-    pub fn poll_events(&mut self, controls: &mut ControlsModel) {
+    pub fn poll_events(&mut self, controls: &mut AcquisitionController) {
         while let Ok(connection_event) = self.event_receiver.try_recv() {
             let event = connection_event.event();
 
@@ -127,7 +129,7 @@ impl CommandDispatcher {
     pub fn execute(
         &self,
         command: UserCommand,
-        controls: &mut ControlsModel,
+        controls: &mut AcquisitionController,
         device_emulator: &mut DeviceEmulatorModel,
     ) {
         match command {

@@ -5,11 +5,11 @@ use crate::{
     app_log::LogModel,
     application_definition::ApplicationDefinition,
     application_paths::ApplicationPaths,
-    application_runtime::{ApplicationRuntime, CommandDispatcher},
+    application_runtime::{AcquisitionController, ApplicationRuntime, CommandDispatcher},
     components::{
-        controls_model::ControlsModel, controls_view, device_emulator_model::DeviceEmulatorModel,
-        help_model::HelpModel, help_view, log_view, lua_console_model::LuaConsoleModel,
-        lua_console_view, plot_model::PlotModel, plot_view, series_view,
+        controls_view, device_emulator_model::DeviceEmulatorModel, help_model::HelpModel,
+        help_view, log_view, lua_console_model::LuaConsoleModel, lua_console_view,
+        plot_model::PlotModel, plot_view, series_view,
     },
     connection::ConnectionId,
     data::SeriesStore,
@@ -162,7 +162,7 @@ impl MyApp {
 
         let connection_router = workers.router();
 
-        let controls = ControlsModel::new(workers, log_handle.clone());
+        let acquisition = AcquisitionController::new(workers, log_handle.clone());
 
         let command_dispatcher = CommandDispatcher::new(
             connection_router,
@@ -173,7 +173,7 @@ impl MyApp {
         );
 
         let runtime = ApplicationRuntime::new(
-            controls,
+            acquisition,
             command_dispatcher,
             device_emulator,
             lua_command_receiver,

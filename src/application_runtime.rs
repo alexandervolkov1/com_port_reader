@@ -3,20 +3,19 @@ use std::path::Path;
 use crossbeam_channel::Receiver;
 
 use crate::{
-    components::{
-        controls_model::{ControlsModel, RecordingTransition},
-        device_emulator_model::DeviceEmulatorModel,
-    },
-    data::SeriesId,
+    components::device_emulator_model::DeviceEmulatorModel, data::SeriesId,
     user_command::UserCommand,
 };
 
+mod acquisition_controller;
 mod command_dispatcher;
+
+pub(crate) use acquisition_controller::{AcquisitionController, RecordingTransition};
 
 pub(crate) use command_dispatcher::CommandDispatcher;
 
 pub struct ApplicationRuntime {
-    controls: ControlsModel,
+    acquisition: AcquisitionController,
     dispatcher: CommandDispatcher,
     device_emulator: DeviceEmulatorModel,
     lua_command_receiver: Receiver<UserCommand>,
@@ -24,13 +23,13 @@ pub struct ApplicationRuntime {
 
 impl ApplicationRuntime {
     pub(crate) fn new(
-        controls: ControlsModel,
+        acquisition: AcquisitionController,
         dispatcher: CommandDispatcher,
         device_emulator: DeviceEmulatorModel,
         lua_command_receiver: Receiver<UserCommand>,
     ) -> Self {
         Self {
-            controls,
+            acquisition,
             dispatcher,
             device_emulator,
             lua_command_receiver,
@@ -40,7 +39,7 @@ impl ApplicationRuntime {
     pub fn poll(&mut self) {
         self.device_emulator.poll();
 
-        self.dispatcher.poll_events(&mut self.controls);
+        self.dispatcher.poll_events(&mut self.acquisition);
 
         let commands = self.lua_command_receiver.try_iter().collect::<Vec<_>>();
 
@@ -51,27 +50,27 @@ impl ApplicationRuntime {
 
     pub fn execute(&mut self, command: UserCommand) {
         self.dispatcher
-            .execute(command, &mut self.controls, &mut self.device_emulator);
+            .execute(command, &mut self.acquisition, &mut self.device_emulator);
     }
 
     pub fn is_running(&self) -> bool {
-        self.controls.is_running()
+        self.acquisition.is_running()
     }
 
     pub fn is_recording(&self) -> bool {
-        self.controls.is_recording()
+        self.acquisition.is_recording()
     }
 
     pub fn recording_transition(&self) -> Option<RecordingTransition> {
-        self.controls.recording_transition()
+        self.acquisition.recording_transition()
     }
 
     pub fn recording_file(&self) -> Option<&Path> {
-        self.controls.recording_file()
+        self.acquisition.recording_file()
     }
 
     pub fn recording_error(&self) -> Option<&str> {
-        self.controls.recording_error()
+        self.acquisition.recording_error()
     }
 
     pub fn set_series_visibility(&self, id: SeriesId, visible: bool) {

@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::{
-    application_runtime::ApplicationRuntime, components::controls_model::RecordingTransition,
+    application_runtime::{ApplicationRuntime, RecordingTransition},
     user_command::UserCommand,
 };
 

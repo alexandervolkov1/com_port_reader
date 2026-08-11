@@ -13,7 +13,7 @@ pub enum RecordingTransition {
     Stopping,
 }
 
-pub struct ControlsModel {
+pub(crate) struct AcquisitionController {
     workers: ConnectionWorkers,
     recording_file: Option<PathBuf>,
     recording_error: Option<String>,
@@ -21,7 +21,7 @@ pub struct ControlsModel {
     log: LogHandle,
 }
 
-impl ControlsModel {
+impl AcquisitionController {
     pub fn new(workers: ConnectionWorkers, log: LogHandle) -> Self {
         Self {
             workers,
