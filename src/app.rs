@@ -5,11 +5,13 @@ use crate::{
     app_log::LogModel,
     application_definition::ApplicationDefinition,
     application_paths::ApplicationPaths,
-    application_runtime::{AcquisitionController, ApplicationRuntime, CommandDispatcher},
+    application_runtime::{
+        AcquisitionController, ApplicationRuntime, CommandDispatcher, DeviceEmulatorService,
+    },
     components::{
-        controls_view, device_emulator_model::DeviceEmulatorModel, help_model::HelpModel,
-        help_view, log_view, lua_console_model::LuaConsoleModel, lua_console_view,
-        plot_model::PlotModel, plot_view, series_view,
+        controls_view, help_model::HelpModel, help_view, log_view,
+        lua_console_model::LuaConsoleModel, lua_console_view, plot_model::PlotModel, plot_view,
+        series_view,
     },
     connection::ConnectionId,
     data::SeriesStore,
@@ -99,7 +101,7 @@ impl MyApp {
         };
 
         let device_emulator =
-            DeviceEmulatorModel::new(emulator_port, emulator_script_path, log_handle.clone());
+            DeviceEmulatorService::new(emulator_port, emulator_script_path, log_handle.clone());
 
         let series = SeriesStore::new();
 

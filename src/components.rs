@@ -1,5 +1,4 @@
 pub mod controls_view;
-pub mod device_emulator_model;
 pub mod help_model;
 pub mod help_view;
 pub mod log_view;

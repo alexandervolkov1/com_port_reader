@@ -4,7 +4,6 @@ use crate::{
     acquisition::AcquisitionError,
     app_log::LogHandle,
     application_definition::ApplicationDefinition,
-    components::device_emulator_model::DeviceEmulatorModel,
     connection::ConnectionId,
     data::{NewSeries, SeriesId},
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
@@ -14,7 +13,9 @@ use crate::{
     },
 };
 
-use super::AcquisitionController;
+use super::{
+    acquisition_controller::AcquisitionController, device_emulator_service::DeviceEmulatorService,
+};
 
 pub(crate) struct CommandDispatcher {
     connections: ConnectionRouter,
@@ -130,7 +131,7 @@ impl CommandDispatcher {
         &self,
         command: UserCommand,
         controls: &mut AcquisitionController,
-        device_emulator: &mut DeviceEmulatorModel,
+        device_emulator: &mut DeviceEmulatorService,
     ) {
         match command {
             UserCommand::Add(new_series) => {

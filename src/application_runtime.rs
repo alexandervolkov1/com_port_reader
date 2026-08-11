@@ -2,22 +2,20 @@ use std::path::Path;
 
 use crossbeam_channel::Receiver;
 
-use crate::{
-    components::device_emulator_model::DeviceEmulatorModel, data::SeriesId,
-    user_command::UserCommand,
-};
+use crate::{data::SeriesId, user_command::UserCommand};
 
 mod acquisition_controller;
 mod command_dispatcher;
+mod device_emulator_service;
 
 pub(crate) use acquisition_controller::{AcquisitionController, RecordingTransition};
-
 pub(crate) use command_dispatcher::CommandDispatcher;
+pub(crate) use device_emulator_service::DeviceEmulatorService;
 
 pub struct ApplicationRuntime {
     acquisition: AcquisitionController,
     dispatcher: CommandDispatcher,
-    device_emulator: DeviceEmulatorModel,
+    device_emulator: DeviceEmulatorService,
     lua_command_receiver: Receiver<UserCommand>,
 }
 
@@ -25,7 +23,7 @@ impl ApplicationRuntime {
     pub(crate) fn new(
         acquisition: AcquisitionController,
         dispatcher: CommandDispatcher,
-        device_emulator: DeviceEmulatorModel,
+        device_emulator: DeviceEmulatorService,
         lua_command_receiver: Receiver<UserCommand>,
     ) -> Self {
         Self {

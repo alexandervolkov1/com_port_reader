@@ -6,14 +6,14 @@ use crate::{
     serial_connection::SerialPortConfig,
 };
 
-pub struct DeviceEmulatorModel {
+pub struct DeviceEmulatorService {
     selected_port: Option<String>,
     handle: Option<DeviceEmulatorHandle>,
     log: LogHandle,
     script_path: Option<PathBuf>,
 }
 
-impl DeviceEmulatorModel {
+impl DeviceEmulatorService {
     pub fn new(
         configured_port: Option<String>,
         configured_script_path: Option<PathBuf>,
