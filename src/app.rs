@@ -42,6 +42,7 @@ pub struct MyApp {
     lua_console: LuaConsoleModel,
     lua_command_receiver: crossbeam_channel::Receiver<UserCommand>,
     log_panel_open: bool,
+    lua_configuration_active: bool,
     _lua_worker: LuaWorker,
 }
 
@@ -57,6 +58,8 @@ impl MyApp {
         let loaded_definition = load_lua_definition_or_base(STARTUP_SCRIPT_PATH, &base_definition);
 
         let (definition, startup_source, lua_definition_warning) = loaded_definition.into_parts();
+
+        let lua_configuration_active = startup_source.is_some();
 
         let (log, log_handle) = LogModel::new();
 
@@ -199,6 +202,7 @@ impl MyApp {
             lua_console,
             lua_command_receiver,
             log_panel_open: false,
+            lua_configuration_active,
             _lua_worker: lua_worker,
         }
     }
@@ -249,7 +253,9 @@ impl eframe::App for MyApp {
             egui::MenuBar::new().ui(ui, |ui| {
                 lua_console_view::show_menu_button(ui, &mut self.lua_console);
 
-                serial_settings_view::show_menu_button(ui, &mut self.serial_settings);
+                if !self.lua_configuration_active {
+                    serial_settings_view::show_menu_button(ui, &mut self.serial_settings);
+                }
 
                 help_view::show_menu_button(ui, &mut self.help);
             });
@@ -332,26 +338,24 @@ impl eframe::App for MyApp {
             }
         });
 
-        let acquisition_running = self.controls.is_running();
+        if !self.lua_configuration_active {
+            let acquisition_running = self.controls.is_running();
 
-        let settings_saved = serial_settings_view::show_window(
-            ui.ctx(),
-            &mut self.serial_settings,
-            &mut self.device_emulator,
-            &self.command,
-            &mut self.controls,
-            &self.worker_handle,
-            acquisition_running,
-            &mut self.config,
-            &self.log_handle,
-        );
+            let settings_saved = serial_settings_view::show_window(
+                ui.ctx(),
+                &mut self.serial_settings,
+                &mut self.device_emulator,
+                &self.command,
+                &mut self.controls,
+                &self.worker_handle,
+                acquisition_running,
+                &mut self.config,
+                &self.log_handle,
+            );
 
-        if settings_saved {
-            self.reload_application_definition();
-        }
-
-        if settings_saved {
-            self.reload_application_definition();
+            if settings_saved {
+                self.reload_application_definition();
+            }
         }
 
         help_view::show_window(ui.ctx(), &mut self.help);
