@@ -4,6 +4,7 @@ use egui_extras::{Size, StripBuilder};
 use crate::{
     app_log::LogModel,
     application_definition::ApplicationDefinition,
+    application_paths::ApplicationPaths,
     components::{
         command_model::CommandModel, controls_model::ControlsModel, controls_view,
         device_emulator_model::DeviceEmulatorModel, help_model::HelpModel, help_view, log_view,
@@ -12,7 +13,7 @@ use crate::{
     },
     connection::ConnectionId,
     data::SeriesStore,
-    lua_application_definition::{STARTUP_SCRIPT_PATH, load_lua_definition_or_base},
+    lua_application_definition::load_lua_definition_or_base,
     lua_worker::LuaWorker,
     sample_sink::NullSampleSink,
     serial_connection::SerialConnectionRegistry,
@@ -40,12 +41,16 @@ pub struct MyApp {
 }
 
 impl MyApp {
-    pub fn new() -> Self {
+    pub fn new(application_paths: ApplicationPaths) -> Self {
         let base_definition = ApplicationDefinition::default();
 
-        let loaded_definition = load_lua_definition_or_base(STARTUP_SCRIPT_PATH, &base_definition);
+        let startup_script_path = application_paths.startup_script();
+
+        let loaded_definition = load_lua_definition_or_base(startup_script_path, &base_definition);
 
         let (definition, startup_source, lua_definition_warning) = loaded_definition.into_parts();
+
+        let startup_script_loaded = startup_source.is_some();
 
         let startup_script_missing = startup_source.is_none() && lua_definition_warning.is_none();
 
@@ -70,19 +75,26 @@ impl MyApp {
             log_handle.error(warning);
         }
 
+        if startup_script_loaded {
+            log_handle.info(format!(
+                "Lua startup file loaded from '{}'.",
+                startup_script_path.display(),
+            ));
+        }
+
         if startup_script_missing {
             log_handle.error(format!(
-                "Lua startup file '{STARTUP_SCRIPT_PATH}' \
-                 was not found. Internal defaults are \
-                 active; serial connections and emulator \
-                 are not configured.",
+                "Lua startup file '{}' was not found. \
+                 Internal defaults are active; serial \
+                 connections and emulator are not configured.",
+                startup_script_path.display(),
             ));
         }
 
         let (emulator_port, emulator_script_path) = match definition.emulator() {
             Some(emulator) => (
                 Some(emulator.port_name().to_owned()),
-                Some(emulator.script_path().to_owned()),
+                Some(application_paths.resolve(emulator.script_path())),
             ),
 
             None => (None, None),
@@ -186,12 +198,6 @@ impl MyApp {
             self.command
                 .execute(command, &mut self.controls, &mut self.device_emulator);
         }
-    }
-}
-
-impl Default for MyApp {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

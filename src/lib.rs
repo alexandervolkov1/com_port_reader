@@ -2,6 +2,7 @@ mod acquisition;
 pub mod app;
 mod app_log;
 pub mod application_definition;
+pub mod application_paths;
 mod components;
 pub mod connection;
 mod data;

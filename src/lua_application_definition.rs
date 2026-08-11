@@ -11,8 +11,6 @@ use crate::{
     serial_connection::SerialPortConfig,
 };
 
-pub const STARTUP_SCRIPT_PATH: &str = "startup.lua";
-
 pub struct LoadedLuaDefinition {
     definition: ApplicationDefinition,
     source: Option<String>,
