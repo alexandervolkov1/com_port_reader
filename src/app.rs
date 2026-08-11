@@ -1,16 +1,14 @@
 use eframe::egui;
 use egui_extras::{Size, StripBuilder};
-use std::path::PathBuf;
 
 use crate::{
-    app_config::{AppConfig, CONFIG_PATH},
     app_log::{LogHandle, LogModel},
     application_definition::ApplicationDefinition,
     components::{
         command_model::CommandModel, controls_model::ControlsModel, controls_view,
         device_emulator_model::DeviceEmulatorModel, help_model::HelpModel, help_view, log_view,
         lua_console_model::LuaConsoleModel, lua_console_view, plot_model::PlotModel, plot_view,
-        serial_settings_model::SerialSettingsModel, serial_settings_view, series_view,
+        series_view,
     },
     connection::ConnectionId,
     data::SeriesStore,
@@ -19,7 +17,7 @@ use crate::{
     sample_sink::NullSampleSink,
     serial_connection::SerialConnectionRegistry,
     user_command::UserCommand,
-    worker::{ConnectionWorkers, WorkerConfig, WorkerHandle, spawn_serial_connection_worker},
+    worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
 };
 
 const SERIES_PANEL_WIDTH: f32 = 150.0;
@@ -30,30 +28,27 @@ pub struct MyApp {
     plot: PlotModel,
     command: CommandModel,
     series: SeriesStore,
-    worker_handle: WorkerHandle,
     series_panel_open: bool,
-    serial_settings: SerialSettingsModel,
     log: LogModel,
     log_handle: LogHandle,
     device_emulator: DeviceEmulatorModel,
     help: HelpModel,
-    config: AppConfig,
     definition: ApplicationDefinition,
     lua_console: LuaConsoleModel,
     lua_command_receiver: crossbeam_channel::Receiver<UserCommand>,
     log_panel_open: bool,
-    lua_configuration_active: bool,
     _lua_worker: LuaWorker,
 }
 
 impl MyApp {
     pub fn new() -> Self {
-        let (config, config_warning) = AppConfig::load_or_default(CONFIG_PATH);
+        let base_definition = ApplicationDefinition::default();
 
-        let base_definition = ApplicationDefinition::try_from(&config).expect(
-            "loaded application configuration must \
-                     produce a valid application definition",
-        );
+        let loaded_definition = load_lua_definition_or_base(STARTUP_SCRIPT_PATH, &base_definition);
+
+        let (definition, startup_source, lua_definition_warning) = loaded_definition.into_parts();
+
+        let startup_script_missing = startup_source.is_none() && lua_definition_warning.is_none();
 
         let loaded_definition = load_lua_definition_or_base(STARTUP_SCRIPT_PATH, &base_definition);
 
@@ -78,12 +73,17 @@ impl MyApp {
         let lua_console =
             LuaConsoleModel::new(lua_worker.handle(), lua_event_receiver, log_handle.clone());
 
-        if let Some(warning) = config_warning {
+        if let Some(warning) = lua_definition_warning {
             log_handle.error(warning);
         }
 
-        if let Some(warning) = lua_definition_warning {
-            log_handle.error(warning);
+        if startup_script_missing {
+            log_handle.error(format!(
+                "Lua startup file '{STARTUP_SCRIPT_PATH}' \
+                 was not found. Internal defaults are \
+                 active; serial connections and emulator \
+                 are not configured.",
+            ));
         }
 
         let (emulator_port, emulator_script_path) = match definition.emulator() {
@@ -92,12 +92,7 @@ impl MyApp {
                 Some(emulator.script_path().to_owned()),
             ),
 
-            None => (
-                (!config.serial.emulator_port.is_empty())
-                    .then(|| config.serial.emulator_port.clone()),
-                (!config.emulator.script_path.is_empty())
-                    .then(|| PathBuf::from(&config.emulator.script_path)),
-            ),
+            None => (None, None),
         };
 
         let device_emulator =
@@ -108,12 +103,6 @@ impl MyApp {
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
 
         let serial_connections = SerialConnectionRegistry::new();
-
-        let serial_settings = SerialSettingsModel::new(
-            ConnectionId::PRIMARY,
-            serial_connections.clone(),
-            &config.serial,
-        );
 
         for connection in definition.serial_connections() {
             let connection_id = connection.id();
@@ -170,11 +159,6 @@ impl MyApp {
 
         let connection_router = workers.router();
 
-        let worker_handle = connection_router.handle(ConnectionId::PRIMARY).expect(
-            "primary worker was registered \
-                 during construction",
-        );
-
         let controls = ControlsModel::new(workers, log_handle.clone());
 
         let command = CommandModel::new(
@@ -186,15 +170,12 @@ impl MyApp {
         );
 
         Self {
-            config,
             definition,
             controls,
             plot: PlotModel::new(),
             command,
             series,
-            worker_handle,
             series_panel_open: false,
-            serial_settings,
             log,
             log_handle,
             device_emulator,
@@ -202,7 +183,6 @@ impl MyApp {
             lua_console,
             lua_command_receiver,
             log_panel_open: false,
-            lua_configuration_active,
             _lua_worker: lua_worker,
         }
     }
@@ -213,24 +193,6 @@ impl MyApp {
         for command in commands {
             self.command
                 .execute(command, &mut self.controls, &mut self.device_emulator);
-        }
-    }
-
-    fn reload_application_definition(&mut self) {
-        let base_definition = ApplicationDefinition::try_from(&self.config).expect(
-            "saved application settings must \
-                     produce a valid application \
-                     definition",
-        );
-
-        let loaded_definition = load_lua_definition_or_base(STARTUP_SCRIPT_PATH, &base_definition);
-
-        let (definition, _startup_source, warning) = loaded_definition.into_parts();
-
-        self.definition = definition;
-
-        if let Some(warning) = warning {
-            self.log_handle.error(warning);
         }
     }
 }
@@ -252,10 +214,6 @@ impl eframe::App for MyApp {
         egui::Panel::top("application_menu").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 lua_console_view::show_menu_button(ui, &mut self.lua_console);
-
-                if !self.lua_configuration_active {
-                    serial_settings_view::show_menu_button(ui, &mut self.serial_settings);
-                }
 
                 help_view::show_menu_button(ui, &mut self.help);
             });
@@ -337,26 +295,6 @@ impl eframe::App for MyApp {
                     });
             }
         });
-
-        if !self.lua_configuration_active {
-            let acquisition_running = self.controls.is_running();
-
-            let settings_saved = serial_settings_view::show_window(
-                ui.ctx(),
-                &mut self.serial_settings,
-                &mut self.device_emulator,
-                &self.command,
-                &mut self.controls,
-                &self.worker_handle,
-                acquisition_running,
-                &mut self.config,
-                &self.log_handle,
-            );
-
-            if settings_saved {
-                self.reload_application_definition();
-            }
-        }
 
         help_view::show_window(ui.ctx(), &mut self.help);
 

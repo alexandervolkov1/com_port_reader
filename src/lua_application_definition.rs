@@ -57,8 +57,7 @@ pub fn load_lua_definition_or_base(
                 Some(format!(
                     "Failed to read Lua \
                          application definition \
-                         '{}': {error}. TOML \
-                         settings will be used.",
+                         '{}': {error}. Internal defaults will be used.",
                     path.display(),
                 )),
             );
@@ -74,8 +73,7 @@ pub fn load_lua_definition_or_base(
             Some(format!(
                 "Failed to load Lua \
                      application definition '{}': \
-                     {error}. TOML settings will be \
-                     used.",
+                     {error}. Internal defaults will be used.",
                 path.display(),
             )),
         ),

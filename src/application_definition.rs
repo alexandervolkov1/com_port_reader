@@ -9,11 +9,8 @@ use crate::{connection::ConnectionId, serial_connection::SerialPortConfig};
 
 const MIN_FPS: u32 = 1;
 const MAX_FPS: u32 = 240;
-
 const MIN_PLOT_WINDOW: Duration = Duration::from_secs(1);
-
 const MAX_PLOT_WINDOW: Duration = Duration::from_secs(14 * 24 * 60 * 60);
-
 const MIN_PLOT_POINTS_PER_SERIES: usize = 4;
 const MAX_PLOT_POINTS_PER_SERIES: usize = 100_000;
 

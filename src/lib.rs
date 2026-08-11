@@ -1,6 +1,5 @@
 mod acquisition;
 pub mod app;
-mod app_config;
 mod app_log;
 pub mod application_definition;
 mod components;
