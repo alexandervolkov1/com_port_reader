@@ -168,3 +168,127 @@ impl fmt::Display for DuplicateConnectionWorkerError {
 }
 
 impl Error for DuplicateConnectionWorkerError {}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use crossbeam_channel::{Sender, bounded, unbounded};
+
+    use super::ConnectionWorkers;
+
+    use crate::{
+        acquisition::{AcquisitionError, AcquisitionSource},
+        connection::ConnectionId,
+        data::{NewSeries, Sample, SeriesId, SeriesMetadata, SeriesStore},
+        sample_sink::NullSampleSink,
+        utils::current_time_f64,
+        worker::{ConnectionWorkerEvent, Worker, WorkerConfig, WorkerHandle},
+    };
+
+    struct FixedSource {
+        value: f64,
+    }
+
+    impl AcquisitionSource for FixedSource {
+        fn sample_series(
+            &mut self,
+            _series: &SeriesMetadata,
+        ) -> Result<Option<Sample>, AcquisitionError> {
+            Ok(Some(Sample::new(current_time_f64(), self.value)))
+        }
+    }
+
+    fn spawn_test_worker(
+        connection_id: ConnectionId,
+        value: f64,
+        series: SeriesStore,
+        event_sender: Sender<ConnectionWorkerEvent>,
+    ) -> Worker {
+        let (command_sender, command_receiver) = bounded(32);
+
+        let handle = WorkerHandle::new(connection_id, command_sender);
+
+        Worker::spawn(
+            handle,
+            command_receiver,
+            event_sender,
+            series,
+            Box::new(FixedSource { value }),
+            Box::new(NullSampleSink::new()),
+            WorkerConfig::new(Duration::from_millis(10)),
+        )
+    }
+
+    fn last_value(series: &SeriesStore, series_id: SeriesId) -> Option<f64> {
+        series.with(|all_series| {
+            all_series
+                .iter()
+                .find(|series| series.id == series_id)
+                .and_then(|series| series.samples.last())
+                .map(|sample| sample.value)
+        })
+    }
+
+    #[test]
+    fn polls_connections_on_independent_workers() {
+        let series = SeriesStore::new();
+
+        let primary_series_id = series
+            .add_series(
+                NewSeries::named_serial_command("primary", "primary_series")
+                    .with_connection(ConnectionId::PRIMARY),
+            )
+            .unwrap();
+
+        let secondary_connection = ConnectionId::new(2);
+
+        let secondary_series_id = series
+            .add_series(
+                NewSeries::named_serial_command("secondary", "secondary_series")
+                    .with_connection(secondary_connection),
+            )
+            .unwrap();
+
+        let (event_sender, _event_receiver) = unbounded();
+
+        let primary_worker = spawn_test_worker(
+            ConnectionId::PRIMARY,
+            10.0,
+            series.clone(),
+            event_sender.clone(),
+        );
+
+        let secondary_worker =
+            spawn_test_worker(secondary_connection, 20.0, series.clone(), event_sender);
+
+        let mut workers = ConnectionWorkers::new(primary_worker);
+
+        workers.insert(secondary_worker).unwrap();
+
+        workers.start().unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+
+        while last_value(&series, primary_series_id).is_none()
+            || last_value(&series, secondary_series_id).is_none()
+        {
+            assert!(
+                Instant::now() < deadline,
+                "connection workers did not produce \
+                 samples before the timeout",
+            );
+
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        assert_eq!(last_value(&series, primary_series_id), Some(10.0),);
+
+        assert_eq!(last_value(&series, secondary_series_id), Some(20.0),);
+
+        workers.stop().unwrap();
+    }
+}
