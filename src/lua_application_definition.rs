@@ -62,6 +62,7 @@ pub fn apply_lua_definition(
 
     let root = lua.load(source).eval::<Table>()?;
     validate_root_keys(&root)?;
+    validate_setup_function(&root)?;
 
     let mut definition = base.clone();
 
@@ -88,11 +89,28 @@ pub fn apply_lua_definition(
     Ok(definition)
 }
 
+fn validate_setup_function(root: &Table) -> Result<(), LuaApplicationDefinitionError> {
+    match root
+        .get::<Value>("setup")
+        .map_err(LuaApplicationDefinitionError::from)?
+    {
+        Value::Nil | Value::Function(_) => Ok(()),
+
+        _ => Err(LuaApplicationDefinitionError::new(
+            "Application definition section \
+                 'setup' must be a function",
+        )),
+    }
+}
+
 fn validate_root_keys(root: &Table) -> Result<(), LuaApplicationDefinitionError> {
     for pair in root.pairs::<String, Value>() {
         let (key, _) = pair.map_err(LuaApplicationDefinitionError::from)?;
 
-        if !matches!(key.as_str(), "application" | "connections" | "emulator") {
+        if !matches!(
+            key.as_str(),
+            "application" | "connections" | "emulator" | "setup"
+        ) {
             return Err(LuaApplicationDefinitionError::new(format!(
                 "Unknown application \
                          definition section '{key}'",
@@ -973,5 +991,49 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error.to_string(), "Unknown emulator connection 'missing'",);
+    }
+
+    #[test]
+    fn accepts_setup_function() {
+        let base = base_definition();
+
+        let definition = apply_lua_definition(
+            r#"
+                return {
+                    application = {
+                        fps = 60,
+                    },
+
+                    setup = function()
+                        return 42
+                    end,
+                }
+            "#,
+            &base,
+        )
+        .unwrap();
+
+        assert_eq!(definition.runtime().fps(), 60,);
+    }
+
+    #[test]
+    fn rejects_non_function_setup() {
+        let base = base_definition();
+
+        let error = apply_lua_definition(
+            r#"
+                return {
+                    setup = "not a function",
+                }
+            "#,
+            &base,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Application definition section 'setup' \
+             must be a function",
+        );
     }
 }
