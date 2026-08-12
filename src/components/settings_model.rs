@@ -17,6 +17,7 @@ impl Default for SettingsValidation {
 pub struct SettingsModel {
     open: bool,
     validation: SettingsValidation,
+    open_error: Option<String>,
 }
 
 impl SettingsModel {
@@ -42,5 +43,13 @@ impl SettingsModel {
 
             Err(error) => SettingsValidation::Invalid(error),
         };
+    }
+
+    pub fn open_startup_file(&mut self, runtime: &ApplicationRuntime) {
+        self.open_error = runtime.open_startup_configuration().err();
+    }
+
+    pub fn open_error(&self) -> Option<&str> {
+        self.open_error.as_deref()
     }
 }

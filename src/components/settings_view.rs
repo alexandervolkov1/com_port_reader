@@ -213,6 +213,10 @@ fn format_duration(duration: Duration) -> String {
 
 fn show_validation(ui: &mut egui::Ui, model: &mut SettingsModel, runtime: &ApplicationRuntime) {
     ui.horizontal(|ui| {
+        if ui.button("Open startup.lua").clicked() {
+            model.open_startup_file(runtime);
+        }
+
         if ui.button("Validate startup.lua").clicked() {
             model.validate(runtime);
         }
@@ -237,6 +241,12 @@ fn show_validation(ui: &mut egui::Ui, model: &mut SettingsModel, runtime: &Appli
             }
         }
     });
+
+    if let Some(error) = model.open_error() {
+        ui.add_space(4.0);
+
+        ui.colored_label(egui::Color32::from_rgb(190, 30, 30), error);
+    }
 
     if let SettingsValidation::Invalid(error) = model.validation() {
         ui.add_space(4.0);

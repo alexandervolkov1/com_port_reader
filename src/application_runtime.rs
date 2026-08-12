@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use crossbeam_channel::{Receiver, unbounded};
+use crossbeam_channel::{unbounded, Receiver};
 
 use crate::{
     app_log::LogHandle,
@@ -13,7 +13,7 @@ use crate::{
     sample_sink::NullSampleSink,
     serial_connection::SerialConnectionRegistry,
     user_command::UserCommand,
-    worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
+    worker::{spawn_serial_connection_worker, ConnectionWorkers, WorkerConfig},
 };
 
 mod acquisition_controller;
@@ -250,5 +250,25 @@ impl ApplicationRuntime {
         })?;
 
         Ok(())
+    }
+
+    pub(crate) fn open_startup_configuration(
+        &self,
+    ) -> Result<(), String> {
+        let path = self.paths.startup_script();
+
+        if !path.is_file() {
+            return Err(format!(
+                "Startup file '{}' does not exist",
+                path.display(),
+            ));
+        }
+
+        open::that(path).map_err(|error| {
+            format!(
+                "Failed to open startup file '{}': {error}",
+                path.display(),
+            )
+        })
     }
 }
