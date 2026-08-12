@@ -23,7 +23,6 @@ pub struct MyApp {
     series_panel_open: bool,
     log: LogModel,
     help: HelpModel,
-    definition: ApplicationDefinition,
     lua_console: LuaConsoleModel,
     log_panel_open: bool,
 }
@@ -59,7 +58,7 @@ impl MyApp {
             .map(|emulator| application_paths.resolve(emulator.script_path()));
 
         let (runtime, lua_event_receiver) = ApplicationRuntime::build(
-            &definition,
+            definition,
             log_handle.clone(),
             emulator_script_path,
             startup_source,
@@ -75,7 +74,6 @@ impl MyApp {
             series_panel_open: false,
             log,
             help: HelpModel::default(),
-            definition,
             lua_console,
             log_panel_open: false,
         }
@@ -129,8 +127,15 @@ impl eframe::App for MyApp {
                                 ui,
                                 &mut self.plot,
                                 self.runtime.series(),
-                                self.definition.runtime().max_plot_points_per_series(),
-                                self.definition.runtime().plot_window().as_secs_f64(),
+                                self.runtime
+                                    .definition()
+                                    .runtime()
+                                    .max_plot_points_per_series(),
+                                self.runtime
+                                    .definition()
+                                    .runtime()
+                                    .plot_window()
+                                    .as_secs_f64(),
                             );
                         });
 
@@ -159,8 +164,15 @@ impl eframe::App for MyApp {
                                 ui,
                                 &mut self.plot,
                                 self.runtime.series(),
-                                self.definition.runtime().max_plot_points_per_series(),
-                                self.definition.runtime().plot_window().as_secs_f64(),
+                                self.runtime
+                                    .definition()
+                                    .runtime()
+                                    .max_plot_points_per_series(),
+                                self.runtime
+                                    .definition()
+                                    .runtime()
+                                    .plot_window()
+                                    .as_secs_f64(),
                             );
                         });
 
@@ -176,6 +188,6 @@ impl eframe::App for MyApp {
         help_view::show_window(ui.ctx(), &mut self.help);
 
         ui.ctx()
-            .request_repaint_after(self.definition.runtime().repaint_interval());
+            .request_repaint_after(self.runtime.definition().runtime().repaint_interval());
     }
 }
