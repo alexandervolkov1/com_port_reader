@@ -80,6 +80,24 @@ impl MyApp {
             settings: SettingsModel::default(),
         }
     }
+
+    fn reload_runtime(&mut self) -> Result<(), String> {
+        if self.lua_console.is_pending() {
+            return Err("Wait for the current Lua command to finish \
+                 before reloading startup.lua."
+                .to_owned());
+        }
+
+        let (runtime, lua_event_receiver) = self.runtime.rebuild_from_startup()?;
+
+        self.lua_console
+            .replace_worker(runtime.lua_handle(), lua_event_receiver);
+
+        self.runtime = runtime;
+        self.plot = PlotModel::new();
+
+        Ok(())
+    }
 }
 
 impl eframe::App for MyApp {
@@ -188,6 +206,12 @@ impl eframe::App for MyApp {
         });
 
         settings_view::show_window(ui.ctx(), &mut self.settings, &self.runtime);
+
+        if self.settings.take_reload_request() {
+            let result = self.reload_runtime();
+
+            self.settings.set_reload_result(result);
+        }
 
         help_view::show_window(ui.ctx(), &mut self.help);
 

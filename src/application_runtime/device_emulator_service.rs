@@ -27,6 +27,12 @@ impl DeviceEmulatorService {
         }
     }
 
+    pub fn is_running(&self) -> bool {
+        self.handle
+            .as_ref()
+            .is_some_and(DeviceEmulatorHandle::is_running)
+    }
+
     pub fn start(&mut self, serial_config: &SerialPortConfig) {
         self.poll();
 

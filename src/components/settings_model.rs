@@ -13,11 +13,27 @@ impl Default for SettingsValidation {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SettingsReloadStatus {
+    NotReloaded,
+    Succeeded,
+    Failed(String),
+}
+
+impl Default for SettingsReloadStatus {
+    fn default() -> Self {
+        Self::NotReloaded
+    }
+}
+
 #[derive(Default)]
 pub struct SettingsModel {
     open: bool,
     validation: SettingsValidation,
     open_error: Option<String>,
+    reload_confirmation_open: bool,
+    reload_requested: bool,
+    reload_status: SettingsReloadStatus,
 }
 
 impl SettingsModel {
@@ -51,5 +67,42 @@ impl SettingsModel {
 
     pub fn open_error(&self) -> Option<&str> {
         self.open_error.as_deref()
+    }
+
+    pub const fn reload_confirmation_open(&self) -> bool {
+        self.reload_confirmation_open
+    }
+
+    pub fn begin_reload_confirmation(&mut self) {
+        self.reload_confirmation_open = true;
+    }
+
+    pub fn cancel_reload(&mut self) {
+        self.reload_confirmation_open = false;
+    }
+
+    pub fn confirm_reload(&mut self) {
+        self.reload_confirmation_open = false;
+        self.reload_requested = true;
+    }
+
+    pub fn take_reload_request(&mut self) -> bool {
+        std::mem::take(&mut self.reload_requested)
+    }
+
+    pub const fn reload_status(&self) -> &SettingsReloadStatus {
+        &self.reload_status
+    }
+
+    pub fn set_reload_result(&mut self, result: Result<(), String>) {
+        self.reload_status = match result {
+            Ok(()) => {
+                self.validation = SettingsValidation::Valid;
+
+                SettingsReloadStatus::Succeeded
+            }
+
+            Err(error) => SettingsReloadStatus::Failed(error),
+        };
     }
 }

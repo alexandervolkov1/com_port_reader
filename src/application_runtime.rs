@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use crossbeam_channel::{unbounded, Receiver};
+use crossbeam_channel::{Receiver, unbounded};
 
 use crate::{
     app_log::LogHandle,
@@ -13,7 +13,7 @@ use crate::{
     sample_sink::NullSampleSink,
     serial_connection::SerialConnectionRegistry,
     user_command::UserCommand,
-    worker::{spawn_serial_connection_worker, ConnectionWorkers, WorkerConfig},
+    worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
 };
 
 mod acquisition_controller;
@@ -27,12 +27,13 @@ pub(crate) use device_emulator_service::DeviceEmulatorService;
 pub struct ApplicationRuntime {
     lua_worker: LuaWorker,
     definition: ApplicationDefinition,
+    paths: ApplicationPaths,
+    log: LogHandle,
     series: SeriesStore,
     acquisition: AcquisitionController,
     dispatcher: CommandDispatcher,
     device_emulator: DeviceEmulatorService,
     lua_command_receiver: Receiver<UserCommand>,
-    paths: ApplicationPaths,
 }
 
 impl ApplicationRuntime {
@@ -63,10 +64,10 @@ impl ApplicationRuntime {
             .emulator()
             .map(|emulator| paths.resolve(emulator.script_path()));
 
-        let recording_directory = paths.resolve("protocols");
-
         let device_emulator =
             DeviceEmulatorService::new(emulator_port, emulator_script_path, log.clone());
+
+        let recording_directory = paths.resolve("protocols");
 
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
 
@@ -79,8 +80,9 @@ impl ApplicationRuntime {
                 serial_connections.primary()
             } else {
                 serial_connections.register(connection_id).expect(
-                    "validated application definition \
-                     must contain unique connection IDs",
+                    "validated application \
+                             definition must contain \
+                             unique connection IDs",
                 )
             };
 
@@ -107,8 +109,9 @@ impl ApplicationRuntime {
             }
 
             let config_store = serial_connections.store(connection_id).expect(
-                "serial connection store was registered \
-                 before spawning its worker",
+                "serial connection store was \
+                     registered before spawning its \
+                     worker",
             );
 
             let worker = spawn_serial_connection_worker(
@@ -134,13 +137,14 @@ impl ApplicationRuntime {
             serial_connections,
             definition.clone(),
             event_receiver,
-            log,
+            log.clone(),
         );
 
         let runtime = Self::new(
             lua_worker,
             definition,
             paths,
+            log,
             series,
             acquisition,
             dispatcher,
@@ -151,10 +155,12 @@ impl ApplicationRuntime {
         Ok((runtime, lua_event_receiver))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new(
         lua_worker: LuaWorker,
         definition: ApplicationDefinition,
         paths: ApplicationPaths,
+        log: LogHandle,
         series: SeriesStore,
         acquisition: AcquisitionController,
         dispatcher: CommandDispatcher,
@@ -165,6 +171,7 @@ impl ApplicationRuntime {
             lua_worker,
             definition,
             paths,
+            log,
             series,
             acquisition,
             dispatcher,
@@ -235,40 +242,104 @@ impl ApplicationRuntime {
     }
 
     pub(crate) fn validate_startup_configuration(&self) -> Result<(), String> {
-        let path = self.paths.startup_script();
-
-        let source = fs::read_to_string(path).map_err(|error| {
-            format!("Failed to read startup file '{}': {error}", path.display(),)
-        })?;
-
-        apply_lua_definition(&source, &ApplicationDefinition::default()).map_err(|error| {
-            format!(
-                "Failed to validate startup file '{}': \
-                 {error}",
-                path.display(),
-            )
-        })?;
-
-        Ok(())
+        self.load_startup_configuration().map(|_| ())
     }
 
-    pub(crate) fn open_startup_configuration(
-        &self,
-    ) -> Result<(), String> {
+    pub(crate) fn open_startup_configuration(&self) -> Result<(), String> {
         let path = self.paths.startup_script();
 
         if !path.is_file() {
-            return Err(format!(
-                "Startup file '{}' does not exist",
-                path.display(),
-            ));
+            return Err(format!("Startup file '{}' does not exist", path.display(),));
         }
 
         open::that(path).map_err(|error| {
             format!(
-                "Failed to open startup file '{}': {error}",
+                "Failed to open startup file '{}': \
+                 {error}",
                 path.display(),
             )
         })
+    }
+
+    pub(crate) fn rebuild_from_startup(&self) -> Result<(Self, Receiver<LuaEvent>), String> {
+        let result = self.try_rebuild_from_startup();
+
+        match &result {
+            Ok(_) => {
+                self.log.info(format!(
+                    "Application runtime reloaded \
+                     from '{}'.",
+                    self.paths.startup_script().display(),
+                ));
+            }
+
+            Err(error) => {
+                self.log.error(format!(
+                    "Failed to reload application \
+                     runtime: {error}",
+                ));
+            }
+        }
+
+        result
+    }
+
+    fn try_rebuild_from_startup(&self) -> Result<(Self, Receiver<LuaEvent>), String> {
+        if self.is_recording() {
+            return Err("Stop recording before reloading \
+                 startup.lua."
+                .to_owned());
+        }
+
+        if self.is_running() {
+            return Err("Stop acquisition before reloading \
+                 startup.lua."
+                .to_owned());
+        }
+
+        if self.device_emulator.is_running() {
+            return Err("Stop the device emulator before \
+                 reloading startup.lua."
+                .to_owned());
+        }
+
+        let (definition, source) = self.load_startup_configuration()?;
+
+        Self::build(
+            definition,
+            self.log.clone(),
+            self.paths.clone(),
+            Some(source),
+        )
+        .map_err(|error| {
+            format!(
+                "Failed to build application runtime \
+                 from '{}': {error}",
+                self.paths.startup_script().display(),
+            )
+        })
+    }
+
+    fn load_startup_configuration(&self) -> Result<(ApplicationDefinition, String), String> {
+        let path = self.paths.startup_script();
+
+        let source = fs::read_to_string(path).map_err(|error| {
+            format!(
+                "Failed to read startup file '{}': \
+                     {error}",
+                path.display(),
+            )
+        })?;
+
+        let definition =
+            apply_lua_definition(&source, &ApplicationDefinition::default()).map_err(|error| {
+                format!(
+                    "Failed to validate startup file \
+                 '{}': {error}",
+                    path.display(),
+                )
+            })?;
+
+        Ok((definition, source))
     }
 }

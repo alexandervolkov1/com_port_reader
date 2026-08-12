@@ -6,7 +6,7 @@ use crate::{
     application_definition::ApplicationDefinition,
     application_paths::ApplicationPaths,
     application_runtime::ApplicationRuntime,
-    components::settings_model::{SettingsModel, SettingsValidation},
+    components::settings_model::{SettingsModel, SettingsReloadStatus, SettingsValidation},
 };
 
 pub fn show_menu_button(ui: &mut egui::Ui, model: &mut SettingsModel) {
@@ -221,6 +221,10 @@ fn show_validation(ui: &mut egui::Ui, model: &mut SettingsModel, runtime: &Appli
             model.validate(runtime);
         }
 
+        if ui.button("Reload startup.lua").clicked() {
+            model.begin_reload_confirmation();
+        }
+
         match model.validation() {
             SettingsValidation::NotChecked => {
                 ui.weak("Configuration has not been checked.");
@@ -241,6 +245,47 @@ fn show_validation(ui: &mut egui::Ui, model: &mut SettingsModel, runtime: &Appli
             }
         }
     });
+
+    if model.reload_confirmation_open() {
+        ui.add_space(8.0);
+
+        ui.group(|ui| {
+            ui.colored_label(
+                egui::Color32::from_rgb(190, 130, 0),
+                "Reloading will clear all current series \
+                 and plot history.",
+            );
+
+            ui.horizontal(|ui| {
+                if ui.button("Reload now").clicked() {
+                    model.confirm_reload();
+                }
+
+                if ui.button("Cancel").clicked() {
+                    model.cancel_reload();
+                }
+            });
+        });
+    }
+
+    match model.reload_status() {
+        SettingsReloadStatus::NotReloaded => {}
+
+        SettingsReloadStatus::Succeeded => {
+            ui.add_space(4.0);
+
+            ui.colored_label(
+                egui::Color32::from_rgb(0, 140, 0),
+                "Configuration reloaded successfully.",
+            );
+        }
+
+        SettingsReloadStatus::Failed(error) => {
+            ui.add_space(4.0);
+
+            ui.colored_label(egui::Color32::from_rgb(190, 30, 30), error);
+        }
+    }
 
     if let Some(error) = model.open_error() {
         ui.add_space(4.0);
