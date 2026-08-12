@@ -20,6 +20,67 @@ pub struct ProcessMeasurement {
     pub value: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProcessActionOrigin {
+    UserInterface,
+    Lua,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProcessAction {
+    StartAcquisition,
+    StopAcquisition,
+    ClearSeries,
+    StartRecording,
+    StopRecording,
+    StartEmulator,
+    StopEmulator,
+
+    AddSeries {
+        connection_id: ConnectionId,
+        name: Option<String>,
+        source: String,
+        polling_interval_seconds: Option<f64>,
+    },
+
+    DeleteSeriesByName {
+        name: String,
+    },
+
+    RemoveSeries {
+        series_id: SeriesId,
+    },
+
+    RenameSeries {
+        current_name: String,
+        new_name: String,
+    },
+
+    SetSeriesVisibility {
+        series_id: SeriesId,
+        visible: bool,
+    },
+
+    SendSerial {
+        connection_id: ConnectionId,
+        command: String,
+    },
+
+    ReadInstrument {
+        connection_id: ConnectionId,
+        request: String,
+    },
+
+    WriteInstrument {
+        connection_id: ConnectionId,
+        request: String,
+    },
+
+    DescribeVirtualInstruments {
+        connection_id: ConnectionId,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum ProcessRecord {
     Log {
@@ -36,6 +97,12 @@ pub enum ProcessRecord {
 
     Measurements {
         measurements: Vec<ProcessMeasurement>,
+    },
+
+    ActionRequested {
+        timestamp: SystemTime,
+        origin: ProcessActionOrigin,
+        action: ProcessAction,
     },
 }
 
@@ -98,6 +165,14 @@ impl ProcessRecorder {
             .collect();
 
         self.record(ProcessRecord::Measurements { measurements });
+    }
+
+    pub fn record_action(&self, origin: ProcessActionOrigin, action: ProcessAction) {
+        self.record(ProcessRecord::ActionRequested {
+            timestamp: SystemTime::now(),
+            origin,
+            action,
+        });
     }
 }
 

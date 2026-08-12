@@ -10,7 +10,7 @@ use crate::{
     data::{SeriesId, SeriesStore},
     lua_application_definition::apply_lua_definition,
     lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle},
-    process_recorder::{ProcessRecord, ProcessRecorder},
+    process_recorder::{ProcessAction, ProcessActionOrigin, ProcessRecord, ProcessRecorder},
     sample_sink::NullSampleSink,
     serial_connection::SerialConnectionRegistry,
     user_command::UserCommand,
@@ -204,11 +204,19 @@ impl ApplicationRuntime {
         let commands = self.lua_command_receiver.try_iter().collect::<Vec<_>>();
 
         for command in commands {
-            self.execute(command);
+            self.execute_from(command, ProcessActionOrigin::Lua);
         }
     }
 
     pub fn execute(&mut self, command: UserCommand) {
+        self.execute_from(command, ProcessActionOrigin::UserInterface);
+    }
+
+    fn execute_from(&mut self, command: UserCommand, origin: ProcessActionOrigin) {
+        if let Some(action) = process_action_from_command(&command) {
+            self.process_recorder.record_action(origin, action);
+        }
+
         self.dispatcher
             .execute(command, &mut self.acquisition, &mut self.device_emulator);
     }
@@ -234,10 +242,23 @@ impl ApplicationRuntime {
     }
 
     pub fn set_series_visibility(&self, id: SeriesId, visible: bool) {
+        self.process_recorder.record_action(
+            ProcessActionOrigin::UserInterface,
+            ProcessAction::SetSeriesVisibility {
+                series_id: id,
+                visible,
+            },
+        );
+
         self.dispatcher.set_visibility(id, visible);
     }
 
     pub fn remove_series(&self, id: SeriesId) {
+        self.process_recorder.record_action(
+            ProcessActionOrigin::UserInterface,
+            ProcessAction::RemoveSeries { series_id: id },
+        );
+
         self.dispatcher.remove_series(id);
     }
 
@@ -358,5 +379,124 @@ impl ApplicationRuntime {
             })?;
 
         Ok((definition, source))
+    }
+}
+
+fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
+    match command {
+        UserCommand::Add(new_series) => Some(ProcessAction::AddSeries {
+            connection_id: new_series.connection_id(),
+
+            name: new_series.name().map(str::to_owned),
+
+            source: new_series.source().to_string(),
+
+            polling_interval_seconds: new_series
+                .sampling_interval()
+                .map(|interval| interval.duration().as_secs_f64()),
+        }),
+
+        UserCommand::Delete { name } => {
+            Some(ProcessAction::DeleteSeriesByName { name: name.clone() })
+        }
+
+        UserCommand::Rename {
+            current_name,
+            new_name,
+        } => Some(ProcessAction::RenameSeries {
+            current_name: current_name.clone(),
+            new_name: new_name.clone(),
+        }),
+
+        UserCommand::Start => Some(ProcessAction::StartAcquisition),
+
+        UserCommand::Stop => Some(ProcessAction::StopAcquisition),
+
+        UserCommand::Clear => Some(ProcessAction::ClearSeries),
+
+        UserCommand::StartRecording => Some(ProcessAction::StartRecording),
+
+        UserCommand::StopRecording => Some(ProcessAction::StopRecording),
+
+        UserCommand::StartEmulator => Some(ProcessAction::StartEmulator),
+
+        UserCommand::StopEmulator => Some(ProcessAction::StopEmulator),
+
+        UserCommand::SendSerial {
+            connection_id,
+            command,
+        } => Some(ProcessAction::SendSerial {
+            connection_id: *connection_id,
+            command: command.clone(),
+        }),
+
+        UserCommand::ReadInstrument {
+            connection_id,
+            request,
+            ..
+        } => Some(ProcessAction::ReadInstrument {
+            connection_id: *connection_id,
+            request: request.to_string(),
+        }),
+
+        UserCommand::WriteInstrument {
+            connection_id,
+            request,
+            ..
+        } => Some(ProcessAction::WriteInstrument {
+            connection_id: *connection_id,
+            request: request.to_string(),
+        }),
+
+        UserCommand::DescribeVirtualInstruments { connection_id, .. } => {
+            Some(ProcessAction::DescribeVirtualInstruments {
+                connection_id: *connection_id,
+            })
+        }
+
+        UserCommand::Log { .. } => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::{ProcessAction, process_action_from_command};
+
+    use crate::{
+        connection::ConnectionId,
+        data::{NewSeries, SamplingInterval},
+        user_command::UserCommand,
+    };
+
+    #[test]
+    fn converts_added_series_to_process_action() {
+        let interval = SamplingInterval::new(Duration::from_millis(250)).unwrap();
+
+        let command = UserCommand::Add(
+            NewSeries::named_serial_command("read temperature", "temperature")
+                .with_connection(ConnectionId::new(2))
+                .with_sampling_interval(interval),
+        );
+
+        assert_eq!(
+            process_action_from_command(&command),
+            Some(ProcessAction::AddSeries {
+                connection_id: ConnectionId::new(2),
+                name: Some("temperature".to_owned()),
+                source: "COM command: read temperature".to_owned(),
+                polling_interval_seconds: Some(0.25),
+            }),
+        );
+    }
+
+    #[test]
+    fn does_not_duplicate_log_as_action() {
+        let command = UserCommand::Log {
+            message: "test".to_owned(),
+        };
+
+        assert_eq!(process_action_from_command(&command), None,);
     }
 }

@@ -104,6 +104,18 @@ impl NewSeries {
         self
     }
 
+    pub(crate) const fn source(&self) -> &SeriesSource {
+        &self.source
+    }
+
+    pub(crate) fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    pub(crate) const fn sampling_interval(&self) -> Option<SamplingInterval> {
+        self.sampling_interval
+    }
+
     pub(crate) fn into_parts(self) -> (SeriesSource, Option<String>, Option<SamplingInterval>) {
         (self.source, self.name, self.sampling_interval)
     }
