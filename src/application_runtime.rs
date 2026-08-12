@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fs, path::Path};
 
 use crossbeam_channel::{Receiver, unbounded};
 
@@ -8,6 +8,7 @@ use crate::{
     application_paths::ApplicationPaths,
     connection::ConnectionId,
     data::{SeriesId, SeriesStore},
+    lua_application_definition::apply_lua_definition,
     lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle},
     sample_sink::NullSampleSink,
     serial_connection::SerialConnectionRegistry,
@@ -231,5 +232,23 @@ impl ApplicationRuntime {
 
     pub(crate) const fn paths(&self) -> &ApplicationPaths {
         &self.paths
+    }
+
+    pub(crate) fn validate_startup_configuration(&self) -> Result<(), String> {
+        let path = self.paths.startup_script();
+
+        let source = fs::read_to_string(path).map_err(|error| {
+            format!("Failed to read startup file '{}': {error}", path.display(),)
+        })?;
+
+        apply_lua_definition(&source, &ApplicationDefinition::default()).map_err(|error| {
+            format!(
+                "Failed to validate startup file '{}': \
+                 {error}",
+                path.display(),
+            )
+        })?;
+
+        Ok(())
     }
 }

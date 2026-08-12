@@ -3,8 +3,10 @@ use std::time::Duration;
 use eframe::egui;
 
 use crate::{
-    application_definition::ApplicationDefinition, application_paths::ApplicationPaths,
-    components::settings_model::SettingsModel,
+    application_definition::ApplicationDefinition,
+    application_paths::ApplicationPaths,
+    application_runtime::ApplicationRuntime,
+    components::settings_model::{SettingsModel, SettingsValidation},
 };
 
 pub fn show_menu_button(ui: &mut egui::Ui, model: &mut SettingsModel) {
@@ -16,8 +18,7 @@ pub fn show_menu_button(ui: &mut egui::Ui, model: &mut SettingsModel) {
 pub fn show_window(
     context: &egui::Context,
     model: &mut SettingsModel,
-    definition: &ApplicationDefinition,
-    paths: &ApplicationPaths,
+    runtime: &ApplicationRuntime,
 ) {
     if !model.is_open() {
         return;
@@ -33,25 +34,31 @@ pub fn show_window(
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    show_configuration_paths(ui, paths);
+                    show_validation(ui, model, runtime);
 
                     ui.add_space(8.0);
                     ui.separator();
                     ui.add_space(8.0);
 
-                    show_runtime(ui, definition);
+                    show_configuration_paths(ui, runtime.paths());
 
                     ui.add_space(8.0);
                     ui.separator();
                     ui.add_space(8.0);
 
-                    show_connections(ui, definition);
+                    show_runtime(ui, runtime.definition());
 
                     ui.add_space(8.0);
                     ui.separator();
                     ui.add_space(8.0);
 
-                    show_emulator(ui, definition, paths);
+                    show_connections(ui, runtime.definition());
+
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    show_emulator(ui, runtime.definition(), runtime.paths());
                 });
         });
 
@@ -202,4 +209,38 @@ fn show_emulator(ui: &mut egui::Ui, definition: &ApplicationDefinition, paths: &
 
 fn format_duration(duration: Duration) -> String {
     format!("{:.3} s", duration.as_secs_f64())
+}
+
+fn show_validation(ui: &mut egui::Ui, model: &mut SettingsModel, runtime: &ApplicationRuntime) {
+    ui.horizontal(|ui| {
+        if ui.button("Validate startup.lua").clicked() {
+            model.validate(runtime);
+        }
+
+        match model.validation() {
+            SettingsValidation::NotChecked => {
+                ui.weak("Configuration has not been checked.");
+            }
+
+            SettingsValidation::Valid => {
+                ui.colored_label(
+                    egui::Color32::from_rgb(0, 140, 0),
+                    "Configuration is valid.",
+                );
+            }
+
+            SettingsValidation::Invalid(_) => {
+                ui.colored_label(
+                    egui::Color32::from_rgb(190, 30, 30),
+                    "Configuration is invalid.",
+                );
+            }
+        }
+    });
+
+    if let SettingsValidation::Invalid(error) = model.validation() {
+        ui.add_space(4.0);
+
+        ui.colored_label(egui::Color32::from_rgb(190, 30, 30), error);
+    }
 }

@@ -187,12 +187,7 @@ impl eframe::App for MyApp {
             }
         });
 
-        settings_view::show_window(
-            ui.ctx(),
-            &mut self.settings,
-            self.runtime.definition(),
-            self.runtime.paths(),
-        );
+        settings_view::show_window(ui.ctx(), &mut self.settings, &self.runtime);
 
         help_view::show_window(ui.ctx(), &mut self.help);
 
