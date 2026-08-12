@@ -12,6 +12,7 @@ use crate::{
         series_view, settings_model::SettingsModel, settings_view,
     },
     lua_application_definition::load_lua_definition_or_base,
+    process_recorder::ProcessRecorder,
 };
 
 const SERIES_PANEL_WIDTH: f32 = 150.0;
@@ -39,7 +40,10 @@ impl MyApp {
 
         let startup_script_missing = startup_source.is_none() && lua_definition_warning.is_none();
 
-        let (log, log_handle) = LogModel::new(application_paths.resolve("logs"));
+        let process_recorder = ProcessRecorder::default();
+
+        let (log, log_handle) =
+            LogModel::new(application_paths.resolve("logs"), process_recorder.clone());
 
         if let Some(warning) = lua_definition_warning {
             log_handle.error(warning);
@@ -57,6 +61,7 @@ impl MyApp {
         let (runtime, lua_event_receiver) = ApplicationRuntime::build(
             definition,
             log_handle.clone(),
+            process_recorder,
             application_paths,
             startup_source,
         )

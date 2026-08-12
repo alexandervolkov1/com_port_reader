@@ -3,18 +3,17 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Write},
     path::PathBuf,
+    time::SystemTime,
 };
 
 use chrono::{Local, NaiveDate};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
-const MAX_LOG_ENTRIES: usize = 2_000;
+use crate::process_recorder::{ProcessRecord, ProcessRecorder};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LogLevel {
-    Info,
-    Error,
-}
+pub use crate::process_recorder::ProcessLogLevel as LogLevel;
+
+const MAX_LOG_ENTRIES: usize = 2_000;
 
 #[derive(Clone, Debug)]
 pub struct LogEntry {
@@ -23,8 +22,10 @@ pub struct LogEntry {
 }
 
 impl LogEntry {
-    fn new(level: LogLevel, message: impl AsRef<str>) -> Self {
-        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+    fn new(timestamp: SystemTime, level: LogLevel, message: impl AsRef<str>) -> Self {
+        let timestamp: chrono::DateTime<Local> = timestamp.into();
+
+        let timestamp = timestamp.format("%Y-%m-%d %H:%M:%S%.3f");
 
         Self {
             level,
@@ -42,6 +43,7 @@ impl LogEntry {
 }
 
 struct LogMessage {
+    timestamp: SystemTime,
     level: LogLevel,
     text: String,
 }
@@ -49,6 +51,7 @@ struct LogMessage {
 #[derive(Clone)]
 pub struct LogHandle {
     sender: Sender<LogMessage>,
+    recorder: ProcessRecorder,
 }
 
 impl LogHandle {
@@ -61,9 +64,20 @@ impl LogHandle {
     }
 
     fn send(&self, level: LogLevel, message: impl Into<String>) {
-        let _ = self.sender.send(LogMessage {
+        let timestamp = SystemTime::now();
+
+        let message = message.into();
+
+        self.recorder.record(ProcessRecord::Log {
+            timestamp,
             level,
-            text: message.into(),
+            message: message.clone(),
+        });
+
+        let _ = self.sender.send(LogMessage {
+            timestamp,
+            level,
+            text: message,
         });
     }
 }
@@ -76,7 +90,7 @@ pub struct LogModel {
 }
 
 impl LogModel {
-    pub fn new(log_directory: impl Into<PathBuf>) -> (Self, LogHandle) {
+    pub fn new(log_directory: impl Into<PathBuf>, recorder: ProcessRecorder) -> (Self, LogHandle) {
         let (sender, receiver) = unbounded();
 
         (
@@ -86,13 +100,13 @@ impl LogModel {
                 file_writer: LogFileWriter::new(log_directory),
                 file_logging_enabled: true,
             },
-            LogHandle { sender },
+            LogHandle { sender, recorder },
         )
     }
 
     pub fn poll(&mut self) {
         while let Ok(message) = self.receiver.try_recv() {
-            let entry = LogEntry::new(message.level, message.text);
+            let entry = LogEntry::new(message.timestamp, message.level, message.text);
 
             let write_result = if self.file_logging_enabled {
                 self.file_writer.write(entry.text())
@@ -106,11 +120,9 @@ impl LogModel {
                 self.file_logging_enabled = false;
 
                 self.push_entry(LogEntry::new(
+                    SystemTime::now(),
                     LogLevel::Error,
-                    format!(
-                        "Application log file \
-                         disabled: {error}",
-                    ),
+                    format!("Application log file disabled: {error}",),
                 ));
             }
         }

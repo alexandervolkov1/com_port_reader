@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{fs, path::Path, time::SystemTime};
 
 use crossbeam_channel::{Receiver, unbounded};
 
@@ -10,6 +10,7 @@ use crate::{
     data::{SeriesId, SeriesStore},
     lua_application_definition::apply_lua_definition,
     lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle},
+    process_recorder::{ProcessRecord, ProcessRecorder},
     sample_sink::NullSampleSink,
     serial_connection::SerialConnectionRegistry,
     user_command::UserCommand,
@@ -29,6 +30,7 @@ pub struct ApplicationRuntime {
     definition: ApplicationDefinition,
     paths: ApplicationPaths,
     log: LogHandle,
+    process_recorder: ProcessRecorder,
     series: SeriesStore,
     acquisition: AcquisitionController,
     dispatcher: CommandDispatcher,
@@ -40,12 +42,15 @@ impl ApplicationRuntime {
     pub(crate) fn build(
         definition: ApplicationDefinition,
         log: LogHandle,
+        process_recorder: ProcessRecorder,
         paths: ApplicationPaths,
         startup_source: Option<String>,
     ) -> std::io::Result<(Self, Receiver<LuaEvent>)> {
         let (lua_event_sender, lua_event_receiver) = unbounded();
 
         let (lua_command_sender, lua_command_receiver) = unbounded();
+
+        let configuration_source = startup_source.clone();
 
         let lua_worker = LuaWorker::spawn(
             lua_event_sender,
@@ -140,11 +145,18 @@ impl ApplicationRuntime {
             log.clone(),
         );
 
+        process_recorder.record(ProcessRecord::ConfigurationLoaded {
+            timestamp: SystemTime::now(),
+            startup_path: paths.startup_script().to_path_buf(),
+            source: configuration_source,
+        });
+
         let runtime = Self::new(
             lua_worker,
             definition,
             paths,
             log,
+            process_recorder,
             series,
             acquisition,
             dispatcher,
@@ -161,6 +173,7 @@ impl ApplicationRuntime {
         definition: ApplicationDefinition,
         paths: ApplicationPaths,
         log: LogHandle,
+        process_recorder: ProcessRecorder,
         series: SeriesStore,
         acquisition: AcquisitionController,
         dispatcher: CommandDispatcher,
@@ -172,6 +185,7 @@ impl ApplicationRuntime {
             definition,
             paths,
             log,
+            process_recorder,
             series,
             acquisition,
             dispatcher,
@@ -308,6 +322,7 @@ impl ApplicationRuntime {
         Self::build(
             definition,
             self.log.clone(),
+            self.process_recorder.clone(),
             self.paths.clone(),
             Some(source),
         )
