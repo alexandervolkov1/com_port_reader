@@ -9,7 +9,7 @@ use crate::{
     components::{
         controls_view, help_model::HelpModel, help_view, log_view,
         lua_console_model::LuaConsoleModel, lua_console_view, plot_model::PlotModel, plot_view,
-        series_view,
+        series_view, settings_model::SettingsModel, settings_view,
     },
     lua_application_definition::load_lua_definition_or_base,
 };
@@ -25,6 +25,7 @@ pub struct MyApp {
     help: HelpModel,
     lua_console: LuaConsoleModel,
     log_panel_open: bool,
+    settings: SettingsModel,
 }
 
 impl MyApp {
@@ -76,6 +77,7 @@ impl MyApp {
             help: HelpModel::default(),
             lua_console,
             log_panel_open: false,
+            settings: SettingsModel::default(),
         }
     }
 }
@@ -89,7 +91,7 @@ impl eframe::App for MyApp {
         egui::Panel::top("application_menu").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 lua_console_view::show_menu_button(ui, &mut self.lua_console);
-
+                settings_view::show_menu_button(ui, &mut self.settings);
                 help_view::show_menu_button(ui, &mut self.help);
             });
         });
@@ -184,6 +186,13 @@ impl eframe::App for MyApp {
                     });
             }
         });
+
+        settings_view::show_window(
+            ui.ctx(),
+            &mut self.settings,
+            self.runtime.definition(),
+            self.runtime.paths(),
+        );
 
         help_view::show_window(ui.ctx(), &mut self.help);
 

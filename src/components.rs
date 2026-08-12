@@ -8,3 +8,5 @@ mod plot_downsampling;
 pub mod plot_model;
 pub mod plot_view;
 pub mod series_view;
+pub mod settings_model;
+pub mod settings_view;
