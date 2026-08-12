@@ -6,6 +6,7 @@ pub mod application_paths;
 mod application_runtime;
 mod components;
 pub mod connection;
+pub mod control_panel;
 mod data;
 pub mod device_emulator_handle;
 pub mod instrument;
