@@ -5,7 +5,10 @@ use std::{
     time::Duration,
 };
 
-use crate::{connection::ConnectionId, serial_connection::SerialPortConfig};
+use crate::{
+    connection::ConnectionId, control_panel::ControlPanelDefinition,
+    serial_connection::SerialPortConfig,
+};
 
 const MIN_FPS: u32 = 1;
 const MAX_FPS: u32 = 240;
@@ -14,11 +17,12 @@ const MAX_PLOT_WINDOW: Duration = Duration::from_secs(14 * 24 * 60 * 60);
 const MIN_PLOT_POINTS_PER_SERIES: usize = 4;
 const MAX_PLOT_POINTS_PER_SERIES: usize = 100_000;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ApplicationDefinition {
     runtime: RuntimeDefinition,
     serial_connections: Vec<SerialConnectionDefinition>,
     emulator: Option<EmulatorDefinition>,
+    control_panels: Vec<ControlPanelDefinition>,
 }
 
 impl ApplicationDefinition {
@@ -27,6 +31,7 @@ impl ApplicationDefinition {
             runtime,
             serial_connections: Vec::new(),
             emulator: None,
+            control_panels: Vec::new(),
         }
     }
 
@@ -69,6 +74,35 @@ impl ApplicationDefinition {
         }
 
         self.emulator = emulator;
+
+        Ok(())
+    }
+
+    pub fn control_panels(&self) -> &[ControlPanelDefinition] {
+        &self.control_panels
+    }
+
+    pub fn replace_control_panels(
+        &mut self,
+        panels: impl IntoIterator<Item = ControlPanelDefinition>,
+    ) -> Result<(), ApplicationDefinitionError> {
+        let mut validated = Vec::new();
+
+        for panel in panels {
+            if validated
+                .iter()
+                .any(|stored: &ControlPanelDefinition| stored.id() == panel.id())
+            {
+                return Err(ApplicationDefinitionError::new(format!(
+                    "Control panel id '{}' is defined more than once",
+                    panel.id(),
+                )));
+            }
+
+            validated.push(panel);
+        }
+
+        self.control_panels = validated;
 
         Ok(())
     }

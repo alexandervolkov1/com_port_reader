@@ -8,6 +8,7 @@ use crate::{
         ApplicationDefinition, EmulatorDefinition, RuntimeDefinition, SerialConnectionDefinition,
     },
     connection::ConnectionId,
+    control_panel::{ControlDefinition, ControlPanelDefinition},
     serial_connection::SerialPortConfig,
 };
 
@@ -112,6 +113,14 @@ pub fn apply_lua_definition(
             .map_err(|error| LuaApplicationDefinitionError::new(error.to_string()))?;
     }
 
+    if let Some(panels) = root.get::<Option<Table>>("panels")? {
+        let control_panels = parse_control_panels(&panels)?;
+
+        definition
+            .replace_control_panels(control_panels)
+            .map_err(|error| LuaApplicationDefinitionError::new(error.to_string()))?;
+    }
+
     Ok(definition)
 }
 
@@ -135,11 +144,239 @@ fn validate_root_keys(root: &Table) -> Result<(), LuaApplicationDefinitionError>
 
         if !matches!(
             key.as_str(),
-            "application" | "connections" | "emulator" | "setup"
+            "application" | "connections" | "emulator" | "panels" | "setup"
         ) {
             return Err(LuaApplicationDefinitionError::new(format!(
-                "Unknown application \
-                         definition section '{key}'",
+                "Unknown application definition section '{key}'",
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_control_panels(
+    panels: &Table,
+) -> Result<Vec<ControlPanelDefinition>, LuaApplicationDefinitionError> {
+    let mut definitions = Vec::new();
+
+    for index in 1..=panels.raw_len() {
+        let panel = panels
+            .raw_get::<Table>(index)
+            .map_err(LuaApplicationDefinitionError::from)?;
+
+        definitions.push(parse_control_panel(&panel, index)?);
+    }
+
+    Ok(definitions)
+}
+
+fn parse_control_panel(
+    panel: &Table,
+    index: usize,
+) -> Result<ControlPanelDefinition, LuaApplicationDefinitionError> {
+    validate_definition_keys(
+        panel,
+        &format!("control panel #{index}"),
+        &["id", "title", "controls"],
+    )?;
+
+    let id = required_definition_string(panel, "id", &format!("control panel #{index}"))?;
+
+    let title = required_definition_string(panel, "title", &format!("control panel '{id}'"))?;
+
+    let controls = panel
+        .get::<Option<Table>>("controls")
+        .map_err(LuaApplicationDefinitionError::from)?
+        .ok_or_else(|| {
+            LuaApplicationDefinitionError::new(format!(
+                "Control panel '{id}' must contain 'controls'",
+            ))
+        })?;
+
+    let controls = parse_controls(&controls, &id)?;
+
+    ControlPanelDefinition::new(id, title, controls)
+        .map_err(|error| LuaApplicationDefinitionError::new(error.to_string()))
+}
+
+fn parse_controls(
+    controls: &Table,
+    panel_id: &str,
+) -> Result<Vec<ControlDefinition>, LuaApplicationDefinitionError> {
+    let mut definitions = Vec::new();
+
+    for index in 1..=controls.raw_len() {
+        let control = controls
+            .raw_get::<Table>(index)
+            .map_err(LuaApplicationDefinitionError::from)?;
+
+        definitions.push(parse_control(&control, panel_id, index)?);
+    }
+
+    Ok(definitions)
+}
+
+fn parse_control(
+    control: &Table,
+    panel_id: &str,
+    index: usize,
+) -> Result<ControlDefinition, LuaApplicationDefinitionError> {
+    let context = format!("control #{index} in panel '{panel_id}'",);
+
+    let kind = required_definition_string(control, "kind", &context)?;
+
+    let id = required_definition_string(control, "id", &context)?;
+
+    let label = required_definition_string(control, "label", &format!("control '{id}'"))?;
+
+    match kind.as_str() {
+        "readout" => {
+            validate_definition_keys(
+                control,
+                &format!("readout control '{id}'"),
+                &["kind", "id", "label", "initial"],
+            )?;
+
+            let initial_text = control
+                .get::<Option<String>>("initial")
+                .map_err(LuaApplicationDefinitionError::from)?
+                .unwrap_or_else(|| "—".to_owned());
+
+            Ok(ControlDefinition::Readout {
+                id,
+                label,
+                initial_text,
+            })
+        }
+
+        "number" => {
+            validate_definition_keys(
+                control,
+                &format!("number control '{id}'"),
+                &[
+                    "kind",
+                    "id",
+                    "label",
+                    "initial",
+                    "min",
+                    "max",
+                    "step",
+                    "on_change",
+                ],
+            )?;
+
+            let initial_value = control
+                .get::<Option<f64>>("initial")
+                .map_err(LuaApplicationDefinitionError::from)?
+                .unwrap_or(0.0);
+
+            let minimum = control
+                .get::<Option<f64>>("min")
+                .map_err(LuaApplicationDefinitionError::from)?;
+
+            let maximum = control
+                .get::<Option<f64>>("max")
+                .map_err(LuaApplicationDefinitionError::from)?;
+
+            let step = control
+                .get::<Option<f64>>("step")
+                .map_err(LuaApplicationDefinitionError::from)?
+                .unwrap_or(1.0);
+
+            let on_change = required_definition_string(
+                control,
+                "on_change",
+                &format!("number control '{id}'"),
+            )?;
+
+            Ok(ControlDefinition::Number {
+                id,
+                label,
+                initial_value,
+                minimum,
+                maximum,
+                step,
+                on_change,
+            })
+        }
+
+        "toggle" => {
+            validate_definition_keys(
+                control,
+                &format!("toggle control '{id}'"),
+                &["kind", "id", "label", "initial", "on_change"],
+            )?;
+
+            let initial_value = control
+                .get::<Option<bool>>("initial")
+                .map_err(LuaApplicationDefinitionError::from)?
+                .unwrap_or(false);
+
+            let on_change = required_definition_string(
+                control,
+                "on_change",
+                &format!("toggle control '{id}'"),
+            )?;
+
+            Ok(ControlDefinition::Toggle {
+                id,
+                label,
+                initial_value,
+                on_change,
+            })
+        }
+
+        "button" => {
+            validate_definition_keys(
+                control,
+                &format!("button control '{id}'"),
+                &["kind", "id", "label", "on_click"],
+            )?;
+
+            let on_click =
+                required_definition_string(control, "on_click", &format!("button control '{id}'"))?;
+
+            Ok(ControlDefinition::Button {
+                id,
+                label,
+                on_click,
+            })
+        }
+
+        _ => Err(LuaApplicationDefinitionError::new(format!(
+            "Unknown control kind '{kind}' for control '{id}'",
+        ))),
+    }
+}
+
+fn required_definition_string(
+    table: &Table,
+    key: &str,
+    context: &str,
+) -> Result<String, LuaApplicationDefinitionError> {
+    table
+        .get::<Option<String>>(key)
+        .map_err(LuaApplicationDefinitionError::from)?
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            LuaApplicationDefinitionError::new(format!(
+                "{context} must contain non-empty string '{key}'",
+            ))
+        })
+}
+
+fn validate_definition_keys(
+    table: &Table,
+    context: &str,
+    allowed_keys: &[&str],
+) -> Result<(), LuaApplicationDefinitionError> {
+    for pair in table.pairs::<String, Value>() {
+        let (key, _) = pair.map_err(LuaApplicationDefinitionError::from)?;
+
+        if !allowed_keys.contains(&key.as_str()) {
+            return Err(LuaApplicationDefinitionError::new(format!(
+                "Unknown option '{key}' in {context}",
             )));
         }
     }
@@ -572,6 +809,7 @@ mod tests {
     use crate::{
         application_definition::{ApplicationDefinition, SerialConnectionDefinition},
         connection::ConnectionId,
+        control_panel::ControlDefinition,
         serial_connection::SerialPortConfig,
     };
 
@@ -1063,6 +1301,126 @@ mod tests {
             error.to_string(),
             "Application definition section 'setup' \
              must be a function",
+        );
+    }
+
+    #[test]
+    fn parses_control_panels() {
+        let base = base_definition();
+
+        let definition = apply_lua_definition(
+            r#"
+                return {
+                    panels = {
+                        {
+                            id = "metakon",
+                            title = "Metakon 5X3",
+
+                            controls = {
+                                {
+                                    kind = "readout",
+                                    id = "temperature",
+                                    label = "Temperature",
+                                    initial = "Waiting",
+                                },
+
+                                {
+                                    kind = "number",
+                                    id = "setpoint",
+                                    label = "Setpoint",
+                                    initial = 150.0,
+                                    min = 0.0,
+                                    max = 1000.0,
+                                    step = 1.0,
+                                    on_change = "set_setpoint",
+                                },
+
+                                {
+                                    kind = "toggle",
+                                    id = "automatic",
+                                    label = "Automatic",
+                                    initial = true,
+                                    on_change = "set_automatic",
+                                },
+
+                                {
+                                    kind = "button",
+                                    id = "stop",
+                                    label = "Stop heating",
+                                    on_click = "stop_heating",
+                                },
+                            },
+                        },
+                    },
+                }
+            "#,
+            &base,
+        )
+        .unwrap();
+
+        let panels = definition.control_panels();
+
+        assert_eq!(panels.len(), 1);
+        assert_eq!(panels[0].id(), "metakon");
+        assert_eq!(panels[0].title(), "Metakon 5X3");
+        assert_eq!(panels[0].controls().len(), 4);
+
+        assert!(matches!(
+            &panels[0].controls()[0],
+            ControlDefinition::Readout {
+                id,
+                initial_text,
+                ..
+            } if id == "temperature" && initial_text == "Waiting"
+        ));
+
+        assert!(matches!(
+            &panels[0].controls()[1],
+            ControlDefinition::Number {
+                id,
+                initial_value,
+                minimum: Some(0.0),
+                maximum: Some(1000.0),
+                step,
+                on_change,
+                ..
+            } if id == "setpoint"
+                && *initial_value == 150.0
+                && *step == 1.0
+                && on_change == "set_setpoint"
+        ));
+    }
+
+    #[test]
+    fn rejects_unknown_control_kind() {
+        let base = base_definition();
+
+        let error = apply_lua_definition(
+            r#"
+                return {
+                    panels = {
+                        {
+                            id = "controller",
+                            title = "Controller",
+
+                            controls = {
+                                {
+                                    kind = "slider",
+                                    id = "setpoint",
+                                    label = "Setpoint",
+                                },
+                            },
+                        },
+                    },
+                }
+            "#,
+            &base,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Unknown control kind 'slider' for control 'setpoint'",
         );
     }
 }
