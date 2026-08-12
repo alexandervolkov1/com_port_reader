@@ -53,20 +53,20 @@ impl MyApp {
             ));
         }
 
-        let emulator_script_path = definition
-            .emulator()
-            .map(|emulator| application_paths.resolve(emulator.script_path()));
-
         let (runtime, lua_event_receiver) = ApplicationRuntime::build(
             definition,
             log_handle.clone(),
-            emulator_script_path,
+            application_paths,
             startup_source,
         )
         .expect("failed to build application runtime");
 
-        let lua_console =
-            LuaConsoleModel::new(runtime.lua_handle(), lua_event_receiver, log_handle);
+        let lua_console = LuaConsoleModel::new(
+            runtime.lua_handle(),
+            lua_event_receiver,
+            runtime.paths().resolve("lua_scripts"),
+            log_handle,
+        );
 
         Self {
             runtime,

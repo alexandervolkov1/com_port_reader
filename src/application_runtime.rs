@@ -1,10 +1,11 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crossbeam_channel::{Receiver, unbounded};
 
 use crate::{
     app_log::LogHandle,
     application_definition::ApplicationDefinition,
+    application_paths::ApplicationPaths,
     connection::ConnectionId,
     data::{SeriesId, SeriesStore},
     lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle},
@@ -30,13 +31,14 @@ pub struct ApplicationRuntime {
     dispatcher: CommandDispatcher,
     device_emulator: DeviceEmulatorService,
     lua_command_receiver: Receiver<UserCommand>,
+    paths: ApplicationPaths,
 }
 
 impl ApplicationRuntime {
     pub(crate) fn build(
         definition: ApplicationDefinition,
         log: LogHandle,
-        emulator_script_path: Option<PathBuf>,
+        paths: ApplicationPaths,
         startup_source: Option<String>,
     ) -> std::io::Result<(Self, Receiver<LuaEvent>)> {
         let (lua_event_sender, lua_event_receiver) = unbounded();
@@ -55,6 +57,12 @@ impl ApplicationRuntime {
         let emulator_port = definition
             .emulator()
             .map(|emulator| emulator.port_name().to_owned());
+
+        let emulator_script_path = definition
+            .emulator()
+            .map(|emulator| paths.resolve(emulator.script_path()));
+
+        let recording_directory = paths.resolve("protocols");
 
         let device_emulator =
             DeviceEmulatorService::new(emulator_port, emulator_script_path, log.clone());
@@ -118,7 +126,7 @@ impl ApplicationRuntime {
 
         let connection_router = workers.router();
 
-        let acquisition = AcquisitionController::new(workers, log.clone());
+        let acquisition = AcquisitionController::new(workers, recording_directory, log.clone());
 
         let dispatcher = CommandDispatcher::new(
             connection_router,
@@ -131,6 +139,7 @@ impl ApplicationRuntime {
         let runtime = Self::new(
             lua_worker,
             definition,
+            paths,
             series,
             acquisition,
             dispatcher,
@@ -144,6 +153,7 @@ impl ApplicationRuntime {
     fn new(
         lua_worker: LuaWorker,
         definition: ApplicationDefinition,
+        paths: ApplicationPaths,
         series: SeriesStore,
         acquisition: AcquisitionController,
         dispatcher: CommandDispatcher,
@@ -153,6 +163,7 @@ impl ApplicationRuntime {
         Self {
             lua_worker,
             definition,
+            paths,
             series,
             acquisition,
             dispatcher,
@@ -216,5 +227,9 @@ impl ApplicationRuntime {
 
     pub(crate) const fn definition(&self) -> &ApplicationDefinition {
         &self.definition
+    }
+
+    pub(crate) const fn paths(&self) -> &ApplicationPaths {
+        &self.paths
     }
 }

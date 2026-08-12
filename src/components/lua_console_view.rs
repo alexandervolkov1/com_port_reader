@@ -78,7 +78,7 @@ fn show_toolbar(ui: &mut egui::Ui, model: &mut LuaConsoleModel) {
             .clicked()
             && let Some(path) = FileDialog::new()
                 .set_title("Run Lua script")
-                .set_directory("lua_scripts")
+                .set_directory(model.script_directory())
                 .add_filter("Lua scripts", &["lua"])
                 .pick_file()
         {

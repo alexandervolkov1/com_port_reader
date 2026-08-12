@@ -33,12 +33,14 @@ pub struct LuaConsoleModel {
     focus_requested: bool,
     open: bool,
     log: LogHandle,
+    script_directory: PathBuf,
 }
 
 impl LuaConsoleModel {
     pub fn new(
         worker: LuaWorkerHandle,
         event_receiver: Receiver<LuaEvent>,
+        script_directory: impl Into<PathBuf>,
         log: LogHandle,
     ) -> Self {
         Self {
@@ -50,6 +52,7 @@ impl LuaConsoleModel {
             disconnected: false,
             focus_requested: false,
             open: false,
+            script_directory: script_directory.into(),
             log,
         }
     }
@@ -290,5 +293,9 @@ impl LuaConsoleModel {
                 self.transcript.push(LuaTranscriptEntry::Error(error));
             }
         }
+    }
+
+    pub fn script_directory(&self) -> &Path {
+        &self.script_directory
     }
 }

@@ -19,12 +19,18 @@ pub(crate) struct AcquisitionController {
     recording_error: Option<String>,
     recording_transition: Option<RecordingTransition>,
     log: LogHandle,
+    recording_directory: PathBuf,
 }
 
 impl AcquisitionController {
-    pub fn new(workers: ConnectionWorkers, log: LogHandle) -> Self {
+    pub fn new(
+        workers: ConnectionWorkers,
+        recording_directory: impl Into<PathBuf>,
+        log: LogHandle,
+    ) -> Self {
         Self {
             workers,
+            recording_directory: recording_directory.into(),
             recording_file: None,
             recording_error: None,
             recording_transition: None,
@@ -59,7 +65,7 @@ impl AcquisitionController {
 
         let file_name = now.format("protocol %Y-%m-%d %H-%M-%S.csv").to_string();
 
-        let path = PathBuf::from("protocols").join(date).join(file_name);
+        let path = self.recording_directory.join(date).join(file_name);
 
         match self.workers.start_csv_recording(path) {
             Ok(()) => {
