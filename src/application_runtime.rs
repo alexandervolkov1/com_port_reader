@@ -197,6 +197,10 @@ impl ApplicationRuntime {
     }
 
     pub fn poll(&mut self) {
+        if let Some(error) = self.process_recorder.take_error() {
+            self.log.error(format!("Process recorder failed: {error}",));
+        }
+
         self.device_emulator.poll();
 
         self.dispatcher.poll_events(&mut self.acquisition);
