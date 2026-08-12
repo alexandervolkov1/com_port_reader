@@ -12,7 +12,10 @@ use crate::{
         series_view, settings_model::SettingsModel, settings_view,
     },
     lua_application_definition::load_lua_definition_or_base,
-    process_recorder::{NullProcessRecordWriter, ProcessRecorder},
+    process_recorder::{
+        NullProcessRecordWriter, ProcessRecorder, SqliteProcessRecordWriter,
+        new_process_database_path,
+    },
 };
 
 const SERIES_PANEL_WIDTH: f32 = 150.0;
@@ -40,11 +43,36 @@ impl MyApp {
 
         let startup_script_missing = startup_source.is_none() && lua_definition_warning.is_none();
 
-        let process_recorder = ProcessRecorder::spawn(NullProcessRecordWriter)
-            .expect("failed to spawn process recorder thread");
+        let requested_database_path =
+            new_process_database_path(application_paths.resolve("processes"));
+
+        let (process_recorder, active_database_path, process_recorder_warning) =
+            match SqliteProcessRecordWriter::create(&requested_database_path) {
+                Ok(writer) => (
+                    ProcessRecorder::spawn(writer)
+                        .expect("failed to spawn process recorder thread"),
+                    Some(requested_database_path),
+                    None,
+                ),
+
+                Err(error) => (
+                    ProcessRecorder::spawn(NullProcessRecordWriter)
+                        .expect("failed to spawn fallback process recorder thread"),
+                    None,
+                    Some(format!("SQLite process recording is disabled: {error}",)),
+                ),
+            };
 
         let (log, log_handle) =
             LogModel::new(application_paths.resolve("logs"), process_recorder.clone());
+
+        if let Some(path) = active_database_path {
+            log_handle.info(format!("Process database: {}", path.display(),));
+        }
+
+        if let Some(warning) = process_recorder_warning {
+            log_handle.error(warning);
+        }
 
         if let Some(warning) = lua_definition_warning {
             log_handle.error(warning);

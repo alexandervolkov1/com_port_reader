@@ -6,6 +6,10 @@ use std::{
     time::SystemTime,
 };
 
+mod sqlite;
+
+pub(crate) use sqlite::{SqliteProcessRecordWriter, new_process_database_path};
+
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
 use crate::{

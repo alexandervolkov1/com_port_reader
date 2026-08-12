@@ -1,7 +1,8 @@
 /target
 /protocols
 /logs
-/dist/
+/dist
+/processes
 rust_code.md
 src.zip
 com_port_reader-final.md
