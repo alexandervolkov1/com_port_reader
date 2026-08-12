@@ -18,6 +18,7 @@ use crate::{
     connection::ConnectionId,
     data::{Series, SeriesId, SeriesMetadata, SeriesSample, SeriesStore},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
+    process_recorder::ProcessRecorder,
     sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError},
     serial_connection::SerialConnectionError,
 };
@@ -88,6 +89,7 @@ impl Worker {
         series: SeriesStore,
         mut source: Box<dyn AcquisitionSource>,
         mut sink: Box<dyn SampleSink>,
+        process_recorder: ProcessRecorder,
         config: WorkerConfig,
     ) -> Self {
         let connection_id = commands.connection_id();
@@ -165,26 +167,34 @@ impl Worker {
                         .with_mut(|all_series| append_series_samples(all_series, &sample_batch));
 
                     match result {
-                        Ok(()) => match sink.write_batch(&sample_batch, &series_metadata) {
-                            Ok(()) => {
-                                let completed_at = Instant::now();
+                        Ok(()) => {
+                            process_recorder.record_measurements(
+                                connection_id,
+                                &sample_batch,
+                                &series_metadata,
+                            );
 
-                                advance_series_schedules(
-                                    &mut series_schedules,
-                                    &due_series,
-                                    completed_at,
-                                );
+                            match sink.write_batch(&sample_batch, &series_metadata) {
+                                Ok(()) => {
+                                    let completed_at = Instant::now();
 
-                                *next_poll = next_series_poll(&series_schedules)
-                                    .unwrap_or(completed_at + default_poll_interval);
+                                    advance_series_schedules(
+                                        &mut series_schedules,
+                                        &due_series,
+                                        completed_at,
+                                    );
 
-                                poll_completed = true;
+                                    *next_poll = next_series_poll(&series_schedules)
+                                        .unwrap_or(completed_at + default_poll_interval);
+
+                                    poll_completed = true;
+                                }
+
+                                Err(error) => {
+                                    sink_error = Some(error);
+                                }
                             }
-
-                            Err(error) => {
-                                sink_error = Some(error);
-                            }
-                        },
+                        }
 
                         Err(error) => {
                             acquisition_error = Some(error);

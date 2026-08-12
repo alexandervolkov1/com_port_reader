@@ -184,6 +184,7 @@ mod tests {
         acquisition::{AcquisitionError, AcquisitionSource},
         connection::ConnectionId,
         data::{NewSeries, Sample, SeriesId, SeriesMetadata, SeriesStore},
+        process_recorder::ProcessRecorder,
         sample_sink::NullSampleSink,
         utils::current_time_f64,
         worker::{ConnectionWorkerEvent, Worker, WorkerConfig, WorkerHandle},
@@ -219,6 +220,7 @@ mod tests {
             series,
             Box::new(FixedSource { value }),
             Box::new(NullSampleSink::new()),
+            ProcessRecorder::default(),
             WorkerConfig::new(Duration::from_millis(10)),
         )
     }

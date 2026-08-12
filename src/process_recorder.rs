@@ -1,12 +1,26 @@
 use std::{path::PathBuf, sync::Arc, time::SystemTime};
 
+use crate::{
+    connection::ConnectionId,
+    data::{SeriesId, SeriesMetadata, SeriesSample},
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProcessLogLevel {
     Info,
     Error,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProcessMeasurement {
+    pub connection_id: ConnectionId,
+    pub series_id: SeriesId,
+    pub series_name: String,
+    pub timestamp: f64,
+    pub value: f64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum ProcessRecord {
     Log {
         timestamp: SystemTime,
@@ -18,6 +32,10 @@ pub enum ProcessRecord {
         timestamp: SystemTime,
         startup_path: PathBuf,
         source: Option<String>,
+    },
+
+    Measurements {
+        measurements: Vec<ProcessMeasurement>,
     },
 }
 
@@ -46,6 +64,40 @@ impl ProcessRecorder {
 
     pub fn record(&self, record: ProcessRecord) {
         self.sink.record(record);
+    }
+
+    pub fn record_measurements(
+        &self,
+        connection_id: ConnectionId,
+        samples: &[SeriesSample],
+        series: &[SeriesMetadata],
+    ) {
+        if samples.is_empty() {
+            return;
+        }
+
+        let measurements = samples
+            .iter()
+            .map(|series_sample| {
+                let metadata = series
+                    .iter()
+                    .find(|metadata| metadata.id == series_sample.series_id)
+                    .expect(
+                        "successfully stored sample must \
+                         have matching series metadata",
+                    );
+
+                ProcessMeasurement {
+                    connection_id,
+                    series_id: series_sample.series_id,
+                    series_name: metadata.name.clone(),
+                    timestamp: series_sample.sample.timestamp,
+                    value: series_sample.sample.value,
+                }
+            })
+            .collect();
+
+        self.record(ProcessRecord::Measurements { measurements });
     }
 }
 

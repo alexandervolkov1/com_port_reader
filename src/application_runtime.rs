@@ -101,6 +101,7 @@ impl ApplicationRuntime {
             event_sender.clone(),
             series.clone(),
             Box::new(NullSampleSink::new()),
+            process_recorder.clone(),
             worker_config,
         );
 
@@ -124,6 +125,7 @@ impl ApplicationRuntime {
                 event_sender.clone(),
                 series.clone(),
                 Box::new(NullSampleSink::new()),
+                process_recorder.clone(),
                 worker_config,
             );
 
