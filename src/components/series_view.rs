@@ -1,9 +1,7 @@
 use eframe::egui::{self, ScrollArea};
 
 use crate::{
-    application_runtime::ApplicationRuntime,
-    components::plot_model::PlotModel,
-    data::{SeriesId, SeriesStore},
+    application_runtime::ApplicationRuntime, components::plot_model::PlotModel, data::SeriesStore,
 };
 
 pub fn show(
@@ -16,8 +14,6 @@ pub fn show(
         let series = series_store.metadata();
 
         let pane_ids = plot.panes.iter().map(|pane| pane.id).collect::<Vec<_>>();
-
-        let mut remove_id: Option<SeriesId> = None;
 
         for series in series {
             let mut visible = series.visible;
@@ -39,10 +35,6 @@ pub fn show(
 
                     ui.label(&series.name)
                         .on_hover_text(series.source.to_string());
-
-                    if ui.button("Delete").clicked() {
-                        remove_id = Some(series.id);
-                    }
                 });
 
                 ui.horizontal(|ui| {
@@ -55,7 +47,7 @@ pub fn show(
                                 ui.selectable_value(
                                     &mut selected_pane,
                                     pane_id,
-                                    format!("Plot {}", index + 1,),
+                                    format!("Plot {}", index + 1),
                                 );
                             }
                         });
@@ -65,10 +57,6 @@ pub fn show(
             if selected_pane != current_pane {
                 plot.assign_series(series.id, selected_pane);
             }
-        }
-
-        if let Some(id) = remove_id {
-            runtime.remove_series(id);
         }
     });
 }

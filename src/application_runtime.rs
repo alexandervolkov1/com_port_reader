@@ -257,15 +257,6 @@ impl ApplicationRuntime {
         self.dispatcher.set_visibility(id, visible);
     }
 
-    pub fn remove_series(&self, id: SeriesId) {
-        self.process_recorder.record_action(
-            ProcessActionOrigin::UserInterface,
-            ProcessAction::RemoveSeries { series_id: id },
-        );
-
-        self.dispatcher.remove_series(id);
-    }
-
     pub(crate) fn lua_handle(&self) -> LuaWorkerHandle {
         self.lua_worker.handle()
     }

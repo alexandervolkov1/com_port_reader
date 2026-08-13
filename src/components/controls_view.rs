@@ -20,10 +20,6 @@ pub fn show(ui: &mut egui::Ui, runtime: &mut ApplicationRuntime) {
             runtime.execute(UserCommand::Stop);
         }
 
-        if ui.button("Clear").clicked() {
-            runtime.execute(UserCommand::Clear);
-        }
-
         if running {
             ui.colored_label(egui::Color32::from_rgb(0, 150, 0), "Signals: ● Running");
         } else {
