@@ -1,3 +1,4 @@
+pub mod control_panel_model;
 pub mod controls_view;
 pub mod help_model;
 pub mod help_view;
