@@ -13,6 +13,7 @@ use crate::{
         settings_model::SettingsModel, settings_view,
     },
     lua_application_definition::load_lua_definition_or_base,
+    lua_application_script::LuaApplicationEvent,
     process_recorder::{
         NullProcessRecordWriter, ProcessRecorder, SqliteProcessRecordWriter,
         new_process_database_path,
@@ -99,7 +100,7 @@ impl MyApp {
         )
         .expect("failed to build application runtime");
 
-        let control_panels = ControlPanelModel::new(&[]);
+        let control_panels = ControlPanelModel::new();
 
         let lua_console = LuaConsoleModel::new(
             runtime.lua_handle(),
@@ -136,18 +137,45 @@ impl MyApp {
 
         self.runtime = runtime;
 
-        self.control_panels.replace_definitions(&[]);
+        self.control_panels.clear();
         self.control_panel_open = false;
 
         self.plot = PlotModel::new();
 
         Ok(())
     }
+
+    fn poll_lua_application_events(&mut self) {
+        let events = self.runtime.take_lua_application_events();
+
+        for event in events {
+            match event {
+                LuaApplicationEvent::ScriptRegistered { script_id, panels } => {
+                    let has_panels = !panels.is_empty();
+
+                    self.control_panels.register_script(&script_id, &panels);
+
+                    if has_panels {
+                        self.control_panel_open = true;
+                    }
+                }
+
+                LuaApplicationEvent::ScriptUnregistered { script_id } => {
+                    self.control_panels.unregister_script(&script_id);
+                }
+            }
+        }
+
+        if self.control_panels.panels().is_empty() {
+            self.control_panel_open = false;
+        }
+    }
 }
 
 impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.runtime.poll();
+        self.poll_lua_application_events();
         self.lua_console.poll_events();
         self.log.poll();
 

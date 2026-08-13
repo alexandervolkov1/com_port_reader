@@ -2,8 +2,8 @@ use crossbeam_channel::Sender;
 use mlua::{FromLua, Function, Lua, MultiValue, Table};
 
 use crate::{
-    application_definition::ApplicationDefinition, lua_execution::run_with_limit,
-    user_command::UserCommand,
+    application_definition::ApplicationDefinition, lua_application_script::LuaApplicationEvent,
+    lua_execution::run_with_limit, user_command::UserCommand,
 };
 
 pub struct LuaRuntime {
@@ -26,8 +26,14 @@ impl LuaRuntime {
     pub(crate) fn install_application_api(
         &self,
         command_sender: Sender<UserCommand>,
+        application_event_sender: Sender<LuaApplicationEvent>,
     ) -> mlua::Result<()> {
-        crate::lua_api::install(&self.lua, command_sender, &self.application_definition)
+        crate::lua_api::install(
+            &self.lua,
+            command_sender,
+            application_event_sender,
+            &self.application_definition,
+        )
     }
 
     pub fn execute(&self, source: &str) -> mlua::Result<()> {
@@ -191,7 +197,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         runtime
             .execute(
@@ -251,7 +261,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         drop(command_receiver);
 
@@ -280,7 +294,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         runtime
             .execute(
@@ -363,7 +381,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         runtime
             .execute(
@@ -404,7 +426,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         runtime
             .execute(
@@ -432,7 +458,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         runtime
             .execute(
@@ -570,7 +600,11 @@ mod tests {
         let runtime = LuaRuntime::new();
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         let error = runtime
             .execute(
@@ -593,7 +627,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         runtime
             .execute(
@@ -650,7 +688,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         runtime.execute("controller = app.metakon()").unwrap();
 
@@ -697,7 +739,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         runtime
             .execute(
@@ -755,7 +801,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         runtime.execute("controller = app.metakon()").unwrap();
 
@@ -780,7 +830,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         runtime
             .execute(
@@ -962,7 +1016,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         runtime
             .execute(
@@ -995,7 +1053,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         let error = runtime
             .execute(
@@ -1028,7 +1090,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         let error = runtime
             .execute(
@@ -1077,7 +1143,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         runtime
             .execute(
@@ -1130,7 +1200,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         let responder = std::thread::spawn(move || {
             let command = command_receiver.recv().unwrap();
@@ -1199,7 +1273,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         runtime
             .execute(
@@ -1249,7 +1327,11 @@ mod tests {
 
         let (command_sender, command_receiver) = unbounded();
 
-        runtime.install_application_api(command_sender).unwrap();
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
 
         runtime
             .execute_startup(

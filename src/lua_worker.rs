@@ -7,8 +7,8 @@ use std::{
 use crossbeam_channel::{Receiver, Sender, bounded};
 
 use crate::{
-    application_definition::ApplicationDefinition, lua_runtime::LuaRuntime,
-    user_command::UserCommand,
+    application_definition::ApplicationDefinition, lua_application_script::LuaApplicationEvent,
+    lua_runtime::LuaRuntime, user_command::UserCommand,
 };
 
 const COMMAND_CHANNEL_CAPACITY: usize = 32;
@@ -69,6 +69,7 @@ impl LuaWorker {
     pub(crate) fn spawn(
         event_sender: Sender<LuaEvent>,
         application_command_sender: Sender<UserCommand>,
+        application_event_sender: Sender<LuaApplicationEvent>,
         application_definition: ApplicationDefinition,
         startup_source: Option<String>,
         application_script_paths: Vec<PathBuf>,
@@ -86,6 +87,7 @@ impl LuaWorker {
                     command_receiver,
                     event_sender,
                     application_command_sender,
+                    application_event_sender,
                     application_definition,
                     startup_source,
                     application_script_paths,
@@ -117,6 +119,7 @@ fn run_lua_worker(
     command_receiver: Receiver<LuaCommand>,
     event_sender: Sender<LuaEvent>,
     application_command_sender: Sender<UserCommand>,
+    application_event_sender: Sender<LuaApplicationEvent>,
     application_definition: ApplicationDefinition,
     startup_source: Option<String>,
     application_script_paths: Vec<PathBuf>,
@@ -133,7 +136,9 @@ fn run_lua_worker(
 
     let runtime = LuaRuntime::with_application_definition(application_definition);
 
-    if let Err(error) = runtime.install_application_api(application_command_sender) {
+    if let Err(error) =
+        runtime.install_application_api(application_command_sender, application_event_sender)
+    {
         let _ = event_sender.send(LuaEvent::InitializationFailed(error.to_string()));
 
         return;
@@ -212,10 +217,11 @@ mod tests {
 
     fn spawn_worker(event_sender: Sender<LuaEvent>) -> LuaWorker {
         let (application_command_sender, _application_command_receiver) = unbounded();
-
+        let (application_event_sender, _) = unbounded();
         LuaWorker::spawn(
             event_sender,
             application_command_sender,
+            application_event_sender,
             ApplicationDefinition::default(),
             None,
             Vec::new(),
@@ -305,9 +311,11 @@ mod tests {
 
         let (application_command_sender, application_command_receiver) = unbounded();
 
+        let (application_event_sender, _) = unbounded();
         let worker = LuaWorker::spawn(
             event_sender,
             application_command_sender,
+            application_event_sender,
             ApplicationDefinition::default(),
             None,
             Vec::new(),

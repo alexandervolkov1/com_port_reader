@@ -18,6 +18,7 @@ use crate::{
             VirtualInstrumentDescriptor, VirtualInstrumentId, VirtualParameterDescriptor,
         },
     },
+    lua_application_script::LuaApplicationEvent,
     user_command::UserCommand,
 };
 
@@ -36,6 +37,7 @@ struct LuaSeriesOptions {
 pub fn install(
     lua: &Lua,
     command_sender: Sender<UserCommand>,
+    application_event_sender: Sender<LuaApplicationEvent>,
     application_definition: &ApplicationDefinition,
 ) -> mlua::Result<()> {
     let app = lua.create_table()?;
@@ -107,7 +109,7 @@ pub fn install(
 
     register_send_serial(lua, &app, command_sender, application_definition.clone())?;
 
-    crate::lua_application_script::install(lua, &app)?;
+    crate::lua_application_script::install(lua, &app, application_event_sender)?;
 
     lua.globals().set("app", app)
 }

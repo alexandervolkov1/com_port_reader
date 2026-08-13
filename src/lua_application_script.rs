@@ -1,36 +1,64 @@
 use std::collections::HashSet;
 
+use crossbeam_channel::Sender;
 use mlua::{Lua, Table, Value};
 
 use crate::control_panel::{ControlDefinition, ControlPanelDefinition};
 
 const SCRIPT_REGISTRY_KEY: &str = "com_port_reader.application_scripts";
 
-pub(crate) fn install(lua: &Lua, app: &Table) -> mlua::Result<()> {
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum LuaApplicationEvent {
+    ScriptRegistered {
+        script_id: String,
+        panels: Vec<ControlPanelDefinition>,
+    },
+
+    ScriptUnregistered {
+        script_id: String,
+    },
+}
+
+pub(crate) fn install(
+    lua: &Lua,
+    app: &Table,
+    event_sender: Sender<LuaApplicationEvent>,
+) -> mlua::Result<()> {
     let registry = lua.create_table()?;
 
     lua.set_named_registry_value(SCRIPT_REGISTRY_KEY, registry)?;
 
-    let register = lua.create_function(|lua, script: Table| {
+    let register_event_sender = event_sender.clone();
+
+    let register = lua.create_function(move |lua, script: Table| {
         let registration = parse_script_registration(&script)?;
 
         let registry: Table = lua.named_registry_value(SCRIPT_REGISTRY_KEY)?;
 
-        registry.set(registration.id, script)?;
+        registry.set(registration.id.clone(), script)?;
 
-        Ok(())
+        send_event(
+            &register_event_sender,
+            LuaApplicationEvent::ScriptRegistered {
+                script_id: registration.id,
+                panels: registration.panels,
+            },
+        )
     })?;
 
     app.set("register_script", register)?;
 
-    let unregister = lua.create_function(|lua, script_id: String| {
+    let unregister = lua.create_function(move |lua, script_id: String| {
         validate_identifier("application script", &script_id)?;
 
         let registry: Table = lua.named_registry_value(SCRIPT_REGISTRY_KEY)?;
 
-        registry.set(script_id, Value::Nil)?;
+        registry.set(script_id.clone(), Value::Nil)?;
 
-        Ok(())
+        send_event(
+            &event_sender,
+            LuaApplicationEvent::ScriptUnregistered { script_id },
+        )
     })?;
 
     app.set("unregister_script", unregister)?;
@@ -40,7 +68,6 @@ pub(crate) fn install(lua: &Lua, app: &Table) -> mlua::Result<()> {
 
 struct ScriptRegistration {
     id: String,
-    #[allow(dead_code)]
     panels: Vec<ControlPanelDefinition>,
 }
 
@@ -390,22 +417,36 @@ fn validate_identifier(kind: &str, identifier: &str) -> mlua::Result<()> {
     Ok(())
 }
 
+fn send_event(
+    sender: &Sender<LuaApplicationEvent>,
+    event: LuaApplicationEvent,
+) -> mlua::Result<()> {
+    sender.send(event).map_err(|_| {
+        runtime_error(
+            "Lua application event channel \
+                 is disconnected",
+        )
+    })
+}
+
 fn runtime_error(message: impl Into<String>) -> mlua::Error {
     mlua::Error::RuntimeError(message.into())
 }
 
 #[cfg(test)]
 mod tests {
+    use crossbeam_channel::unbounded;
     use mlua::{Lua, Table, Value};
 
-    use super::{SCRIPT_REGISTRY_KEY, install};
+    use super::{LuaApplicationEvent, SCRIPT_REGISTRY_KEY, install};
 
     #[test]
     fn registers_application_script() {
         let lua = Lua::new();
         let app = lua.create_table().unwrap();
 
-        install(&lua, &app).unwrap();
+        let (event_sender, event_receiver) = unbounded();
+        install(&lua, &app, event_sender).unwrap();
 
         lua.globals().set("app", app).unwrap();
 
@@ -461,6 +502,16 @@ mod tests {
         let script: Table = registry.get("demo").unwrap();
 
         assert_eq!(script.get::<String>("id").unwrap(), "demo",);
+
+        let event = event_receiver.recv().unwrap();
+
+        let LuaApplicationEvent::ScriptRegistered { script_id, panels } = event else {
+            panic!("expected script registration event");
+        };
+
+        assert_eq!(script_id, "demo");
+        assert_eq!(panels.len(), 1);
+        assert_eq!(panels[0].id(), "controls");
     }
 
     #[test]
@@ -468,7 +519,8 @@ mod tests {
         let lua = Lua::new();
         let app = lua.create_table().unwrap();
 
-        install(&lua, &app).unwrap();
+        let (event_sender, event_receiver) = unbounded();
+        install(&lua, &app, event_sender).unwrap();
 
         lua.globals().set("app", app).unwrap();
 
@@ -511,7 +563,8 @@ mod tests {
         let lua = Lua::new();
         let app = lua.create_table().unwrap();
 
-        install(&lua, &app).unwrap();
+        let (event_sender, event_receiver) = unbounded();
+        install(&lua, &app, event_sender).unwrap();
 
         lua.globals().set("app", app).unwrap();
 
@@ -527,6 +580,15 @@ mod tests {
         )
         .exec()
         .unwrap();
+
+        let _registration = event_receiver.recv().unwrap();
+
+        assert_eq!(
+            event_receiver.recv().unwrap(),
+            LuaApplicationEvent::ScriptUnregistered {
+                script_id: "demo".to_owned(),
+            },
+        );
 
         let registry: Table = lua.named_registry_value(SCRIPT_REGISTRY_KEY).unwrap();
 

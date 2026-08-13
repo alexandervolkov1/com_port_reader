@@ -2,28 +2,41 @@ use std::{error::Error, fmt};
 
 use crate::control_panel::{ControlDefinition, ControlPanelDefinition};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ControlPanelModel {
     panels: Vec<ControlPanelState>,
 }
 
 impl ControlPanelModel {
-    pub fn new(definitions: &[ControlPanelDefinition]) -> Self {
-        Self {
-            panels: definitions.iter().map(ControlPanelState::from).collect(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn panels(&self) -> &[ControlPanelState] {
         &self.panels
     }
 
-    pub fn replace_definitions(&mut self, definitions: &[ControlPanelDefinition]) {
-        self.panels = definitions.iter().map(ControlPanelState::from).collect();
+    pub fn register_script(&mut self, script_id: &str, definitions: &[ControlPanelDefinition]) {
+        self.unregister_script(script_id);
+
+        self.panels.extend(
+            definitions
+                .iter()
+                .map(|definition| ControlPanelState::from_definition(script_id, definition)),
+        );
+    }
+
+    pub fn unregister_script(&mut self, script_id: &str) {
+        self.panels.retain(|panel| panel.script_id() != script_id);
+    }
+
+    pub fn clear(&mut self) {
+        self.panels.clear();
     }
 
     pub fn set_control_value(
         &mut self,
+        script_id: &str,
         panel_id: &str,
         control_id: &str,
         value: ControlValue,
@@ -31,9 +44,13 @@ impl ControlPanelModel {
         let panel = self
             .panels
             .iter_mut()
-            .find(|panel| panel.id() == panel_id)
+            .find(|panel| panel.script_id() == script_id && panel.id() == panel_id)
             .ok_or_else(|| {
-                ControlPanelStateError::new(format!("Control panel '{panel_id}' was not found",))
+                ControlPanelStateError::new(format!(
+                    "Control panel '{panel_id}' \
+                     of application script \
+                     '{script_id}' was not found",
+                ))
             })?;
 
         panel.set_control_value(control_id, value)
@@ -45,9 +62,23 @@ pub struct ControlPanelState {
     id: String,
     title: String,
     controls: Vec<ControlState>,
+    script_id: String,
 }
 
 impl ControlPanelState {
+    fn from_definition(script_id: &str, definition: &ControlPanelDefinition) -> Self {
+        Self {
+            script_id: script_id.to_owned(),
+            id: definition.id().to_owned(),
+            title: definition.title().to_owned(),
+            controls: definition
+                .controls()
+                .iter()
+                .map(ControlState::from)
+                .collect(),
+        }
+    }
+
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -58,6 +89,10 @@ impl ControlPanelState {
 
     pub fn controls(&self) -> &[ControlState] {
         &self.controls
+    }
+
+    pub fn script_id(&self) -> &str {
+        &self.script_id
     }
 
     fn set_control_value(
@@ -78,20 +113,6 @@ impl ControlPanelState {
             })?;
 
         control.set_value(value)
-    }
-}
-
-impl From<&ControlPanelDefinition> for ControlPanelState {
-    fn from(definition: &ControlPanelDefinition) -> Self {
-        Self {
-            id: definition.id().to_owned(),
-            title: definition.title().to_owned(),
-            controls: definition
-                .controls()
-                .iter()
-                .map(ControlState::from)
-                .collect(),
-        }
     }
 }
 
@@ -356,6 +377,7 @@ fn validate_number_value(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::control_panel::{ControlDefinition, ControlPanelDefinition};
 
     fn definition() -> ControlPanelDefinition {
@@ -393,19 +415,31 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn initializes_state_from_definition() {
+    fn model() -> ControlPanelModel {
         let definition = definition();
 
-        let model = ControlPanelModel::new(&[definition]);
+        let mut model = ControlPanelModel::new();
+
+        model.register_script("metakon_script", &[definition]);
+
+        model
+    }
+
+    #[test]
+    fn initializes_state_from_definition() {
+        let model = model();
 
         assert_eq!(model.panels().len(), 1);
 
         let panel = &model.panels()[0];
 
-        assert_eq!(panel.id(), "metakon");
-        assert_eq!(panel.title(), "Metakon 5X3");
-        assert_eq!(panel.controls().len(), 4);
+        assert_eq!(panel.script_id(), "metakon_script",);
+
+        assert_eq!(panel.id(), "metakon",);
+
+        assert_eq!(panel.title(), "Metakon 5X3",);
+
+        assert_eq!(panel.controls().len(), 4,);
 
         assert_eq!(
             panel.controls()[0].value(),
@@ -422,17 +456,16 @@ mod tests {
             Some(ControlValueRef::Boolean(true)),
         );
 
-        assert_eq!(panel.controls()[3].value(), None);
+        assert_eq!(panel.controls()[3].value(), None,);
     }
 
     #[test]
     fn changes_control_values() {
-        let definition = definition();
-
-        let mut model = ControlPanelModel::new(&[definition]);
+        let mut model = model();
 
         model
             .set_control_value(
+                "metakon_script",
                 "metakon",
                 "temperature",
                 ControlValue::Text("201.5 °C".to_owned()),
@@ -440,30 +473,42 @@ mod tests {
             .unwrap();
 
         model
-            .set_control_value("metakon", "setpoint", ControlValue::Number(200.0))
+            .set_control_value(
+                "metakon_script",
+                "metakon",
+                "setpoint",
+                ControlValue::Number(200.0),
+            )
             .unwrap();
 
         model
-            .set_control_value("metakon", "automatic", ControlValue::Boolean(false))
+            .set_control_value(
+                "metakon_script",
+                "metakon",
+                "automatic",
+                ControlValue::Boolean(false),
+            )
             .unwrap();
 
         let controls = model.panels()[0].controls();
 
-        assert_eq!(controls[0].value(), Some(ControlValueRef::Text("201.5 °C")),);
+        assert_eq!(
+            controls[0].value(),
+            Some(ControlValueRef::Text("201.5 °C",)),
+        );
 
-        assert_eq!(controls[1].value(), Some(ControlValueRef::Number(200.0)),);
+        assert_eq!(controls[1].value(), Some(ControlValueRef::Number(200.0,)),);
 
-        assert_eq!(controls[2].value(), Some(ControlValueRef::Boolean(false)),);
+        assert_eq!(controls[2].value(), Some(ControlValueRef::Boolean(false,)),);
     }
 
     #[test]
     fn rejects_wrong_value_type() {
-        let definition = definition();
-
-        let mut model = ControlPanelModel::new(&[definition]);
+        let mut model = model();
 
         let error = model
             .set_control_value(
+                "metakon_script",
                 "metakon",
                 "setpoint",
                 ControlValue::Text("two hundred".to_owned()),
@@ -472,28 +517,74 @@ mod tests {
 
         assert_eq!(
             error.to_string(),
-            "Cannot assign text to number control 'setpoint'",
+            "Cannot assign text to number \
+             control 'setpoint'",
         );
     }
 
     #[test]
     fn rejects_number_outside_range() {
-        let definition = definition();
-
-        let mut model = ControlPanelModel::new(&[definition]);
+        let mut model = model();
 
         let error = model
-            .set_control_value("metakon", "setpoint", ControlValue::Number(1_500.0))
+            .set_control_value(
+                "metakon_script",
+                "metakon",
+                "setpoint",
+                ControlValue::Number(1_500.0),
+            )
             .unwrap_err();
 
         assert_eq!(
             error.to_string(),
-            "Number control 'setpoint' value 1500 exceeds maximum 1000",
+            "Number control 'setpoint' value \
+             1500 exceeds maximum 1000",
         );
     }
 
     #[test]
-    fn replaces_definitions_and_resets_state() {
+    fn rejects_unknown_script_panel() {
+        let mut model = model();
+
+        let error = model
+            .set_control_value(
+                "unknown_script",
+                "metakon",
+                "setpoint",
+                ControlValue::Number(200.0),
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Control panel 'metakon' of \
+             application script \
+             'unknown_script' was not found",
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_control() {
+        let mut model = model();
+
+        let error = model
+            .set_control_value(
+                "metakon_script",
+                "metakon",
+                "unknown",
+                ControlValue::Number(200.0),
+            )
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Control 'unknown' was not found \
+             in panel 'metakon'",
+        );
+    }
+
+    #[test]
+    fn replaces_panels_of_same_script() {
         let first = definition();
 
         let second = ControlPanelDefinition::new(
@@ -507,12 +598,73 @@ mod tests {
         )
         .unwrap();
 
-        let mut model = ControlPanelModel::new(&[first]);
+        let mut model = ControlPanelModel::new();
 
-        model.replace_definitions(&[second]);
+        model.register_script("installation", &[first]);
 
-        assert_eq!(model.panels().len(), 1);
-        assert_eq!(model.panels()[0].id(), "vacuum");
-        assert_eq!(model.panels()[0].controls().len(), 1);
+        model.register_script("installation", &[second]);
+
+        assert_eq!(model.panels().len(), 1,);
+
+        assert_eq!(model.panels()[0].script_id(), "installation",);
+
+        assert_eq!(model.panels()[0].id(), "vacuum",);
+
+        assert_eq!(model.panels()[0].title(), "Vacuum system",);
+
+        assert_eq!(model.panels()[0].controls().len(), 1,);
+    }
+
+    #[test]
+    fn allows_same_panel_id_for_different_scripts() {
+        let first = definition();
+        let second = definition();
+
+        let mut model = ControlPanelModel::new();
+
+        model.register_script("first_script", &[first]);
+
+        model.register_script("second_script", &[second]);
+
+        assert_eq!(model.panels().len(), 2,);
+
+        assert_eq!(model.panels()[0].script_id(), "first_script",);
+
+        assert_eq!(model.panels()[1].script_id(), "second_script",);
+
+        assert_eq!(model.panels()[0].id(), "metakon",);
+
+        assert_eq!(model.panels()[1].id(), "metakon",);
+    }
+
+    #[test]
+    fn unregisters_only_selected_script() {
+        let first = definition();
+        let second = definition();
+
+        let mut model = ControlPanelModel::new();
+
+        model.register_script("first_script", &[first]);
+
+        model.register_script("second_script", &[second]);
+
+        model.unregister_script("first_script");
+
+        assert_eq!(model.panels().len(), 1,);
+
+        assert_eq!(model.panels()[0].script_id(), "second_script",);
+    }
+
+    #[test]
+    fn clears_all_panels() {
+        let definition = definition();
+
+        let mut model = ControlPanelModel::new();
+
+        model.register_script("metakon_script", &[definition]);
+
+        model.clear();
+
+        assert!(model.panels().is_empty(),);
     }
 }

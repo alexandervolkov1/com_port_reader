@@ -66,7 +66,7 @@ fn show_contents(ui: &mut egui::Ui, model: &ControlPanelModel) {
             ui.heading(panel.title());
             ui.add_space(4.0);
 
-            egui::Grid::new(("declarative_control_panel", panel.id()))
+            egui::Grid::new(("declarative_control_panel", panel.script_id(), panel.id()))
                 .num_columns(2)
                 .spacing([12.0, 8.0])
                 .show(ui, |ui| {

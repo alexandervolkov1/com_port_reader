@@ -9,6 +9,7 @@ use crate::{
     connection::ConnectionId,
     data::{SeriesId, SeriesStore},
     lua_application_definition::apply_lua_definition,
+    lua_application_script::LuaApplicationEvent,
     lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle},
     process_recorder::{ProcessAction, ProcessActionOrigin, ProcessRecord, ProcessRecorder},
     sample_sink::NullSampleSink,
@@ -36,6 +37,7 @@ pub struct ApplicationRuntime {
     dispatcher: CommandDispatcher,
     device_emulator: DeviceEmulatorService,
     lua_command_receiver: Receiver<UserCommand>,
+    lua_application_event_receiver: Receiver<LuaApplicationEvent>,
 }
 
 impl ApplicationRuntime {
@@ -50,6 +52,8 @@ impl ApplicationRuntime {
 
         let (lua_command_sender, lua_command_receiver) = unbounded();
 
+        let (lua_application_event_sender, lua_application_event_receiver) = unbounded();
+
         let configuration_source = startup_source.clone();
 
         let application_script_paths = definition
@@ -61,6 +65,7 @@ impl ApplicationRuntime {
         let lua_worker = LuaWorker::spawn(
             lua_event_sender,
             lua_command_sender,
+            lua_application_event_sender,
             definition.clone(),
             startup_source,
             application_script_paths,
@@ -171,6 +176,7 @@ impl ApplicationRuntime {
             dispatcher,
             device_emulator,
             lua_command_receiver,
+            lua_application_event_receiver,
         );
 
         Ok((runtime, lua_event_receiver))
@@ -188,6 +194,7 @@ impl ApplicationRuntime {
         dispatcher: CommandDispatcher,
         device_emulator: DeviceEmulatorService,
         lua_command_receiver: Receiver<UserCommand>,
+        lua_application_event_receiver: Receiver<LuaApplicationEvent>,
     ) -> Self {
         Self {
             lua_worker,
@@ -200,6 +207,7 @@ impl ApplicationRuntime {
             dispatcher,
             device_emulator,
             lua_command_receiver,
+            lua_application_event_receiver,
         }
     }
 
@@ -381,6 +389,10 @@ impl ApplicationRuntime {
             })?;
 
         Ok((definition, source))
+    }
+
+    pub(crate) fn take_lua_application_events(&self) -> Vec<LuaApplicationEvent> {
+        self.lua_application_event_receiver.try_iter().collect()
     }
 }
 
