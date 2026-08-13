@@ -52,11 +52,18 @@ impl ApplicationRuntime {
 
         let configuration_source = startup_source.clone();
 
+        let application_script_paths = definition
+            .scripts()
+            .iter()
+            .map(|script| paths.resolve(script.path()))
+            .collect::<Vec<_>>();
+
         let lua_worker = LuaWorker::spawn(
             lua_event_sender,
             lua_command_sender,
             definition.clone(),
             startup_source,
+            application_script_paths,
         )?;
 
         let series = SeriesStore::new();

@@ -34,6 +34,10 @@ impl LuaRuntime {
         run_with_limit(&self.lua, || self.lua.load(source).exec())
     }
 
+    pub(crate) fn execute_named(&self, source: &str, name: &str) -> mlua::Result<()> {
+        run_with_limit(&self.lua, || self.lua.load(source).set_name(name).exec())
+    }
+
     pub fn evaluate<T>(&self, source: &str) -> mlua::Result<T>
     where
         T: FromLua,
@@ -1272,5 +1276,20 @@ mod tests {
             UserCommand::Log { message }
                 if message == "Setup completed",
         ));
+    }
+
+    #[test]
+    fn named_chunks_share_runtime_state() {
+        let runtime = LuaRuntime::new();
+
+        runtime
+            .execute_named("shared_value = 40", "first.lua")
+            .unwrap();
+
+        runtime
+            .execute_named("shared_value = shared_value + 2", "second.lua")
+            .unwrap();
+
+        assert_eq!(runtime.evaluate::<i64>("shared_value").unwrap(), 42,);
     }
 }

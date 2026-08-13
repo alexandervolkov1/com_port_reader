@@ -1,5 +1,6 @@
 use std::{
-    fmt,
+    fmt, fs,
+    path::PathBuf,
     thread::{self, JoinHandle},
 };
 
@@ -54,6 +55,11 @@ impl fmt::Display for LuaWorkerHandleError {
 
 impl std::error::Error for LuaWorkerHandleError {}
 
+struct ApplicationScriptSource {
+    path: PathBuf,
+    source: String,
+}
+
 pub struct LuaWorker {
     thread: Option<JoinHandle<()>>,
     commands: LuaWorkerHandle,
@@ -65,6 +71,7 @@ impl LuaWorker {
         application_command_sender: Sender<UserCommand>,
         application_definition: ApplicationDefinition,
         startup_source: Option<String>,
+        application_script_paths: Vec<PathBuf>,
     ) -> std::io::Result<Self> {
         let (command_sender, command_receiver) = bounded(COMMAND_CHANNEL_CAPACITY);
 
@@ -81,6 +88,7 @@ impl LuaWorker {
                     application_command_sender,
                     application_definition,
                     startup_source,
+                    application_script_paths,
                 );
             })?;
 
@@ -111,7 +119,18 @@ fn run_lua_worker(
     application_command_sender: Sender<UserCommand>,
     application_definition: ApplicationDefinition,
     startup_source: Option<String>,
+    application_script_paths: Vec<PathBuf>,
 ) {
+    let application_scripts = match load_application_scripts(application_script_paths) {
+        Ok(scripts) => scripts,
+
+        Err(error) => {
+            let _ = event_sender.send(LuaEvent::InitializationFailed(error));
+
+            return;
+        }
+    };
+
     let runtime = LuaRuntime::with_application_definition(application_definition);
 
     if let Err(error) = runtime.install_application_api(application_command_sender) {
@@ -128,6 +147,20 @@ fn run_lua_worker(
         )));
 
         return;
+    }
+
+    for script in application_scripts {
+        let script_name = script.path.to_string_lossy();
+
+        if let Err(error) = runtime.execute_named(&script.source, &script_name) {
+            let _ = event_sender.send(LuaEvent::InitializationFailed(format!(
+                "Lua application script '{}' failed: \
+                     {error}",
+                script.path.display(),
+            )));
+
+            return;
+        }
     }
 
     while let Ok(command) = command_receiver.recv() {
@@ -147,13 +180,31 @@ fn run_lua_worker(
     }
 }
 
+fn load_application_scripts(paths: Vec<PathBuf>) -> Result<Vec<ApplicationScriptSource>, String> {
+    paths
+        .into_iter()
+        .map(|path| {
+            let source = fs::read_to_string(&path).map_err(|error| {
+                format!(
+                    "Failed to read Lua \
+                             application script '{}': \
+                             {error}",
+                    path.display(),
+                )
+            })?;
+
+            Ok(ApplicationScriptSource { path, source })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use crossbeam_channel::{Receiver, Sender, unbounded};
 
-    use super::{LuaEvent, LuaWorker};
+    use super::{LuaEvent, LuaWorker, load_application_scripts};
 
     use crate::{application_definition::ApplicationDefinition, user_command::UserCommand};
 
@@ -167,6 +218,7 @@ mod tests {
             application_command_sender,
             ApplicationDefinition::default(),
             None,
+            Vec::new(),
         )
         .unwrap()
     }
@@ -258,6 +310,7 @@ mod tests {
             application_command_sender,
             ApplicationDefinition::default(),
             None,
+            Vec::new(),
         )
         .unwrap();
 
@@ -274,5 +327,32 @@ mod tests {
             receive_event(&event_receiver),
             LuaEvent::ExecutionSucceeded(Vec::new(),),
         );
+    }
+
+    #[test]
+    fn loads_application_script_sources() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+
+        let path = std::env::temp_dir().join(format!(
+            "com_port_reader_application_script_{}_{}.lua",
+            std::process::id(),
+            unique,
+        ));
+
+        std::fs::write(&path, "application_script_value = 42").unwrap();
+
+        let scripts = load_application_scripts(vec![path.clone()]).unwrap();
+
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(scripts.len(), 1);
+        assert_eq!(scripts[0].path, path);
+
+        assert_eq!(scripts[0].source, "application_script_value = 42",);
     }
 }
