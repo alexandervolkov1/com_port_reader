@@ -30,6 +30,8 @@ pub fn show_entries(ui: &mut egui::Ui, model: &mut LogModel) {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
 
+                        ui.add_space(4.0);
+
                         for entry in model.entries() {
                             let color = entry_color(ui, entry.level());
 
