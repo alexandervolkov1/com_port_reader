@@ -7,13 +7,19 @@ use crate::{
     application_paths::ApplicationPaths,
     application_runtime::ApplicationRuntime,
     components::{
-        control_panel_model::ControlPanelModel, control_panel_view, controls_view,
-        help_model::HelpModel, help_view, log_view, lua_console_model::LuaConsoleModel,
-        lua_console_view, plot_model::PlotModel, plot_view, series_view,
-        settings_model::SettingsModel, settings_view,
+        control_panel_model::{ControlPanelModel, ControlValue},
+        control_panel_view, controls_view,
+        help_model::HelpModel,
+        help_view, log_view,
+        lua_console_model::LuaConsoleModel,
+        lua_console_view,
+        plot_model::PlotModel,
+        plot_view, series_view,
+        settings_model::SettingsModel,
+        settings_view,
     },
     lua_application_definition::load_lua_definition_or_base,
-    lua_application_script::LuaApplicationEvent,
+    lua_application_script::{LuaApplicationEvent, LuaControlArgument},
     process_recorder::{
         NullProcessRecordWriter, ProcessRecorder, SqliteProcessRecordWriter,
         new_process_database_path,
@@ -163,6 +169,50 @@ impl MyApp {
                 LuaApplicationEvent::ScriptUnregistered { script_id } => {
                     self.control_panels.unregister_script(&script_id);
                 }
+
+                LuaApplicationEvent::ControlCallbackSucceeded { invocation } => {
+                    let Some(argument) = invocation.argument() else {
+                        continue;
+                    };
+
+                    let value = match argument {
+                        LuaControlArgument::Number(value) => ControlValue::Number(value),
+
+                        LuaControlArgument::Boolean(value) => ControlValue::Boolean(value),
+                    };
+
+                    if let Err(error) = self.control_panels.set_control_value(
+                        invocation.script_id(),
+                        invocation.panel_id(),
+                        invocation.control_id(),
+                        value,
+                    ) {
+                        self.runtime
+                            .log_error(format!("Failed to update control panel state: {error}",));
+                    }
+                }
+
+                LuaApplicationEvent::ControlCallbackFailed { invocation, error } => {
+                    if let Err(state_error) = self.control_panels.discard_control_edit(
+                        invocation.script_id(),
+                        invocation.panel_id(),
+                        invocation.control_id(),
+                    ) {
+                        self.runtime.log_error(format!(
+                            "Failed to discard control panel edit: \
+                             {state_error}",
+                        ));
+                    }
+
+                    self.runtime.log_error(format!(
+                        "Lua callback '{}' for control \
+                         '{}.{}.{}' failed: {error}",
+                        invocation.callback(),
+                        invocation.script_id(),
+                        invocation.panel_id(),
+                        invocation.control_id(),
+                    ));
+                }
             }
         }
 
@@ -283,7 +333,15 @@ impl eframe::App for MyApp {
             }
         });
 
-        control_panel_view::show_viewport(ui, &self.control_panels, &mut self.control_panel_open);
+        let invocations = control_panel_view::show_viewport(
+            ui,
+            &mut self.control_panels,
+            &mut self.control_panel_open,
+        );
+
+        for invocation in invocations {
+            self.runtime.invoke_control_callback(invocation);
+        }
 
         settings_view::show_window(ui.ctx(), &mut self.settings, &self.runtime);
 

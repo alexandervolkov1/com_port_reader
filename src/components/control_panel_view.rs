@@ -2,6 +2,8 @@ use eframe::egui;
 
 use super::control_panel_model::{ControlPanelModel, ControlState};
 
+use crate::lua_application_script::{LuaControlArgument, LuaControlInvocation};
+
 const VIEWPORT_ID: &str = "application_control_panel";
 
 pub fn show_menu_button(ui: &mut egui::Ui, model: &ControlPanelModel, open: &mut bool) {
@@ -14,13 +16,19 @@ pub fn show_menu_button(ui: &mut egui::Ui, model: &ControlPanelModel, open: &mut
     }
 
     if !configured {
-        response.on_disabled_hover_text("No control panels are defined in startup.lua");
+        response.on_disabled_hover_text("No control panels are defined by application scripts");
     }
 }
 
-pub fn show_viewport(root_ui: &mut egui::Ui, model: &ControlPanelModel, open: &mut bool) {
+pub(crate) fn show_viewport(
+    root_ui: &mut egui::Ui,
+    model: &mut ControlPanelModel,
+    open: &mut bool,
+) -> Vec<LuaControlInvocation> {
+    let mut invocations = Vec::new();
+
     if !*open {
-        return;
+        return invocations;
     }
 
     root_ui.ctx().show_viewport_immediate(
@@ -47,58 +55,80 @@ pub fn show_viewport(root_ui: &mut egui::Ui, model: &ControlPanelModel, open: &m
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        show_contents(ui, model);
+                        show_contents(ui, model, &mut invocations);
                     });
             });
         },
     );
+
+    invocations
 }
 
-fn show_contents(ui: &mut egui::Ui, model: &ControlPanelModel) {
-    for (panel_index, panel) in model.panels().iter().enumerate() {
+fn show_contents(
+    ui: &mut egui::Ui,
+    model: &mut ControlPanelModel,
+    invocations: &mut Vec<LuaControlInvocation>,
+) {
+    for (panel_index, panel) in model.panels_mut().iter_mut().enumerate() {
         if panel_index > 0 {
             ui.add_space(8.0);
         }
 
+        let script_id = panel.script_id().to_owned();
+        let panel_id = panel.id().to_owned();
+        let title = panel.title().to_owned();
+
         ui.group(|ui| {
             ui.set_width(ui.available_width());
 
-            ui.heading(panel.title());
+            ui.heading(title);
             ui.add_space(4.0);
 
-            egui::Grid::new(("declarative_control_panel", panel.script_id(), panel.id()))
-                .num_columns(2)
-                .spacing([12.0, 8.0])
-                .show(ui, |ui| {
-                    for control in panel.controls() {
-                        show_control(ui, control);
-                    }
-                });
+            egui::Grid::new((
+                "declarative_control_panel",
+                script_id.as_str(),
+                panel_id.as_str(),
+            ))
+            .num_columns(2)
+            .spacing([12.0, 8.0])
+            .show(ui, |ui| {
+                for control in panel.controls_mut() {
+                    show_control(ui, &script_id, &panel_id, control, invocations);
+                }
+            });
         });
     }
 }
 
-fn show_control(ui: &mut egui::Ui, control: &ControlState) {
+fn show_control(
+    ui: &mut egui::Ui,
+    script_id: &str,
+    panel_id: &str,
+    control: &mut ControlState,
+    invocations: &mut Vec<LuaControlInvocation>,
+) {
     match control {
         ControlState::Readout { label, text, .. } => {
-            ui.label(label);
-            ui.strong(text);
+            ui.label(label.as_str());
+            ui.strong(text.as_str());
             ui.end_row();
         }
 
         ControlState::Number {
+            id,
             label,
-            value,
+            draft_value,
             minimum,
             maximum,
             step,
+            on_change,
             ..
         } => {
-            ui.label(label);
+            ui.label(label.as_str());
 
-            let mut displayed_value = *value;
-
-            let mut editor = egui::DragValue::new(&mut displayed_value).speed(*step);
+            let mut editor = egui::DragValue::new(draft_value)
+                .speed(*step)
+                .update_while_editing(false);
 
             editor = match (*minimum, *maximum) {
                 (Some(minimum), Some(maximum)) => editor.range(minimum..=maximum),
@@ -110,28 +140,61 @@ fn show_control(ui: &mut egui::Ui, control: &ControlState) {
                 (None, None) => editor,
             };
 
-            ui.add_enabled(false, editor)
-                .on_disabled_hover_text("Lua callback is not connected yet");
+            let response = ui.add(editor);
+
+            let submitted = response.drag_stopped() || (response.changed() && !response.dragged());
+
+            if submitted {
+                invocations.push(LuaControlInvocation::new(
+                    script_id,
+                    panel_id,
+                    id.as_str(),
+                    on_change.as_str(),
+                    Some(LuaControlArgument::Number(*draft_value)),
+                ));
+            }
 
             ui.end_row();
         }
 
-        ControlState::Toggle { label, value, .. } => {
-            ui.label(label);
+        ControlState::Toggle {
+            id,
+            label,
+            draft_value,
+            on_change,
+            ..
+        } => {
+            ui.label(label.as_str());
 
-            let mut displayed_value = *value;
-
-            ui.add_enabled(false, egui::Checkbox::without_text(&mut displayed_value))
-                .on_disabled_hover_text("Lua callback is not connected yet");
+            if ui.add(egui::Checkbox::without_text(draft_value)).changed() {
+                invocations.push(LuaControlInvocation::new(
+                    script_id,
+                    panel_id,
+                    id.as_str(),
+                    on_change.as_str(),
+                    Some(LuaControlArgument::Boolean(*draft_value)),
+                ));
+            }
 
             ui.end_row();
         }
 
-        ControlState::Button { label, .. } => {
+        ControlState::Button {
+            id,
+            label,
+            on_click,
+        } => {
             ui.label("");
 
-            ui.add_enabled(false, egui::Button::new(label))
-                .on_disabled_hover_text("Lua callback is not connected yet");
+            if ui.button(label.as_str()).clicked() {
+                invocations.push(LuaControlInvocation::new(
+                    script_id,
+                    panel_id,
+                    id.as_str(),
+                    on_click.as_str(),
+                    None,
+                ));
+            }
 
             ui.end_row();
         }

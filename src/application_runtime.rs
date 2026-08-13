@@ -9,7 +9,7 @@ use crate::{
     connection::ConnectionId,
     data::{SeriesId, SeriesStore},
     lua_application_definition::apply_lua_definition,
-    lua_application_script::LuaApplicationEvent,
+    lua_application_script::{LuaApplicationEvent, LuaControlInvocation},
     lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle},
     process_recorder::{ProcessAction, ProcessActionOrigin, ProcessRecord, ProcessRecorder},
     sample_sink::NullSampleSink,
@@ -274,6 +274,22 @@ impl ApplicationRuntime {
 
     pub(crate) fn lua_handle(&self) -> LuaWorkerHandle {
         self.lua_worker.handle()
+    }
+
+    pub(crate) fn invoke_control_callback(&self, invocation: LuaControlInvocation) {
+        let script_id = invocation.script_id().to_owned();
+        let callback = invocation.callback().to_owned();
+
+        if let Err(error) = self.lua_worker.handle().invoke_control_callback(invocation) {
+            self.log.error(format!(
+                "Failed to queue Lua callback \
+                 '{script_id}.{callback}': {error}",
+            ));
+        }
+    }
+
+    pub(crate) fn log_error(&self, message: impl Into<String>) {
+        self.log.error(message);
     }
 
     pub(crate) const fn series(&self) -> &SeriesStore {

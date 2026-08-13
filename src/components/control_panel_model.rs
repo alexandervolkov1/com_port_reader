@@ -16,6 +16,10 @@ impl ControlPanelModel {
         &self.panels
     }
 
+    pub fn panels_mut(&mut self) -> &mut [ControlPanelState] {
+        &mut self.panels
+    }
+
     pub fn register_script(&mut self, script_id: &str, definitions: &[ControlPanelDefinition]) {
         self.unregister_script(script_id);
 
@@ -55,6 +59,27 @@ impl ControlPanelModel {
 
         panel.set_control_value(control_id, value)
     }
+
+    pub fn discard_control_edit(
+        &mut self,
+        script_id: &str,
+        panel_id: &str,
+        control_id: &str,
+    ) -> Result<(), ControlPanelStateError> {
+        let panel = self
+            .panels
+            .iter_mut()
+            .find(|panel| panel.script_id() == script_id && panel.id() == panel_id)
+            .ok_or_else(|| {
+                ControlPanelStateError::new(format!(
+                    "Control panel '{panel_id}' \
+                     of application script \
+                     '{script_id}' was not found",
+                ))
+            })?;
+
+        panel.discard_control_edit(control_id)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -91,6 +116,10 @@ impl ControlPanelState {
         &self.controls
     }
 
+    pub fn controls_mut(&mut self) -> &mut [ControlState] {
+        &mut self.controls
+    }
+
     pub fn script_id(&self) -> &str {
         &self.script_id
     }
@@ -114,6 +143,24 @@ impl ControlPanelState {
 
         control.set_value(value)
     }
+
+    fn discard_control_edit(&mut self, control_id: &str) -> Result<(), ControlPanelStateError> {
+        let control = self
+            .controls
+            .iter_mut()
+            .find(|control| control.id() == control_id)
+            .ok_or_else(|| {
+                ControlPanelStateError::new(format!(
+                    "Control '{control_id}' was not found \
+                     in panel '{}'",
+                    self.id,
+                ))
+            })?;
+
+        control.discard_edit();
+
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -128,6 +175,7 @@ pub enum ControlState {
         id: String,
         label: String,
         value: f64,
+        draft_value: f64,
         minimum: Option<f64>,
         maximum: Option<f64>,
         step: f64,
@@ -138,6 +186,7 @@ pub enum ControlState {
         id: String,
         label: String,
         value: bool,
+        draft_value: bool,
         on_change: String,
     },
 
@@ -171,9 +220,9 @@ impl ControlState {
         match self {
             Self::Readout { text, .. } => Some(ControlValueRef::Text(text)),
 
-            Self::Number { value, .. } => Some(ControlValueRef::Number(*value)),
+            Self::Number { draft_value, .. } => Some(ControlValueRef::Number(*draft_value)),
 
-            Self::Toggle { value, .. } => Some(ControlValueRef::Boolean(*value)),
+            Self::Toggle { draft_value, .. } => Some(ControlValueRef::Boolean(*draft_value)),
 
             Self::Button { .. } => None,
         }
@@ -203,6 +252,7 @@ impl ControlState {
                 Self::Number {
                     id,
                     value,
+                    draft_value,
                     minimum,
                     maximum,
                     ..
@@ -212,12 +262,19 @@ impl ControlState {
                 validate_number_value(id, new_value, *minimum, *maximum)?;
 
                 *value = new_value;
+                *draft_value = new_value;
 
                 Ok(())
             }
 
-            (Self::Toggle { value, .. }, ControlValue::Boolean(new_value)) => {
+            (
+                Self::Toggle {
+                    value, draft_value, ..
+                },
+                ControlValue::Boolean(new_value),
+            ) => {
                 *value = new_value;
+                *draft_value = new_value;
 
                 Ok(())
             }
@@ -227,6 +284,24 @@ impl ControlState {
                 control.value_type_name(),
                 control.id(),
             ))),
+        }
+    }
+
+    fn discard_edit(&mut self) {
+        match self {
+            Self::Number {
+                value, draft_value, ..
+            } => {
+                *draft_value = *value;
+            }
+
+            Self::Toggle {
+                value, draft_value, ..
+            } => {
+                *draft_value = *value;
+            }
+
+            Self::Readout { .. } | Self::Button { .. } => {}
         }
     }
 
@@ -269,6 +344,7 @@ impl From<&ControlDefinition> for ControlState {
                 maximum: *maximum,
                 step: *step,
                 on_change: on_change.clone(),
+                draft_value: *initial_value,
             },
 
             ControlDefinition::Toggle {
@@ -281,6 +357,7 @@ impl From<&ControlDefinition> for ControlState {
                 label: label.clone(),
                 value: *initial_value,
                 on_change: on_change.clone(),
+                draft_value: *initial_value,
             },
 
             ControlDefinition::Button {

@@ -2,8 +2,10 @@ use crossbeam_channel::Sender;
 use mlua::{FromLua, Function, Lua, MultiValue, Table};
 
 use crate::{
-    application_definition::ApplicationDefinition, lua_application_script::LuaApplicationEvent,
-    lua_execution::run_with_limit, user_command::UserCommand,
+    application_definition::ApplicationDefinition,
+    lua_application_script::{LuaApplicationEvent, LuaControlInvocation, invoke_control_callback},
+    lua_execution::run_with_limit,
+    user_command::UserCommand,
 };
 
 pub struct LuaRuntime {
@@ -63,6 +65,13 @@ impl LuaRuntime {
                 .map(|value| tostring.call::<String>(value))
                 .collect()
         })
+    }
+
+    pub(crate) fn invoke_control_callback(
+        &self,
+        invocation: &LuaControlInvocation,
+    ) -> mlua::Result<()> {
+        run_with_limit(&self.lua, || invoke_control_callback(&self.lua, invocation))
     }
 
     pub(crate) fn execute_startup(&self, source: &str) -> mlua::Result<()> {

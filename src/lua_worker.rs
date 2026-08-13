@@ -7,14 +7,17 @@ use std::{
 use crossbeam_channel::{Receiver, Sender, bounded};
 
 use crate::{
-    application_definition::ApplicationDefinition, lua_application_script::LuaApplicationEvent,
-    lua_runtime::LuaRuntime, user_command::UserCommand,
+    application_definition::ApplicationDefinition,
+    lua_application_script::{LuaApplicationEvent, LuaControlInvocation},
+    lua_runtime::LuaRuntime,
+    user_command::UserCommand,
 };
 
 const COMMAND_CHANNEL_CAPACITY: usize = 32;
 
 enum LuaCommand {
     Execute(String),
+    InvokeControlCallback(LuaControlInvocation),
     Shutdown,
 }
 
@@ -33,6 +36,13 @@ pub struct LuaWorkerHandle {
 impl LuaWorkerHandle {
     pub fn execute(&self, source: impl Into<String>) -> Result<(), LuaWorkerHandleError> {
         self.send(LuaCommand::Execute(source.into()))
+    }
+
+    pub(crate) fn invoke_control_callback(
+        &self,
+        invocation: LuaControlInvocation,
+    ) -> Result<(), LuaWorkerHandleError> {
+        self.send(LuaCommand::InvokeControlCallback(invocation))
     }
 
     fn shutdown(&self) -> Result<(), LuaWorkerHandleError> {
@@ -136,8 +146,8 @@ fn run_lua_worker(
 
     let runtime = LuaRuntime::with_application_definition(application_definition);
 
-    if let Err(error) =
-        runtime.install_application_api(application_command_sender, application_event_sender)
+    if let Err(error) = runtime
+        .install_application_api(application_command_sender, application_event_sender.clone())
     {
         let _ = event_sender.send(LuaEvent::InitializationFailed(error.to_string()));
 
@@ -169,18 +179,35 @@ fn run_lua_worker(
     }
 
     while let Ok(command) = command_receiver.recv() {
-        let event = match command {
-            LuaCommand::Execute(source) => match runtime.evaluate_for_repl(&source) {
-                Ok(output) => LuaEvent::ExecutionSucceeded(output),
+        match command {
+            LuaCommand::Execute(source) => {
+                let event = match runtime.evaluate_for_repl(&source) {
+                    Ok(output) => LuaEvent::ExecutionSucceeded(output),
 
-                Err(error) => LuaEvent::ExecutionFailed(error.to_string()),
-            },
+                    Err(error) => LuaEvent::ExecutionFailed(error.to_string()),
+                };
+
+                if event_sender.send(event).is_err() {
+                    break;
+                }
+            }
+
+            LuaCommand::InvokeControlCallback(invocation) => {
+                let event = match runtime.invoke_control_callback(&invocation) {
+                    Ok(()) => LuaApplicationEvent::ControlCallbackSucceeded { invocation },
+
+                    Err(error) => LuaApplicationEvent::ControlCallbackFailed {
+                        invocation,
+                        error: error.to_string(),
+                    },
+                };
+
+                if application_event_sender.send(event).is_err() {
+                    break;
+                }
+            }
 
             LuaCommand::Shutdown => break,
-        };
-
-        if event_sender.send(event).is_err() {
-            break;
         }
     }
 }

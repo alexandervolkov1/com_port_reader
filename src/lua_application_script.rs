@@ -7,6 +7,59 @@ use crate::control_panel::{ControlDefinition, ControlPanelDefinition};
 
 const SCRIPT_REGISTRY_KEY: &str = "com_port_reader.application_scripts";
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum LuaControlArgument {
+    Number(f64),
+    Boolean(bool),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LuaControlInvocation {
+    script_id: String,
+    panel_id: String,
+    control_id: String,
+    callback: String,
+    argument: Option<LuaControlArgument>,
+}
+
+impl LuaControlInvocation {
+    pub(crate) fn new(
+        script_id: impl Into<String>,
+        panel_id: impl Into<String>,
+        control_id: impl Into<String>,
+        callback: impl Into<String>,
+        argument: Option<LuaControlArgument>,
+    ) -> Self {
+        Self {
+            script_id: script_id.into(),
+            panel_id: panel_id.into(),
+            control_id: control_id.into(),
+            callback: callback.into(),
+            argument,
+        }
+    }
+
+    pub(crate) fn script_id(&self) -> &str {
+        &self.script_id
+    }
+
+    pub(crate) fn panel_id(&self) -> &str {
+        &self.panel_id
+    }
+
+    pub(crate) fn control_id(&self) -> &str {
+        &self.control_id
+    }
+
+    pub(crate) fn callback(&self) -> &str {
+        &self.callback
+    }
+
+    pub(crate) const fn argument(&self) -> Option<LuaControlArgument> {
+        self.argument
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum LuaApplicationEvent {
     ScriptRegistered {
@@ -17,6 +70,49 @@ pub(crate) enum LuaApplicationEvent {
     ScriptUnregistered {
         script_id: String,
     },
+
+    ControlCallbackSucceeded {
+        invocation: LuaControlInvocation,
+    },
+
+    ControlCallbackFailed {
+        invocation: LuaControlInvocation,
+        error: String,
+    },
+}
+
+pub(crate) fn invoke_control_callback(
+    lua: &Lua,
+    invocation: &LuaControlInvocation,
+) -> mlua::Result<()> {
+    let registry: Table = lua.named_registry_value(SCRIPT_REGISTRY_KEY)?;
+
+    let script = registry
+        .get::<Option<Table>>(invocation.script_id())?
+        .ok_or_else(|| {
+            runtime_error(format!(
+                "Application script '{}' is not registered",
+                invocation.script_id(),
+            ))
+        })?;
+
+    let callback = script.get::<Value>(invocation.callback())?;
+
+    let Value::Function(callback) = callback else {
+        return Err(runtime_error(format!(
+            "Application script '{}' callback '{}' is not a function",
+            invocation.script_id(),
+            invocation.callback(),
+        )));
+    };
+
+    match invocation.argument() {
+        None => callback.call::<()>(()),
+
+        Some(LuaControlArgument::Number(value)) => callback.call::<()>(value),
+
+        Some(LuaControlArgument::Boolean(value)) => callback.call::<()>(value),
+    }
 }
 
 pub(crate) fn install(
@@ -438,7 +534,10 @@ mod tests {
     use crossbeam_channel::unbounded;
     use mlua::{Lua, Table, Value};
 
-    use super::{LuaApplicationEvent, SCRIPT_REGISTRY_KEY, install};
+    use super::{
+        LuaApplicationEvent, LuaControlArgument, LuaControlInvocation, SCRIPT_REGISTRY_KEY,
+        install, invoke_control_callback,
+    };
 
     #[test]
     fn registers_application_script() {
@@ -595,5 +694,51 @@ mod tests {
         let value: Value = registry.get("demo").unwrap();
 
         assert_eq!(value, Value::Nil);
+    }
+
+    #[test]
+    fn invokes_registered_control_callback() {
+        let lua = Lua::new();
+        let app = lua.create_table().unwrap();
+
+        let (event_sender, event_receiver) = unbounded();
+
+        install(&lua, &app, event_sender).unwrap();
+
+        lua.globals().set("app", app).unwrap();
+
+        lua.load(
+            r#"
+                local script = {
+                    id = "demo",
+                }
+
+                function script.set_value(value)
+                    script.value = value
+                end
+
+                app.register_script(script)
+            "#,
+        )
+        .exec()
+        .unwrap();
+
+        let _registration = event_receiver.recv().unwrap();
+
+        let invocation = LuaControlInvocation::new(
+            "demo",
+            "controls",
+            "value",
+            "set_value",
+            Some(LuaControlArgument::Number(42.0)),
+        );
+
+        invoke_control_callback(&lua, &invocation).unwrap();
+
+        let registry: Table = lua.named_registry_value(SCRIPT_REGISTRY_KEY).unwrap();
+
+        let script: Table = registry.get("demo").unwrap();
+
+        assert_eq!(script.get::<f64>("value").unwrap(), 42.0);
     }
 }
