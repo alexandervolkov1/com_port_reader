@@ -23,6 +23,10 @@ local definition = {
         port = "COM4",
         script = "emulator_scripts/sine_generator.lua",
     },
+
+    scripts = {
+        "lua_scripts/sine_braid_demo.lua",
+    },
 }
 
 function definition.setup()

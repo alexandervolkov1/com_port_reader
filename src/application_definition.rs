@@ -5,10 +5,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{
-    connection::ConnectionId, control_panel::ControlPanelDefinition,
-    serial_connection::SerialPortConfig,
-};
+use crate::{connection::ConnectionId, serial_connection::SerialPortConfig};
 
 const MIN_FPS: u32 = 1;
 const MAX_FPS: u32 = 240;
@@ -22,7 +19,7 @@ pub struct ApplicationDefinition {
     runtime: RuntimeDefinition,
     serial_connections: Vec<SerialConnectionDefinition>,
     emulator: Option<EmulatorDefinition>,
-    control_panels: Vec<ControlPanelDefinition>,
+    scripts: Vec<ApplicationScriptDefinition>,
 }
 
 impl ApplicationDefinition {
@@ -31,7 +28,7 @@ impl ApplicationDefinition {
             runtime,
             serial_connections: Vec::new(),
             emulator: None,
-            control_panels: Vec::new(),
+            scripts: Vec::new(),
         }
     }
 
@@ -78,31 +75,37 @@ impl ApplicationDefinition {
         Ok(())
     }
 
-    pub fn control_panels(&self) -> &[ControlPanelDefinition] {
-        &self.control_panels
+    pub fn scripts(&self) -> &[ApplicationScriptDefinition] {
+        &self.scripts
     }
 
-    pub fn replace_control_panels(
+    pub fn replace_scripts(
         &mut self,
-        panels: impl IntoIterator<Item = ControlPanelDefinition>,
+        scripts: impl IntoIterator<Item = ApplicationScriptDefinition>,
     ) -> Result<(), ApplicationDefinitionError> {
         let mut validated = Vec::new();
 
-        for panel in panels {
+        for script in scripts {
             if validated
                 .iter()
-                .any(|stored: &ControlPanelDefinition| stored.id() == panel.id())
+                .any(|stored: &ApplicationScriptDefinition| {
+                    stored
+                        .path()
+                        .to_string_lossy()
+                        .eq_ignore_ascii_case(&script.path().to_string_lossy())
+                })
             {
                 return Err(ApplicationDefinitionError::new(format!(
-                    "Control panel id '{}' is defined more than once",
-                    panel.id(),
+                    "Application script '{}' is \
+                         defined more than once",
+                    script.path().display(),
                 )));
             }
 
-            validated.push(panel);
+            validated.push(script);
         }
 
-        self.control_panels = validated;
+        self.scripts = validated;
 
         Ok(())
     }
@@ -180,6 +183,29 @@ impl ApplicationDefinition {
         self.serial_connections = validated.serial_connections;
 
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApplicationScriptDefinition {
+    path: PathBuf,
+}
+
+impl ApplicationScriptDefinition {
+    pub fn new(path: impl Into<PathBuf>) -> Result<Self, ApplicationDefinitionError> {
+        let path = path.into();
+
+        if path.as_os_str().is_empty() {
+            return Err(ApplicationDefinitionError::new(
+                "Application script path cannot be empty",
+            ));
+        }
+
+        Ok(Self { path })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 }
 

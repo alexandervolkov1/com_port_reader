@@ -7,9 +7,10 @@ use crate::{
     application_paths::ApplicationPaths,
     application_runtime::ApplicationRuntime,
     components::{
-        controls_view, help_model::HelpModel, help_view, log_view,
-        lua_console_model::LuaConsoleModel, lua_console_view, plot_model::PlotModel, plot_view,
-        series_view, settings_model::SettingsModel, settings_view,
+        control_panel_model::ControlPanelModel, control_panel_view, controls_view,
+        help_model::HelpModel, help_view, log_view, lua_console_model::LuaConsoleModel,
+        lua_console_view, plot_model::PlotModel, plot_view, series_view,
+        settings_model::SettingsModel, settings_view,
     },
     lua_application_definition::load_lua_definition_or_base,
     process_recorder::{
@@ -29,6 +30,8 @@ pub struct MyApp {
     help: HelpModel,
     lua_console: LuaConsoleModel,
     log_panel_open: bool,
+    control_panels: ControlPanelModel,
+    control_panel_open: bool,
     settings: SettingsModel,
 }
 
@@ -96,6 +99,8 @@ impl MyApp {
         )
         .expect("failed to build application runtime");
 
+        let control_panels = ControlPanelModel::new(&[]);
+
         let lua_console = LuaConsoleModel::new(
             runtime.lua_handle(),
             lua_event_receiver,
@@ -111,6 +116,8 @@ impl MyApp {
             help: HelpModel::default(),
             lua_console,
             log_panel_open: false,
+            control_panels,
+            control_panel_open: false,
             settings: SettingsModel::default(),
         }
     }
@@ -128,6 +135,10 @@ impl MyApp {
             .replace_worker(runtime.lua_handle(), lua_event_receiver);
 
         self.runtime = runtime;
+
+        self.control_panels.replace_definitions(&[]);
+        self.control_panel_open = false;
+
         self.plot = PlotModel::new();
 
         Ok(())
@@ -143,6 +154,11 @@ impl eframe::App for MyApp {
         egui::Panel::top("application_menu").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 lua_console_view::show_menu_button(ui, &mut self.lua_console);
+                control_panel_view::show_menu_button(
+                    ui,
+                    &self.control_panels,
+                    &mut self.control_panel_open,
+                );
                 settings_view::show_menu_button(ui, &mut self.settings);
                 help_view::show_menu_button(ui, &mut self.help);
             });
@@ -238,6 +254,8 @@ impl eframe::App for MyApp {
                     });
             }
         });
+
+        control_panel_view::show_viewport(ui, &self.control_panels, &mut self.control_panel_open);
 
         settings_view::show_window(ui.ctx(), &mut self.settings, &self.runtime);
 
