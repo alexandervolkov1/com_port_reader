@@ -361,7 +361,6 @@ fn action_type_name(action: &ProcessAction) -> &'static str {
         ProcessAction::StopEmulator => "stop_emulator",
         ProcessAction::AddSeries { .. } => "add_series",
         ProcessAction::DeleteSeriesByName { .. } => "delete_series_by_name",
-        ProcessAction::RemoveSeries { .. } => "remove_series",
         ProcessAction::RenameSeries { .. } => "rename_series",
         ProcessAction::SetSeriesVisibility { .. } => "set_series_visibility",
         ProcessAction::SendSerial { .. } => "send_serial",
@@ -387,7 +386,6 @@ fn action_connection_id(action: &ProcessAction) -> Option<String> {
         | ProcessAction::StartEmulator
         | ProcessAction::StopEmulator
         | ProcessAction::DeleteSeriesByName { .. }
-        | ProcessAction::RemoveSeries { .. }
         | ProcessAction::RenameSeries { .. }
         | ProcessAction::SetSeriesVisibility { .. } => None,
     };
@@ -397,8 +395,7 @@ fn action_connection_id(action: &ProcessAction) -> Option<String> {
 
 fn action_series_id(action: &ProcessAction) -> Option<String> {
     match action {
-        ProcessAction::RemoveSeries { series_id }
-        | ProcessAction::SetSeriesVisibility { series_id, .. } => Some(series_id.to_string()),
+        ProcessAction::SetSeriesVisibility { series_id, .. } => Some(series_id.to_string()),
 
         _ => None,
     }

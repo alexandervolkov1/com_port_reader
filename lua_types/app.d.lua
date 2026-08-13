@@ -1,4 +1,5 @@
 ---@meta
+---@diagnostic disable: missing-return
 
 ---@alias SerialParity
 ---| '"none"'
@@ -25,6 +26,11 @@
 ---| integer
 ---| number
 
+---@alias ControlPanelValue
+---| string
+---| number
+---| boolean
+
 ---@class RuntimeDefinition
 ---@field fps? integer GUI refresh rate. Default: 30.
 ---@field poll_interval? number Default series polling interval in seconds. Default: 1.0.
@@ -49,6 +55,7 @@
 ---@field application? RuntimeDefinition
 ---@field connections? table<string, SerialConnectionDefinition>
 ---@field emulator? EmulatorDefinition
+---@field scripts? string[] Application scripts executed after setup().
 ---@field setup? fun() Called once after the application Lua API is installed.
 
 ---@class SeriesOptions
@@ -188,6 +195,50 @@ function VirtualInstrument:write(
 )
 end
 
+---@class ControlReadoutDefinition
+---@field kind '"readout"'
+---@field id string
+---@field label string
+---@field initial? string
+
+---@class ControlNumberDefinition
+---@field kind '"number"'
+---@field id string
+---@field label string
+---@field initial? number
+---@field min? number
+---@field max? number
+---@field step? number
+---@field on_change string Callback field in the application script table.
+
+---@class ControlToggleDefinition
+---@field kind '"toggle"'
+---@field id string
+---@field label string
+---@field initial? boolean
+---@field on_change string Callback field in the application script table.
+
+---@class ControlButtonDefinition
+---@field kind '"button"'
+---@field id string
+---@field label string
+---@field on_click string Callback field in the application script table.
+
+---@alias ControlDefinition
+---| ControlReadoutDefinition
+---| ControlNumberDefinition
+---| ControlToggleDefinition
+---| ControlButtonDefinition
+
+---@class ControlPanelDefinition
+---@field id string
+---@field title string
+---@field controls ControlDefinition[]
+
+---@class ApplicationScript
+---@field id string
+---@field panels? ControlPanelDefinition[]
+
 ---@class ApplicationApi
 app = {}
 
@@ -270,5 +321,38 @@ end
 function app.send_serial(
     command,
     options
+)
+end
+
+---Registers an application script and publishes
+---its declarative control panels to the GUI.
+---
+---Callback names declared by on_change and on_click
+---must refer to functions stored in this script table.
+---@param script ApplicationScript
+function app.register_script(script) end
+
+---Removes a registered application script
+---and all control panels belonging to it.
+---@param script_id string
+function app.unregister_script(script_id) end
+
+---Updates a control displayed in the GUI.
+---
+---Accepted value types:
+---* readout: string;
+---* number: number;
+---* toggle: boolean.
+---
+---Button controls cannot receive values.
+---@param script_id string
+---@param panel_id string
+---@param control_id string
+---@param value ControlPanelValue
+function app.set_control(
+    script_id,
+    panel_id,
+    control_id,
+    value
 )
 end

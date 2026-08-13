@@ -13,7 +13,6 @@ pub enum WorkerCommand {
     Start,
     Stop,
     AddSeries(NewSeries),
-    RemoveSeries(SeriesId),
     SetVisibility {
         id: SeriesId,
         visible: bool,

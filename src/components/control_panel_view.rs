@@ -118,6 +118,7 @@ fn show_control(
             id,
             label,
             draft_value,
+            pending,
             minimum,
             maximum,
             step,
@@ -140,11 +141,12 @@ fn show_control(
                 (None, None) => editor,
             };
 
-            let response = ui.add(editor);
+            let response = ui.add_enabled(!*pending, editor);
 
             let submitted = response.drag_stopped() || (response.changed() && !response.dragged());
 
             if submitted {
+                *pending = true;
                 invocations.push(LuaControlInvocation::new(
                     script_id,
                     panel_id,
@@ -161,12 +163,17 @@ fn show_control(
             id,
             label,
             draft_value,
+            pending,
             on_change,
             ..
         } => {
             ui.label(label.as_str());
 
-            if ui.add(egui::Checkbox::without_text(draft_value)).changed() {
+            if ui
+                .add_enabled(!*pending, egui::Checkbox::without_text(draft_value))
+                .changed()
+            {
+                *pending = true;
                 invocations.push(LuaControlInvocation::new(
                     script_id,
                     panel_id,
@@ -182,11 +189,17 @@ fn show_control(
         ControlState::Button {
             id,
             label,
+            pending,
             on_click,
         } => {
             ui.label("");
 
-            if ui.button(label.as_str()).clicked() {
+            if ui
+                .add_enabled(!*pending, egui::Button::new(label.as_str()))
+                .clicked()
+            {
+                *pending = true;
+
                 invocations.push(LuaControlInvocation::new(
                     script_id,
                     panel_id,

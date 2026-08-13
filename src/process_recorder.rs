@@ -50,10 +50,6 @@ pub enum ProcessAction {
         name: String,
     },
 
-    RemoveSeries {
-        series_id: SeriesId,
-    },
-
     RenameSeries {
         current_name: String,
         new_name: String,

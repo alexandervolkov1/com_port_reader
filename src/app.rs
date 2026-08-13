@@ -19,7 +19,7 @@ use crate::{
         settings_view,
     },
     lua_application_definition::load_lua_definition_or_base,
-    lua_application_script::{LuaApplicationEvent, LuaControlArgument},
+    lua_application_script::{LuaApplicationEvent, LuaControlValue},
     process_recorder::{
         NullProcessRecordWriter, ProcessRecorder, SqliteProcessRecordWriter,
         new_process_database_path,
@@ -171,24 +171,15 @@ impl MyApp {
                 }
 
                 LuaApplicationEvent::ControlCallbackSucceeded { invocation } => {
-                    let Some(argument) = invocation.argument() else {
-                        continue;
-                    };
-
-                    let value = match argument {
-                        LuaControlArgument::Number(value) => ControlValue::Number(value),
-
-                        LuaControlArgument::Boolean(value) => ControlValue::Boolean(value),
-                    };
-
-                    if let Err(error) = self.control_panels.set_control_value(
+                    if let Err(error) = self.control_panels.commit_control_edit(
                         invocation.script_id(),
                         invocation.panel_id(),
                         invocation.control_id(),
-                        value,
                     ) {
-                        self.runtime
-                            .log_error(format!("Failed to update control panel state: {error}",));
+                        self.runtime.log_error(format!(
+                            "Failed to commit control panel edit: \
+                             {error}",
+                        ));
                     }
                 }
 
@@ -212,6 +203,34 @@ impl MyApp {
                         invocation.panel_id(),
                         invocation.control_id(),
                     ));
+                }
+
+                LuaApplicationEvent::ControlValueChanged {
+                    script_id,
+                    panel_id,
+                    control_id,
+                    value,
+                } => {
+                    let value = match value {
+                        LuaControlValue::Text(value) => ControlValue::Text(value),
+
+                        LuaControlValue::Number(value) => ControlValue::Number(value),
+
+                        LuaControlValue::Boolean(value) => ControlValue::Boolean(value),
+                    };
+
+                    if let Err(error) = self.control_panels.set_control_value(
+                        &script_id,
+                        &panel_id,
+                        &control_id,
+                        value,
+                    ) {
+                        self.runtime.log_error(format!(
+                            "Failed to update control \
+                             '{script_id}.{panel_id}.{control_id}': \
+                             {error}",
+                        ));
+                    }
                 }
             }
         }
@@ -340,7 +359,30 @@ impl eframe::App for MyApp {
         );
 
         for invocation in invocations {
-            self.runtime.invoke_control_callback(invocation);
+            let script_id = invocation.script_id().to_owned();
+
+            let panel_id = invocation.panel_id().to_owned();
+
+            let control_id = invocation.control_id().to_owned();
+
+            let callback = invocation.callback().to_owned();
+
+            if let Err(error) = self.runtime.invoke_control_callback(invocation) {
+                if let Err(state_error) =
+                    self.control_panels
+                        .discard_control_edit(&script_id, &panel_id, &control_id)
+                {
+                    self.runtime.log_error(format!(
+                        "Failed to discard control \
+                         panel edit: {state_error}",
+                    ));
+                }
+
+                self.runtime.log_error(format!(
+                    "Failed to queue Lua callback \
+                     '{script_id}.{callback}': {error}",
+                ));
+            }
         }
 
         settings_view::show_window(ui.ctx(), &mut self.settings, &self.runtime);

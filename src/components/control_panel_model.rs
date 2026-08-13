@@ -45,19 +45,19 @@ impl ControlPanelModel {
         control_id: &str,
         value: ControlValue,
     ) -> Result<(), ControlPanelStateError> {
-        let panel = self
-            .panels
-            .iter_mut()
-            .find(|panel| panel.script_id() == script_id && panel.id() == panel_id)
-            .ok_or_else(|| {
-                ControlPanelStateError::new(format!(
-                    "Control panel '{panel_id}' \
-                     of application script \
-                     '{script_id}' was not found",
-                ))
-            })?;
+        self.panel_mut(script_id, panel_id)?
+            .set_control_value(control_id, value)
+    }
 
-        panel.set_control_value(control_id, value)
+    pub fn commit_control_edit(
+        &mut self,
+        script_id: &str,
+        panel_id: &str,
+        control_id: &str,
+    ) -> Result<(), ControlPanelStateError> {
+        let panel = self.panel_mut(script_id, panel_id)?;
+
+        panel.commit_control_edit(control_id)
     }
 
     pub fn discard_control_edit(
@@ -66,8 +66,16 @@ impl ControlPanelModel {
         panel_id: &str,
         control_id: &str,
     ) -> Result<(), ControlPanelStateError> {
-        let panel = self
-            .panels
+        self.panel_mut(script_id, panel_id)?
+            .discard_control_edit(control_id)
+    }
+
+    fn panel_mut(
+        &mut self,
+        script_id: &str,
+        panel_id: &str,
+    ) -> Result<&mut ControlPanelState, ControlPanelStateError> {
+        self.panels
             .iter_mut()
             .find(|panel| panel.script_id() == script_id && panel.id() == panel_id)
             .ok_or_else(|| {
@@ -76,9 +84,7 @@ impl ControlPanelModel {
                      of application script \
                      '{script_id}' was not found",
                 ))
-            })?;
-
-        panel.discard_control_edit(control_id)
+            })
     }
 }
 
@@ -112,6 +118,7 @@ impl ControlPanelState {
         &self.title
     }
 
+    #[cfg(test)]
     pub fn controls(&self) -> &[ControlState] {
         &self.controls
     }
@@ -129,24 +136,26 @@ impl ControlPanelState {
         control_id: &str,
         value: ControlValue,
     ) -> Result<(), ControlPanelStateError> {
-        let control = self
-            .controls
-            .iter_mut()
-            .find(|control| control.id() == control_id)
-            .ok_or_else(|| {
-                ControlPanelStateError::new(format!(
-                    "Control '{control_id}' was not found \
-                     in panel '{}'",
-                    self.id,
-                ))
-            })?;
-
-        control.set_value(value)
+        self.control_mut(control_id)?.set_value(value)
     }
 
     fn discard_control_edit(&mut self, control_id: &str) -> Result<(), ControlPanelStateError> {
-        let control = self
-            .controls
+        self.control_mut(control_id)?.discard_edit();
+
+        Ok(())
+    }
+
+    fn commit_control_edit(&mut self, control_id: &str) -> Result<(), ControlPanelStateError> {
+        self.control_mut(control_id)?.commit_edit();
+
+        Ok(())
+    }
+
+    fn control_mut(
+        &mut self,
+        control_id: &str,
+    ) -> Result<&mut ControlState, ControlPanelStateError> {
+        self.controls
             .iter_mut()
             .find(|control| control.id() == control_id)
             .ok_or_else(|| {
@@ -155,11 +164,7 @@ impl ControlPanelState {
                      in panel '{}'",
                     self.id,
                 ))
-            })?;
-
-        control.discard_edit();
-
-        Ok(())
+            })
     }
 }
 
@@ -176,6 +181,7 @@ pub enum ControlState {
         label: String,
         value: f64,
         draft_value: f64,
+        pending: bool,
         minimum: Option<f64>,
         maximum: Option<f64>,
         step: f64,
@@ -187,12 +193,14 @@ pub enum ControlState {
         label: String,
         value: bool,
         draft_value: bool,
+        pending: bool,
         on_change: String,
     },
 
     Button {
         id: String,
         label: String,
+        pending: bool,
         on_click: String,
     },
 }
@@ -207,15 +215,7 @@ impl ControlState {
         }
     }
 
-    pub fn label(&self) -> &str {
-        match self {
-            Self::Readout { label, .. }
-            | Self::Number { label, .. }
-            | Self::Toggle { label, .. }
-            | Self::Button { label, .. } => label,
-        }
-    }
-
+    #[cfg(test)]
     pub fn value(&self) -> Option<ControlValueRef<'_>> {
         match self {
             Self::Readout { text, .. } => Some(ControlValueRef::Text(text)),
@@ -225,16 +225,6 @@ impl ControlState {
             Self::Toggle { draft_value, .. } => Some(ControlValueRef::Boolean(*draft_value)),
 
             Self::Button { .. } => None,
-        }
-    }
-
-    pub fn callback(&self) -> Option<&str> {
-        match self {
-            Self::Readout { .. } => None,
-
-            Self::Number { on_change, .. } | Self::Toggle { on_change, .. } => Some(on_change),
-
-            Self::Button { on_click, .. } => Some(on_click),
         }
     }
 
@@ -287,30 +277,72 @@ impl ControlState {
         }
     }
 
-    fn discard_edit(&mut self) {
-        match self {
-            Self::Number {
-                value, draft_value, ..
-            } => {
-                *draft_value = *value;
-            }
-
-            Self::Toggle {
-                value, draft_value, ..
-            } => {
-                *draft_value = *value;
-            }
-
-            Self::Readout { .. } | Self::Button { .. } => {}
-        }
-    }
-
     fn value_type_name(&self) -> &'static str {
         match self {
             Self::Readout { .. } => "text",
             Self::Number { .. } => "number",
             Self::Toggle { .. } => "boolean",
             Self::Button { .. } => "button",
+        }
+    }
+
+    fn commit_edit(&mut self) {
+        match self {
+            Self::Number {
+                value,
+                draft_value,
+                pending,
+                ..
+            } => {
+                *value = *draft_value;
+                *pending = false;
+            }
+
+            Self::Toggle {
+                value,
+                draft_value,
+                pending,
+                ..
+            } => {
+                *value = *draft_value;
+                *pending = false;
+            }
+
+            Self::Button { pending, .. } => {
+                *pending = false;
+            }
+
+            Self::Readout { .. } => {}
+        }
+    }
+
+    fn discard_edit(&mut self) {
+        match self {
+            Self::Number {
+                value,
+                draft_value,
+                pending,
+                ..
+            } => {
+                *draft_value = *value;
+                *pending = false;
+            }
+
+            Self::Toggle {
+                value,
+                draft_value,
+                pending,
+                ..
+            } => {
+                *draft_value = *value;
+                *pending = false;
+            }
+
+            Self::Button { pending, .. } => {
+                *pending = false;
+            }
+
+            Self::Readout { .. } => {}
         }
     }
 }
@@ -345,6 +377,7 @@ impl From<&ControlDefinition> for ControlState {
                 step: *step,
                 on_change: on_change.clone(),
                 draft_value: *initial_value,
+                pending: false,
             },
 
             ControlDefinition::Toggle {
@@ -358,6 +391,7 @@ impl From<&ControlDefinition> for ControlState {
                 value: *initial_value,
                 on_change: on_change.clone(),
                 draft_value: *initial_value,
+                pending: false,
             },
 
             ControlDefinition::Button {
@@ -368,6 +402,7 @@ impl From<&ControlDefinition> for ControlState {
                 id: id.clone(),
                 label: label.clone(),
                 on_click: on_click.clone(),
+                pending: false,
             },
         }
     }
@@ -390,6 +425,7 @@ impl ControlValue {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ControlValueRef<'a> {
     Text(&'a str),

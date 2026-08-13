@@ -369,12 +369,6 @@ impl CommandDispatcher {
         }
     }
 
-    pub fn remove_series(&self, id: SeriesId) {
-        if let Err(error) = self.primary_worker().remove_series(id) {
-            self.set_worker_error(error);
-        }
-    }
-
     pub fn add_series(&self, new_series: NewSeries) {
         if let Err(error) = self.primary_worker().add_series(new_series) {
             self.set_worker_error(error);

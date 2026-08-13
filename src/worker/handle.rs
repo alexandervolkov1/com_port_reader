@@ -50,10 +50,6 @@ impl WorkerHandle {
         self.sender.send(command).map_err(|_| WorkerHandleError)
     }
 
-    pub fn remove_series(&self, id: SeriesId) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::RemoveSeries(id))
-    }
-
     pub fn rename_series(
         &self,
         current_name: String,

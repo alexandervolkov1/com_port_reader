@@ -10,7 +10,7 @@ use crate::{
     data::{SeriesId, SeriesStore},
     lua_application_definition::apply_lua_definition,
     lua_application_script::{LuaApplicationEvent, LuaControlInvocation},
-    lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle},
+    lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle, LuaWorkerHandleError},
     process_recorder::{ProcessAction, ProcessActionOrigin, ProcessRecord, ProcessRecorder},
     sample_sink::NullSampleSink,
     serial_connection::SerialConnectionRegistry,
@@ -276,16 +276,11 @@ impl ApplicationRuntime {
         self.lua_worker.handle()
     }
 
-    pub(crate) fn invoke_control_callback(&self, invocation: LuaControlInvocation) {
-        let script_id = invocation.script_id().to_owned();
-        let callback = invocation.callback().to_owned();
-
-        if let Err(error) = self.lua_worker.handle().invoke_control_callback(invocation) {
-            self.log.error(format!(
-                "Failed to queue Lua callback \
-                 '{script_id}.{callback}': {error}",
-            ));
-        }
+    pub(crate) fn invoke_control_callback(
+        &self,
+        invocation: LuaControlInvocation,
+    ) -> Result<(), LuaWorkerHandleError> {
+        self.lua_worker.handle().invoke_control_callback(invocation)
     }
 
     pub(crate) fn log_error(&self, message: impl Into<String>) {

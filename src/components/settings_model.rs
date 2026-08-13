@@ -1,29 +1,19 @@
 use crate::application_runtime::ApplicationRuntime;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum SettingsValidation {
+    #[default]
     NotChecked,
     Valid,
     Invalid(String),
 }
 
-impl Default for SettingsValidation {
-    fn default() -> Self {
-        Self::NotChecked
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum SettingsReloadStatus {
+    #[default]
     NotReloaded,
     Succeeded,
     Failed(String),
-}
-
-impl Default for SettingsReloadStatus {
-    fn default() -> Self {
-        Self::NotReloaded
-    }
 }
 
 #[derive(Default)]

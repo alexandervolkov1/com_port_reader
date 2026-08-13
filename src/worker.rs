@@ -82,6 +82,7 @@ pub struct Worker {
 }
 
 impl Worker {
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         commands: WorkerHandle,
         command_receiver: Receiver<WorkerCommand>,
@@ -367,12 +368,6 @@ impl Worker {
                         };
 
                         let _ = event_sender.send(event);
-                    }
-
-                    Ok(WorkerCommand::RemoveSeries(id)) => {
-                        if series.remove_series(id) {
-                            let _ = event_sender.send(WorkerEvent::SeriesRemoved(id));
-                        }
                     }
 
                     Ok(WorkerCommand::SetVisibility { id, visible }) => {

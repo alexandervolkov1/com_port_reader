@@ -228,6 +228,7 @@ impl SeriesStore {
         })
     }
 
+    #[cfg(test)]
     pub fn remove_series(&self, id: SeriesId) -> bool {
         self.with_mut(|series| {
             let Some(index) = series.iter().position(|series| series.id == id) else {

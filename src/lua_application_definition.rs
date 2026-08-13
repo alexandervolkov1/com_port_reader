@@ -633,7 +633,6 @@ mod tests {
     use crate::{
         application_definition::{ApplicationDefinition, SerialConnectionDefinition},
         connection::ConnectionId,
-        control_panel::ControlDefinition,
         serial_connection::SerialPortConfig,
     };
 
