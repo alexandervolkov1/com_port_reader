@@ -54,7 +54,7 @@ impl MyApp {
         let startup_script_missing = startup_source.is_none() && lua_definition_warning.is_none();
 
         let requested_database_path =
-            new_process_database_path(application_paths.resolve("processes"));
+            new_process_database_path(application_paths.resolve_data("processes"));
 
         let (process_recorder, active_database_path, process_recorder_warning) =
             match SqliteProcessRecordWriter::create(&requested_database_path) {
@@ -73,8 +73,10 @@ impl MyApp {
                 ),
             };
 
-        let (log, log_handle) =
-            LogModel::new(application_paths.resolve("logs"), process_recorder.clone());
+        let (log, log_handle) = LogModel::new(
+            application_paths.resolve_data("logs"),
+            process_recorder.clone(),
+        );
 
         if let Some(path) = active_database_path {
             log_handle.info(format!("Process database: {}", path.display(),));
@@ -111,7 +113,7 @@ impl MyApp {
         let lua_console = LuaConsoleModel::new(
             runtime.lua_handle(),
             lua_event_receiver,
-            runtime.paths().resolve("lua_scripts"),
+            runtime.paths().resolve_profile("lua_scripts"),
             log_handle,
         );
 

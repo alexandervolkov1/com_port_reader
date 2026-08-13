@@ -59,7 +59,7 @@ impl ApplicationRuntime {
         let application_script_paths = definition
             .scripts()
             .iter()
-            .map(|script| paths.resolve(script.path()))
+            .map(|script| paths.resolve_profile(script.path()))
             .collect::<Vec<_>>();
 
         let lua_worker = LuaWorker::spawn(
@@ -79,12 +79,12 @@ impl ApplicationRuntime {
 
         let emulator_script_path = definition
             .emulator()
-            .map(|emulator| paths.resolve(emulator.script_path()));
+            .map(|emulator| paths.resolve_profile(emulator.script_path()));
 
         let device_emulator =
             DeviceEmulatorService::new(emulator_port, emulator_script_path, log.clone());
 
-        let recording_directory = paths.resolve("protocols");
+        let recording_directory = paths.resolve_data("protocols");
 
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
 

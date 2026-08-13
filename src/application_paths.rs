@@ -12,20 +12,23 @@ const CONFIG_OPTION: &str = "--config";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplicationPaths {
+    application_directory: PathBuf,
     startup_script: PathBuf,
-    root_directory: PathBuf,
+    profile_directory: PathBuf,
 }
 
 impl ApplicationPaths {
     pub fn discover() -> Result<Self, ApplicationPathsError> {
+        let application_directory = default_application_directory()?;
+
         let config_path = config_path_from_args(env::args_os().skip(1))?;
 
         let startup_script = match config_path {
             Some(path) => make_absolute(path)?,
-            None => default_startup_script()?,
+            None => application_directory.join(STARTUP_SCRIPT_FILE_NAME),
         };
 
-        Self::from_startup_script(startup_script)
+        Self::new(application_directory, startup_script)
     }
 
     pub fn from_startup_script(
@@ -33,62 +36,98 @@ impl ApplicationPaths {
     ) -> Result<Self, ApplicationPathsError> {
         let startup_script = make_absolute(startup_script.into())?;
 
-        let root_directory = startup_script
-            .parent()
-            .map(Path::to_path_buf)
-            .ok_or_else(|| {
-                ApplicationPathsError::new(format!(
-                    "Startup script path '{}' has no \
-                     parent directory",
-                    startup_script.display(),
-                ))
-            })?;
+        let application_directory =
+            startup_script
+                .parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| {
+                    ApplicationPathsError::new(format!(
+                        "Startup script path '{}' has no parent directory",
+                        startup_script.display(),
+                    ))
+                })?;
+
+        Self::new(application_directory, startup_script)
+    }
+
+    pub fn with_startup_script(
+        &self,
+        startup_script: impl Into<PathBuf>,
+    ) -> Result<Self, ApplicationPathsError> {
+        Self::new(self.application_directory.clone(), startup_script.into())
+    }
+
+    fn new(
+        application_directory: impl Into<PathBuf>,
+        startup_script: impl Into<PathBuf>,
+    ) -> Result<Self, ApplicationPathsError> {
+        let application_directory = make_absolute(application_directory.into())?;
+        let startup_script = make_absolute(startup_script.into())?;
+
+        let profile_directory =
+            startup_script
+                .parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| {
+                    ApplicationPathsError::new(format!(
+                        "Startup script path '{}' has no parent directory",
+                        startup_script.display(),
+                    ))
+                })?;
 
         Ok(Self {
+            application_directory,
             startup_script,
-            root_directory,
+            profile_directory,
         })
+    }
+
+    pub fn application_directory(&self) -> &Path {
+        &self.application_directory
     }
 
     pub fn startup_script(&self) -> &Path {
         &self.startup_script
     }
 
-    pub fn root_directory(&self) -> &Path {
-        &self.root_directory
+    pub fn profile_directory(&self) -> &Path {
+        &self.profile_directory
     }
 
-    pub fn resolve(&self, path: impl AsRef<Path>) -> PathBuf {
-        let path = path.as_ref();
+    pub fn resolve_profile(&self, path: impl AsRef<Path>) -> PathBuf {
+        resolve_from(&self.profile_directory, path.as_ref())
+    }
 
-        if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            self.root_directory.join(path)
-        }
+    pub fn resolve_data(&self, path: impl AsRef<Path>) -> PathBuf {
+        resolve_from(&self.application_directory, path.as_ref())
+    }
+}
+
+fn resolve_from(directory: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        directory.join(path)
     }
 }
 
 #[cfg(debug_assertions)]
-fn default_startup_script() -> Result<PathBuf, ApplicationPathsError> {
-    Ok(Path::new(env!("CARGO_MANIFEST_DIR")).join(STARTUP_SCRIPT_FILE_NAME))
+fn default_application_directory() -> Result<PathBuf, ApplicationPathsError> {
+    Ok(Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf())
 }
 
 #[cfg(not(debug_assertions))]
-fn default_startup_script() -> Result<PathBuf, ApplicationPathsError> {
+fn default_application_directory() -> Result<PathBuf, ApplicationPathsError> {
     let executable = env::current_exe().map_err(|error| {
         ApplicationPathsError::new(format!("Failed to determine executable path: {error}",))
     })?;
 
-    let executable_directory = executable.parent().ok_or_else(|| {
+    executable.parent().map(Path::to_path_buf).ok_or_else(|| {
         ApplicationPathsError::new(format!(
-            "Executable path '{}' has no parent \
-                 directory",
+            "Executable path '{}' has no parent directory",
             executable.display(),
         ))
-    })?;
-
-    Ok(executable_directory.join(STARTUP_SCRIPT_FILE_NAME))
+    })
 }
 
 fn config_path_from_args(
@@ -207,7 +246,7 @@ mod tests {
         assert_eq!(paths.startup_script(), startup_script,);
 
         assert_eq!(
-            paths.resolve("scripts/emulator/sine.lua",),
+            paths.resolve_profile("scripts/emulator/sine.lua",),
             directory.join("scripts/emulator/sine.lua"),
         );
     }
@@ -220,7 +259,7 @@ mod tests {
 
         let absolute = std::env::temp_dir().join("external/model.lua");
 
-        assert_eq!(paths.resolve(&absolute), absolute);
+        assert_eq!(paths.resolve_profile(&absolute), absolute);
     }
 
     #[test]
@@ -267,6 +306,35 @@ mod tests {
 
         let paths = ApplicationPaths::from_startup_script(directory.join("startup.lua")).unwrap();
 
-        assert_eq!(paths.root_directory(), Path::new(&directory),);
+        assert_eq!(paths.profile_directory(), Path::new(&directory),);
+    }
+
+    #[test]
+    fn preserves_application_directory_when_profile_changes() {
+        let application_directory = std::env::temp_dir().join("com_port_reader_application");
+
+        let profile_directory = std::env::temp_dir().join("com_port_reader_profile");
+
+        let paths =
+            ApplicationPaths::from_startup_script(application_directory.join("startup.lua"))
+                .unwrap();
+
+        let paths = paths
+            .with_startup_script(profile_directory.join("experiment.lua"))
+            .unwrap();
+
+        assert_eq!(paths.application_directory(), application_directory,);
+
+        assert_eq!(paths.profile_directory(), profile_directory,);
+
+        assert_eq!(
+            paths.resolve_profile("lua_scripts/process.lua"),
+            profile_directory.join("lua_scripts/process.lua"),
+        );
+
+        assert_eq!(
+            paths.resolve_data("logs"),
+            application_directory.join("logs"),
+        );
     }
 }

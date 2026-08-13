@@ -77,7 +77,11 @@ fn show_configuration_paths(ui: &mut egui::Ui, paths: &ApplicationPaths) {
             ui.end_row();
 
             ui.label("Root directory");
-            ui.monospace(paths.root_directory().display().to_string());
+            ui.monospace(paths.profile_directory().display().to_string());
+            ui.end_row();
+
+            ui.label("Application directory:");
+            ui.monospace(paths.application_directory().display().to_string());
             ui.end_row();
         });
 }
@@ -202,7 +206,12 @@ fn show_emulator(ui: &mut egui::Ui, definition: &ApplicationDefinition, paths: &
             ui.end_row();
 
             ui.label("Resolved script");
-            ui.monospace(paths.resolve(emulator.script_path()).display().to_string());
+            ui.monospace(
+                paths
+                    .resolve_profile(emulator.script_path())
+                    .display()
+                    .to_string(),
+            );
             ui.end_row();
         });
 }
