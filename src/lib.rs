@@ -12,6 +12,7 @@ pub mod device_emulator_handle;
 pub mod instrument;
 mod lua_api;
 pub mod lua_application_definition;
+mod lua_application_script;
 mod lua_execution;
 pub mod lua_runtime;
 mod lua_virtual_instrument_model;

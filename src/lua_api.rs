@@ -107,6 +107,8 @@ pub fn install(
 
     register_send_serial(lua, &app, command_sender, application_definition.clone())?;
 
+    crate::lua_application_script::install(lua, &app)?;
+
     lua.globals().set("app", app)
 }
 
