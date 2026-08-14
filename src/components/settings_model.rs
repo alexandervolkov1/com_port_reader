@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use crate::application_runtime::ApplicationRuntime;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -19,6 +21,7 @@ pub enum SettingsReloadStatus {
 #[derive(Default)]
 pub struct SettingsModel {
     open: bool,
+    selected_profile: Option<PathBuf>,
     validation: SettingsValidation,
     open_error: Option<String>,
     reload_confirmation_open: bool,
@@ -39,14 +42,35 @@ impl SettingsModel {
         self.open = open;
     }
 
+    pub fn selected_profile(&self) -> Option<&Path> {
+        self.selected_profile.as_deref()
+    }
+
+    pub fn select_profile(&mut self, path: PathBuf) {
+        self.selected_profile = Some(path);
+        self.validation = SettingsValidation::NotChecked;
+        self.reload_status = SettingsReloadStatus::NotReloaded;
+        self.open_error = None;
+    }
+
+    pub fn clear_selected_profile(&mut self) {
+        self.selected_profile = None;
+        self.validation = SettingsValidation::NotChecked;
+        self.reload_status = SettingsReloadStatus::NotReloaded;
+    }
+
     pub const fn validation(&self) -> &SettingsValidation {
         &self.validation
     }
 
     pub fn validate(&mut self, runtime: &ApplicationRuntime) {
-        self.validation = match runtime.validate_startup_configuration() {
-            Ok(()) => SettingsValidation::Valid,
+        let result = match self.selected_profile() {
+            Some(path) => runtime.validate_profile_configuration(path),
+            None => runtime.validate_startup_configuration(),
+        };
 
+        self.validation = match result {
+            Ok(()) => SettingsValidation::Valid,
             Err(error) => SettingsValidation::Invalid(error),
         };
     }

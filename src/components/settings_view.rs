@@ -1,6 +1,6 @@
-use std::time::Duration;
-
 use eframe::egui;
+use rfd::FileDialog;
+use std::time::Duration;
 
 use crate::{
     application_definition::ApplicationDefinition,
@@ -222,38 +222,73 @@ fn format_duration(duration: Duration) -> String {
 
 fn show_validation(ui: &mut egui::Ui, model: &mut SettingsModel, runtime: &ApplicationRuntime) {
     ui.horizontal(|ui| {
-        if ui.button("Open startup.lua").clicked() {
-            model.open_startup_file(runtime);
+        if ui.button("Select profile...").clicked()
+            && let Some(path) = FileDialog::new()
+                .add_filter("Lua profile", &["lua"])
+                .set_directory(runtime.paths().profile_directory())
+                .pick_file()
+        {
+            model.select_profile(path);
         }
 
-        if ui.button("Validate startup.lua").clicked() {
+        if ui.button("Open active profile").clicked() {
+            model.open_startup_file(runtime);
+        }
+    });
+
+    if let Some(path) = model.selected_profile() {
+        let path_text = path.display().to_string();
+
+        ui.add_space(6.0);
+
+        ui.horizontal(|ui| {
+            ui.label("Selected profile:");
+
+            ui.monospace(path_text);
+
+            if ui.small_button("Clear selection").clicked() {
+                model.clear_selected_profile();
+            }
+        });
+    }
+
+    ui.add_space(6.0);
+
+    ui.horizontal(|ui| {
+        let validation_button = if model.selected_profile().is_some() {
+            "Validate selected profile"
+        } else {
+            "Validate active profile"
+        };
+
+        if ui.button(validation_button).clicked() {
             model.validate(runtime);
         }
 
-        if ui.button("Reload startup.lua").clicked() {
+        if ui.button("Reload active profile").clicked() {
             model.begin_reload_confirmation();
         }
-
-        match model.validation() {
-            SettingsValidation::NotChecked => {
-                ui.weak("Configuration has not been checked.");
-            }
-
-            SettingsValidation::Valid => {
-                ui.colored_label(
-                    egui::Color32::from_rgb(0, 140, 0),
-                    "Configuration is valid.",
-                );
-            }
-
-            SettingsValidation::Invalid(_) => {
-                ui.colored_label(
-                    egui::Color32::from_rgb(190, 30, 30),
-                    "Configuration is invalid.",
-                );
-            }
-        }
     });
+
+    match model.validation() {
+        SettingsValidation::NotChecked => {
+            ui.weak("Configuration has not been checked.");
+        }
+
+        SettingsValidation::Valid => {
+            ui.colored_label(
+                egui::Color32::from_rgb(0, 140, 0),
+                "Configuration is valid.",
+            );
+        }
+
+        SettingsValidation::Invalid(_) => {
+            ui.colored_label(
+                egui::Color32::from_rgb(190, 30, 30),
+                "Configuration is invalid.",
+            );
+        }
+    }
 
     if model.reload_confirmation_open() {
         ui.add_space(8.0);

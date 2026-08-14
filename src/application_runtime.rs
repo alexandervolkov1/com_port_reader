@@ -300,7 +300,19 @@ impl ApplicationRuntime {
     }
 
     pub(crate) fn validate_startup_configuration(&self) -> Result<(), String> {
-        self.load_startup_configuration().map(|_| ())
+        Self::load_startup_configuration(&self.paths).map(|_| ())
+    }
+
+    pub(crate) fn validate_profile_configuration(
+        &self,
+        startup_script: &Path,
+    ) -> Result<(), String> {
+        let paths = self
+            .paths
+            .with_startup_script(startup_script)
+            .map_err(|error| error.to_string())?;
+
+        Self::load_startup_configuration(&paths).map(|_| ())
     }
 
     pub(crate) fn open_startup_configuration(&self) -> Result<(), String> {
@@ -361,7 +373,7 @@ impl ApplicationRuntime {
                 .to_owned());
         }
 
-        let (definition, source) = self.load_startup_configuration()?;
+        let (definition, source) = Self::load_startup_configuration(&self.paths)?;
 
         Self::build(
             definition,
@@ -379,22 +391,19 @@ impl ApplicationRuntime {
         })
     }
 
-    fn load_startup_configuration(&self) -> Result<(ApplicationDefinition, String), String> {
-        let path = self.paths.startup_script();
+    fn load_startup_configuration(
+        paths: &ApplicationPaths,
+    ) -> Result<(ApplicationDefinition, String), String> {
+        let path = paths.startup_script();
 
         let source = fs::read_to_string(path).map_err(|error| {
-            format!(
-                "Failed to read startup file '{}': \
-                     {error}",
-                path.display(),
-            )
+            format!("Failed to read startup file '{}': {error}", path.display(),)
         })?;
 
         let definition =
             apply_lua_definition(&source, &ApplicationDefinition::default()).map_err(|error| {
                 format!(
-                    "Failed to validate startup file \
-                 '{}': {error}",
+                    "Failed to validate startup file '{}': {error}",
                     path.display(),
                 )
             })?;
