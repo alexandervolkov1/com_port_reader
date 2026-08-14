@@ -398,21 +398,50 @@ impl ApplicationRuntime {
     }
 
     pub(crate) fn rebuild_from_startup(&self) -> Result<(Self, Receiver<LuaEvent>), String> {
-        let result = self.try_rebuild_from_startup();
+        self.rebuild_from_paths(self.paths.clone())
+    }
+
+    pub(crate) fn rebuild_from_profile(
+        &self,
+        startup_script: &Path,
+    ) -> Result<(Self, Receiver<LuaEvent>), String> {
+        let paths = self
+            .paths
+            .with_startup_script(startup_script)
+            .map_err(|error| {
+                let message = format!(
+                    "Failed to select Lua profile '{}': {error}",
+                    startup_script.display(),
+                );
+
+                self.log.error(message.clone());
+
+                message
+            })?;
+
+        self.rebuild_from_paths(paths)
+    }
+
+    fn rebuild_from_paths(
+        &self,
+        paths: ApplicationPaths,
+    ) -> Result<(Self, Receiver<LuaEvent>), String> {
+        let startup_path = paths.startup_script().to_path_buf();
+
+        let result = self.try_rebuild_from_paths(paths);
 
         match &result {
             Ok(_) => {
                 self.log.info(format!(
-                    "Application runtime reloaded \
-                     from '{}'.",
-                    self.paths.startup_script().display(),
+                    "Application profile loaded from '{}'.",
+                    startup_path.display(),
                 ));
             }
 
             Err(error) => {
                 self.log.error(format!(
-                    "Failed to reload application \
-                     runtime: {error}",
+                    "Failed to load application profile '{}': {error}",
+                    startup_path.display(),
                 ));
             }
         }
@@ -420,40 +449,33 @@ impl ApplicationRuntime {
         result
     }
 
-    fn try_rebuild_from_startup(&self) -> Result<(Self, Receiver<LuaEvent>), String> {
+    fn try_rebuild_from_paths(
+        &self,
+        paths: ApplicationPaths,
+    ) -> Result<(Self, Receiver<LuaEvent>), String> {
         if self.is_recording() {
-            return Err("Stop recording before reloading \
-                 startup.lua."
-                .to_owned());
+            return Err("Stop recording before loading an application profile.".to_owned());
         }
 
         if self.is_running() {
-            return Err("Stop acquisition before reloading \
-                 startup.lua."
-                .to_owned());
+            return Err("Stop acquisition before loading an application profile.".to_owned());
         }
 
         if self.device_emulator.is_running() {
-            return Err("Stop the device emulator before \
-                 reloading startup.lua."
-                .to_owned());
+            return Err(
+                "Stop the device emulator before loading an application profile.".to_owned(),
+            );
         }
 
-        let (definition, source) = Self::load_startup_configuration(&self.paths)?;
+        let (definition, source) = Self::load_startup_configuration(&paths)?;
 
         Self::build_initialized(
             definition,
             self.log.clone(),
             self.process_recorder.clone(),
-            self.paths.clone(),
+            paths,
             Some(source),
         )
-        .map_err(|error| {
-            format!(
-                "Failed to build application runtime from '{}': {error}",
-                self.paths.startup_script().display(),
-            )
-        })
     }
 
     fn load_startup_configuration(

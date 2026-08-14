@@ -304,7 +304,12 @@ impl LuaConsoleModel {
         &self.script_directory
     }
 
-    pub fn replace_worker(&mut self, worker: LuaWorkerHandle, event_receiver: Receiver<LuaEvent>) {
+    pub fn replace_worker(
+        &mut self,
+        worker: LuaWorkerHandle,
+        event_receiver: Receiver<LuaEvent>,
+        script_directory: impl Into<PathBuf>,
+    ) {
         debug_assert!(
             self.pending.is_none(),
             "pending Lua execution must finish before \
@@ -313,6 +318,7 @@ impl LuaConsoleModel {
 
         self.worker = worker;
         self.event_receiver = event_receiver;
+        self.script_directory = script_directory.into();
         self.pending = None;
         self.disconnected = false;
         self.focus_requested = true;

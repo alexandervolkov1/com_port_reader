@@ -290,6 +290,52 @@ fn show_validation(ui: &mut egui::Ui, model: &mut SettingsModel, runtime: &Appli
         }
     }
 
+    if model.selected_profile().is_some() {
+        ui.add_space(8.0);
+
+        let load_button = ui.add_enabled(
+            model.can_load_selected_profile(),
+            egui::Button::new("Load selected profile"),
+        );
+
+        if load_button.clicked() {
+            model.begin_profile_load_confirmation();
+        }
+
+        if !model.can_load_selected_profile() {
+            ui.weak("Validate the selected profile before loading it.");
+        }
+    }
+
+    if model.profile_load_confirmation_open() {
+        let selected_path = model
+            .selected_profile()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+
+        ui.add_space(8.0);
+
+        ui.group(|ui| {
+            ui.colored_label(
+                egui::Color32::from_rgb(190, 130, 0),
+                "Loading another profile will clear all current \
+                 series and plot history.",
+            );
+
+            ui.monospace(selected_path);
+
+            ui.horizontal(|ui| {
+                if ui.button("Load profile").clicked() {
+                    model.confirm_profile_load();
+                }
+
+                if ui.button("Cancel").clicked() {
+                    model.cancel_profile_load();
+                }
+            });
+        });
+    }
+
     if model.reload_confirmation_open() {
         ui.add_space(8.0);
 
@@ -320,7 +366,7 @@ fn show_validation(ui: &mut egui::Ui, model: &mut SettingsModel, runtime: &Appli
 
             ui.colored_label(
                 egui::Color32::from_rgb(0, 140, 0),
-                "Configuration reloaded successfully.",
+                "Application profile loaded successfully.",
             );
         }
 

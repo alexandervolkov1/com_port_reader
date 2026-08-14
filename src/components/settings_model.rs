@@ -27,6 +27,8 @@ pub struct SettingsModel {
     reload_confirmation_open: bool,
     reload_requested: bool,
     reload_status: SettingsReloadStatus,
+    profile_load_confirmation_open: bool,
+    profile_load_requested: bool,
 }
 
 impl SettingsModel {
@@ -51,12 +53,16 @@ impl SettingsModel {
         self.validation = SettingsValidation::NotChecked;
         self.reload_status = SettingsReloadStatus::NotReloaded;
         self.open_error = None;
+        self.profile_load_confirmation_open = false;
+        self.profile_load_requested = false;
     }
 
     pub fn clear_selected_profile(&mut self) {
         self.selected_profile = None;
         self.validation = SettingsValidation::NotChecked;
         self.reload_status = SettingsReloadStatus::NotReloaded;
+        self.profile_load_confirmation_open = false;
+        self.profile_load_requested = false;
     }
 
     pub const fn validation(&self) -> &SettingsValidation {
@@ -111,6 +117,52 @@ impl SettingsModel {
     pub fn set_reload_result(&mut self, result: Result<(), String>) {
         self.reload_status = match result {
             Ok(()) => {
+                self.validation = SettingsValidation::Valid;
+
+                SettingsReloadStatus::Succeeded
+            }
+
+            Err(error) => SettingsReloadStatus::Failed(error),
+        };
+    }
+
+    pub const fn can_load_selected_profile(&self) -> bool {
+        self.selected_profile.is_some() && matches!(self.validation, SettingsValidation::Valid)
+    }
+
+    pub const fn profile_load_confirmation_open(&self) -> bool {
+        self.profile_load_confirmation_open
+    }
+
+    pub fn begin_profile_load_confirmation(&mut self) {
+        if self.can_load_selected_profile() {
+            self.profile_load_confirmation_open = true;
+        }
+    }
+
+    pub fn cancel_profile_load(&mut self) {
+        self.profile_load_confirmation_open = false;
+    }
+
+    pub fn confirm_profile_load(&mut self) {
+        if self.selected_profile.is_some() {
+            self.profile_load_confirmation_open = false;
+            self.profile_load_requested = true;
+        }
+    }
+
+    pub fn take_profile_load_request(&mut self) -> Option<PathBuf> {
+        if !std::mem::take(&mut self.profile_load_requested) {
+            return None;
+        }
+
+        self.selected_profile.clone()
+    }
+
+    pub fn set_profile_load_result(&mut self, result: Result<(), String>) {
+        self.reload_status = match result {
+            Ok(()) => {
+                self.selected_profile = None;
                 self.validation = SettingsValidation::Valid;
 
                 SettingsReloadStatus::Succeeded

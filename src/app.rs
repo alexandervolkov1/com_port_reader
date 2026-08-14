@@ -1,5 +1,6 @@
 use eframe::egui;
 use egui_extras::{Size, StripBuilder};
+use std::path::Path;
 
 use crate::{
     app_log::LogModel,
@@ -20,6 +21,7 @@ use crate::{
     },
     lua_application_definition::load_lua_definition_or_base,
     lua_application_script::{LuaApplicationEvent, LuaControlValue},
+    lua_worker::LuaEvent,
     process_recorder::{
         NullProcessRecordWriter, ProcessRecorder, SqliteProcessRecordWriter,
         new_process_database_path,
@@ -134,21 +136,27 @@ impl MyApp {
     fn reload_runtime(&mut self) -> Result<(), String> {
         if self.lua_console.is_pending() {
             return Err("Wait for the current Lua command to finish \
-                 before reloading startup.lua."
+                 before reloading the active profile."
                 .to_owned());
         }
 
         let (runtime, lua_event_receiver) = self.runtime.rebuild_from_startup()?;
 
-        self.lua_console
-            .replace_worker(runtime.lua_handle(), lua_event_receiver);
+        self.replace_runtime(runtime, lua_event_receiver);
 
-        self.runtime = runtime;
+        Ok(())
+    }
 
-        self.control_panels.clear();
-        self.control_panel_open = false;
+    fn load_profile(&mut self, path: &Path) -> Result<(), String> {
+        if self.lua_console.is_pending() {
+            return Err("Wait for the current Lua command to finish \
+                 before loading another profile."
+                .to_owned());
+        }
 
-        self.plot = PlotModel::new();
+        let (runtime, lua_event_receiver) = self.runtime.rebuild_from_profile(path)?;
+
+        self.replace_runtime(runtime, lua_event_receiver);
 
         Ok(())
     }
@@ -240,6 +248,23 @@ impl MyApp {
         if self.control_panels.panels().is_empty() {
             self.control_panel_open = false;
         }
+    }
+
+    fn replace_runtime(
+        &mut self,
+        runtime: ApplicationRuntime,
+        lua_event_receiver: crossbeam_channel::Receiver<LuaEvent>,
+    ) {
+        let script_directory = runtime.paths().resolve_profile("lua_scripts");
+
+        self.lua_console
+            .replace_worker(runtime.lua_handle(), lua_event_receiver, script_directory);
+
+        self.runtime = runtime;
+
+        self.control_panels.clear();
+        self.control_panel_open = false;
+        self.plot = PlotModel::new();
     }
 }
 
@@ -389,7 +414,11 @@ impl eframe::App for MyApp {
 
         settings_view::show_window(ui.ctx(), &mut self.settings, &self.runtime);
 
-        if self.settings.take_reload_request() {
+        if let Some(path) = self.settings.take_profile_load_request() {
+            let result = self.load_profile(&path);
+
+            self.settings.set_profile_load_result(result);
+        } else if self.settings.take_reload_request() {
             let result = self.reload_runtime();
 
             self.settings.set_reload_result(result);
