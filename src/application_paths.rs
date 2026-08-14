@@ -2,12 +2,13 @@ use std::{
     env,
     error::Error,
     ffi::{OsStr, OsString},
-    fmt,
+    fmt, fs, io,
     path::{Path, PathBuf},
 };
 
 pub const STARTUP_SCRIPT_FILE_NAME: &str = "startup.lua";
-
+pub const ACTIVE_PROFILE_FILE_NAME: &str = "active-profile.txt";
+const APPLICATION_STATE_DIRECTORY: &str = "state";
 const CONFIG_OPTION: &str = "--config";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -25,7 +26,9 @@ impl ApplicationPaths {
 
         let startup_script = match config_path {
             Some(path) => make_absolute(path)?,
-            None => application_directory.join(STARTUP_SCRIPT_FILE_NAME),
+
+            None => remembered_startup_script(&application_directory)
+                .unwrap_or_else(|| application_directory.join(STARTUP_SCRIPT_FILE_NAME)),
         };
 
         Self::new(application_directory, startup_script)
@@ -101,6 +104,44 @@ impl ApplicationPaths {
     pub fn resolve_data(&self, path: impl AsRef<Path>) -> PathBuf {
         resolve_from(&self.application_directory, path.as_ref())
     }
+
+    pub fn remember_active_profile(&self) -> io::Result<()> {
+        let state_directory = self.application_directory.join(APPLICATION_STATE_DIRECTORY);
+
+        fs::create_dir_all(&state_directory)?;
+
+        let state_file = state_directory.join(ACTIVE_PROFILE_FILE_NAME);
+
+        fs::write(state_file, format!("{}\n", self.startup_script.display()))
+    }
+}
+
+fn active_profile_state_path(application_directory: &Path) -> PathBuf {
+    application_directory
+        .join(APPLICATION_STATE_DIRECTORY)
+        .join(ACTIVE_PROFILE_FILE_NAME)
+}
+
+fn remembered_startup_script(application_directory: &Path) -> Option<PathBuf> {
+    let state_file = active_profile_state_path(application_directory);
+
+    let source = fs::read_to_string(state_file).ok()?;
+
+    let value = source.trim();
+
+    if value.is_empty() {
+        return None;
+    }
+
+    let path = PathBuf::from(value);
+
+    let path = if path.is_absolute() {
+        path
+    } else {
+        application_directory.join(path)
+    };
+
+    path.is_file().then_some(path)
 }
 
 fn resolve_from(directory: &Path, path: &Path) -> PathBuf {
@@ -230,10 +271,12 @@ impl Error for ApplicationPathsError {}
 mod tests {
     use std::{
         ffi::OsString,
+        fs,
         path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
     };
 
-    use super::{ApplicationPaths, config_path_from_args};
+    use super::{ApplicationPaths, config_path_from_args, remembered_startup_script};
 
     #[test]
     fn resolves_relative_path_from_startup_directory() {
@@ -336,5 +379,69 @@ mod tests {
             paths.resolve_data("logs"),
             application_directory.join("logs"),
         );
+    }
+
+    #[test]
+    fn remembers_active_profile() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+
+        let application_directory = std::env::temp_dir().join(format!(
+            "com_port_reader_profile_state_{}_{}",
+            std::process::id(),
+            unique,
+        ));
+
+        let profile_directory = application_directory.join("profiles");
+
+        fs::create_dir_all(&profile_directory).unwrap();
+
+        let startup_script = profile_directory.join("experiment.lua");
+
+        fs::write(&startup_script, "return {}").unwrap();
+
+        let paths = ApplicationPaths::new(&application_directory, &startup_script).unwrap();
+
+        paths.remember_active_profile().unwrap();
+
+        assert_eq!(
+            remembered_startup_script(&application_directory,),
+            Some(startup_script),
+        );
+
+        let _ = fs::remove_dir_all(application_directory);
+    }
+
+    #[test]
+    fn ignores_missing_remembered_profile() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+
+        let application_directory = std::env::temp_dir().join(format!(
+            "com_port_reader_missing_profile_{}_{}",
+            std::process::id(),
+            unique,
+        ));
+
+        let state_directory = application_directory.join("state");
+
+        fs::create_dir_all(&state_directory).unwrap();
+
+        fs::write(
+            state_directory.join("active-profile.txt"),
+            application_directory
+                .join("missing.lua")
+                .display()
+                .to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(remembered_startup_script(&application_directory,), None,);
+
+        let _ = fs::remove_dir_all(application_directory);
     }
 }

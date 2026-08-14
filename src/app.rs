@@ -156,6 +156,14 @@ impl MyApp {
 
         let (runtime, lua_event_receiver) = self.runtime.rebuild_from_profile(path)?;
 
+        if let Err(error) = runtime.paths().remember_active_profile() {
+            runtime.log_error(format!(
+                "Profile was loaded, but its path could not \
+                 be saved for the next application launch: \
+                 {error}",
+            ));
+        }
+
         self.replace_runtime(runtime, lua_event_receiver);
 
         Ok(())
