@@ -2,6 +2,42 @@
 -- Eight virtual sine generators.
 -- Phase step: 45 degrees = pi / 4.
 
+local base_amplitudes = {
+    100.0,
+    90.0,
+    80.0,
+    70.0,
+    70.0,
+    80.0,
+    90.0,
+    100.0,
+}
+
+local amplitude_multiplier =
+    rawget(
+        _G,
+        "SINE_BRAID_AMPLITUDE_MULTIPLIER"
+    ) or 1.0
+
+if type(amplitude_multiplier) ~= "number"
+    or amplitude_multiplier ~= amplitude_multiplier
+    or amplitude_multiplier == math.huge
+    or amplitude_multiplier == -math.huge
+    or amplitude_multiplier <= 0.0
+then
+    error(
+        "SINE_BRAID_AMPLITUDE_MULTIPLIER "
+            .. "must be a positive finite number"
+    )
+end
+
+local amplitudes = {}
+
+for index, amplitude in ipairs(base_amplitudes) do
+    amplitudes[index] =
+        amplitude * amplitude_multiplier
+end
+
 local script = {
     id = "sine_braid",
 
@@ -37,7 +73,7 @@ local script = {
                     kind = "number",
                     id = "amplitude_1",
                     label = "Amplitude 1",
-                    initial = 100.0,
+                    initial = amplitudes[1],
                     min = 0.0,
                     max = 1000000.0,
                     step = 1.0,
@@ -48,7 +84,7 @@ local script = {
                     kind = "number",
                     id = "amplitude_2",
                     label = "Amplitude 2",
-                    initial = 90.0,
+                    initial = amplitudes[2],
                     min = 0.0,
                     max = 1000000.0,
                     step = 1.0,
@@ -59,7 +95,7 @@ local script = {
                     kind = "number",
                     id = "amplitude_3",
                     label = "Amplitude 3",
-                    initial = 80.0,
+                    initial = amplitudes[3],
                     min = 0.0,
                     max = 1000000.0,
                     step = 1.0,
@@ -70,7 +106,7 @@ local script = {
                     kind = "number",
                     id = "amplitude_4",
                     label = "Amplitude 4",
-                    initial = 70.0,
+                    initial = amplitudes[4],
                     min = 0.0,
                     max = 1000000.0,
                     step = 1.0,
@@ -81,7 +117,7 @@ local script = {
                     kind = "number",
                     id = "amplitude_5",
                     label = "Amplitude 5",
-                    initial = 70.0,
+                    initial = amplitudes[5],
                     min = 0.0,
                     max = 1000000.0,
                     step = 1.0,
@@ -92,7 +128,7 @@ local script = {
                     kind = "number",
                     id = "amplitude_6",
                     label = "Amplitude 6",
-                    initial = 80.0,
+                    initial = amplitudes[6],
                     min = 0.0,
                     max = 1000000.0,
                     step = 1.0,
@@ -103,7 +139,7 @@ local script = {
                     kind = "number",
                     id = "amplitude_7",
                     label = "Amplitude 7",
-                    initial = 90.0,
+                    initial = amplitudes[7],
                     min = 0.0,
                     max = 1000000.0,
                     step = 1.0,
@@ -114,7 +150,7 @@ local script = {
                     kind = "number",
                     id = "amplitude_8",
                     label = "Amplitude 8",
-                    initial = 100.0,
+                    initial = amplitudes[8],
                     min = 0.0,
                     max = 1000000.0,
                     step = 1.0,
@@ -137,17 +173,6 @@ local script = {
             },
         },
     },
-}
-
-local amplitudes = {
-    100.0,
-    90.0,
-    80.0,
-    70.0,
-    70.0,
-    80.0,
-    90.0,
-    100.0,
 }
 
 local period = 300.0
@@ -322,6 +347,6 @@ end
 -- leave a non-working panel in the application.
 script.run()
 
--- Registration makes the panel appear in the GUI
+-- Registration makes the panel available in the GUI
 -- and keeps this table alive in the Lua runtime.
 app.register_script(script)

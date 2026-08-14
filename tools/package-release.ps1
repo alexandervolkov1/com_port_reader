@@ -50,7 +50,8 @@ $requiredPaths = @(
     "startup.lua",
     "lua_scripts",
     "emulator_scripts",
-    "lua_types"
+    "lua_types",
+    "profiles"
 )
 
 foreach ($relativePath in $requiredPaths) {
@@ -108,6 +109,11 @@ Copy-Item `
 
 Copy-Item `
     (Join-Path $projectRoot "lua_types") `
+    $packageDirectory `
+    -Recurse
+
+Copy-Item `
+    (Join-Path $projectRoot "profiles") `
     $packageDirectory `
     -Recurse
 
