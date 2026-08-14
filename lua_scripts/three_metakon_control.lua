@@ -3,8 +3,8 @@ local PANEL_ID = "controllers"
 local POLL_INTERVAL = 1.0
 
 local addresses = {
-    3,
-    4,
+    1,
+    2,
     5,
 }
 
