@@ -23,9 +23,10 @@ enum LuaCommand {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LuaEvent {
+    InitializationSucceeded,
+    InitializationFailed(String),
     ExecutionSucceeded(Vec<String>),
     ExecutionFailed(String),
-    InitializationFailed(String),
 }
 
 #[derive(Clone)]
@@ -178,6 +179,13 @@ fn run_lua_worker(
         }
     }
 
+    if event_sender
+        .send(LuaEvent::InitializationSucceeded)
+        .is_err()
+    {
+        return;
+    }
+
     while let Ok(command) = command_receiver.recv() {
         match command {
             LuaCommand::Execute(source) => {
@@ -242,10 +250,15 @@ mod tests {
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
-    fn spawn_worker(event_sender: Sender<LuaEvent>) -> LuaWorker {
+    fn spawn_worker(
+        event_sender: Sender<LuaEvent>,
+        event_receiver: &Receiver<LuaEvent>,
+    ) -> LuaWorker {
         let (application_command_sender, _application_command_receiver) = unbounded();
+
         let (application_event_sender, _) = unbounded();
-        LuaWorker::spawn(
+
+        let worker = LuaWorker::spawn(
             event_sender,
             application_command_sender,
             application_event_sender,
@@ -253,18 +266,26 @@ mod tests {
             None,
             Vec::new(),
         )
-        .unwrap()
+        .unwrap();
+
+        assert_initialized(event_receiver);
+
+        worker
     }
 
     fn receive_event(receiver: &Receiver<LuaEvent>) -> LuaEvent {
         receiver.recv_timeout(TEST_TIMEOUT).unwrap()
     }
 
+    fn assert_initialized(receiver: &Receiver<LuaEvent>) {
+        assert_eq!(receive_event(receiver), LuaEvent::InitializationSucceeded,);
+    }
+
     #[test]
     fn executes_code_on_worker_thread() {
         let (event_sender, event_receiver) = unbounded();
 
-        let worker = spawn_worker(event_sender);
+        let worker = spawn_worker(event_sender, &event_receiver);
 
         worker.handle().execute("value = 42").unwrap();
 
@@ -278,7 +299,7 @@ mod tests {
     fn preserves_state_between_commands() {
         let (event_sender, event_receiver) = unbounded();
 
-        let worker = spawn_worker(event_sender);
+        let worker = spawn_worker(event_sender, &event_receiver);
 
         let handle = worker.handle();
 
@@ -301,7 +322,7 @@ mod tests {
     fn returns_multiple_values() {
         let (event_sender, event_receiver) = unbounded();
 
-        let worker = spawn_worker(event_sender);
+        let worker = spawn_worker(event_sender, &event_receiver);
 
         worker.handle().execute("return 42, true, 'hello'").unwrap();
 
@@ -319,7 +340,7 @@ mod tests {
     fn reports_execution_error() {
         let (event_sender, event_receiver) = unbounded();
 
-        let worker = spawn_worker(event_sender);
+        let worker = spawn_worker(event_sender, &event_receiver);
 
         worker.handle().execute("error('test failure')").unwrap();
 
@@ -348,6 +369,8 @@ mod tests {
             Vec::new(),
         )
         .unwrap();
+
+        assert_initialized(&event_receiver);
 
         worker.handle().execute("app.start()").unwrap();
 

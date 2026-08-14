@@ -221,32 +221,37 @@ impl LuaConsoleModel {
     }
 
     fn handle_event(&mut self, event: LuaEvent) {
-        let pending = self.pending.take();
-
-        self.focus_requested = matches!(&pending, Some(PendingExecution::Console { .. },),);
-
         match event {
-            LuaEvent::ExecutionSucceeded(output) => {
-                self.handle_success(pending, output);
-            }
-
-            LuaEvent::ExecutionFailed(error) => {
-                self.handle_failure(pending, error);
+            LuaEvent::InitializationSucceeded => {
+                self.disconnected = false;
             }
 
             LuaEvent::InitializationFailed(error) => {
                 self.disconnected = true;
                 self.focus_requested = true;
 
-                let message = format!(
-                    "Failed to initialize Lua \
-                     runtime: {error}",
-                );
+                let message = format!("Failed to initialize Lua runtime: {error}",);
 
                 self.transcript
                     .push(LuaTranscriptEntry::Error(message.clone()));
 
                 self.log.error(message);
+            }
+
+            LuaEvent::ExecutionSucceeded(output) => {
+                let pending = self.pending.take();
+
+                self.focus_requested = matches!(&pending, Some(PendingExecution::Console { .. }),);
+
+                self.handle_success(pending, output);
+            }
+
+            LuaEvent::ExecutionFailed(error) => {
+                let pending = self.pending.take();
+
+                self.focus_requested = matches!(&pending, Some(PendingExecution::Console { .. }),);
+
+                self.handle_failure(pending, error);
             }
         }
     }

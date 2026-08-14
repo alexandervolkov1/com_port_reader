@@ -1,6 +1,9 @@
-use std::{fs, path::Path, time::SystemTime};
-
-use crossbeam_channel::{Receiver, unbounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, unbounded};
+use std::{
+    fs,
+    path::Path,
+    time::{Duration, Instant, SystemTime},
+};
 
 use crate::{
     app_log::LogHandle,
@@ -25,6 +28,9 @@ mod device_emulator_service;
 pub(crate) use acquisition_controller::{AcquisitionController, RecordingTransition};
 pub(crate) use command_dispatcher::CommandDispatcher;
 pub(crate) use device_emulator_service::DeviceEmulatorService;
+
+const LUA_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(10);
+const LUA_INITIALIZATION_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 pub struct ApplicationRuntime {
     lua_worker: LuaWorker,
@@ -180,6 +186,66 @@ impl ApplicationRuntime {
         );
 
         Ok((runtime, lua_event_receiver))
+    }
+
+    fn build_initialized(
+        definition: ApplicationDefinition,
+        log: LogHandle,
+        process_recorder: ProcessRecorder,
+        paths: ApplicationPaths,
+        startup_source: Option<String>,
+    ) -> Result<(Self, Receiver<LuaEvent>), String> {
+        let (mut runtime, lua_event_receiver) =
+            Self::build(definition, log, process_recorder, paths, startup_source)
+                .map_err(|error| format!("Failed to spawn application runtime: {error}"))?;
+
+        runtime.wait_for_lua_initialization(&lua_event_receiver)?;
+
+        Ok((runtime, lua_event_receiver))
+    }
+
+    fn wait_for_lua_initialization(
+        &mut self,
+        lua_event_receiver: &Receiver<LuaEvent>,
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + LUA_INITIALIZATION_TIMEOUT;
+
+        loop {
+            self.poll();
+
+            let now = Instant::now();
+
+            if now >= deadline {
+                return Err(format!(
+                    "Lua runtime initialization timed out after {:.1} s",
+                    LUA_INITIALIZATION_TIMEOUT.as_secs_f64(),
+                ));
+            }
+
+            let timeout = (deadline - now).min(LUA_INITIALIZATION_POLL_INTERVAL);
+
+            match lua_event_receiver.recv_timeout(timeout) {
+                Ok(LuaEvent::InitializationSucceeded) => {
+                    return Ok(());
+                }
+
+                Ok(LuaEvent::InitializationFailed(error)) => {
+                    return Err(error);
+                }
+
+                Ok(LuaEvent::ExecutionSucceeded(_)) | Ok(LuaEvent::ExecutionFailed(_)) => {
+                    return Err("Lua runtime produced an execution event \
+                         before initialization completed"
+                        .to_owned());
+                }
+
+                Err(RecvTimeoutError::Timeout) => {}
+
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err("Lua worker disconnected during initialization".to_owned());
+                }
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -375,7 +441,7 @@ impl ApplicationRuntime {
 
         let (definition, source) = Self::load_startup_configuration(&self.paths)?;
 
-        Self::build(
+        Self::build_initialized(
             definition,
             self.log.clone(),
             self.process_recorder.clone(),
@@ -384,8 +450,7 @@ impl ApplicationRuntime {
         )
         .map_err(|error| {
             format!(
-                "Failed to build application runtime \
-                 from '{}': {error}",
+                "Failed to build application runtime from '{}': {error}",
                 self.paths.startup_script().display(),
             )
         })
