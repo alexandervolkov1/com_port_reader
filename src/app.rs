@@ -167,13 +167,7 @@ impl MyApp {
         for event in events {
             match event {
                 LuaApplicationEvent::ScriptRegistered { script_id, panels } => {
-                    let has_panels = !panels.is_empty();
-
                     self.control_panels.register_script(&script_id, &panels);
-
-                    if has_panels {
-                        self.control_panel_open = true;
-                    }
                 }
 
                 LuaApplicationEvent::ScriptUnregistered { script_id } => {
