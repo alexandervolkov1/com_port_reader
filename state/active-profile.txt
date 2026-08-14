@@ -1,1 +1,1 @@
-D:\rust_projects\com_port_reader\profiles\sine_braid_double.lua
+D:\rust_projects\com_port_reader\startup.lua

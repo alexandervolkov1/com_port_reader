@@ -2,6 +2,7 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, unbounded};
 use std::{
     fs,
     path::Path,
+    thread,
     time::{Duration, Instant, SystemTime},
 };
 
@@ -31,6 +32,8 @@ pub(crate) use device_emulator_service::DeviceEmulatorService;
 
 const LUA_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(10);
 const LUA_INITIALIZATION_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const RUNTIME_STOP_TIMEOUT: Duration = Duration::from_secs(10);
+const RUNTIME_STOP_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 pub struct ApplicationRuntime {
     lua_worker: LuaWorker,
@@ -397,12 +400,95 @@ impl ApplicationRuntime {
         })
     }
 
-    pub(crate) fn rebuild_from_startup(&self) -> Result<(Self, Receiver<LuaEvent>), String> {
-        self.rebuild_from_paths(self.paths.clone())
+    fn stop_active_operations(&mut self) -> Result<(), String> {
+        let has_active_operations = self.is_running()
+            || self.is_recording()
+            || self.recording_transition().is_some()
+            || self.device_emulator.is_running();
+
+        if !has_active_operations {
+            return Ok(());
+        }
+
+        self.log.info(
+            "Stopping the active runtime before loading \
+             an application profile.",
+        );
+
+        let deadline = Instant::now() + RUNTIME_STOP_TIMEOUT;
+
+        while self.recording_transition().is_some() {
+            self.poll();
+
+            if self.recording_transition().is_none() {
+                break;
+            }
+
+            Self::wait_for_stop_progress(deadline)?;
+        }
+
+        if self.is_recording() {
+            self.execute(UserCommand::StopRecording);
+        }
+
+        while self.is_recording() || self.recording_transition().is_some() {
+            self.poll();
+
+            if !self.is_recording() && self.recording_transition().is_none() {
+                break;
+            }
+
+            Self::wait_for_stop_progress(deadline)?;
+        }
+
+        if self.is_running() {
+            self.execute(UserCommand::Stop);
+        }
+
+        if self.device_emulator.is_running() {
+            self.execute(UserCommand::StopEmulator);
+        }
+
+        loop {
+            self.poll();
+
+            if !self.is_running() && !self.device_emulator.is_running() {
+                break;
+            }
+
+            Self::wait_for_stop_progress(deadline)?;
+        }
+
+        self.log
+            .info("Active runtime stopped before profile loading.");
+
+        Ok(())
+    }
+
+    fn wait_for_stop_progress(deadline: Instant) -> Result<(), String> {
+        let now = Instant::now();
+
+        if now >= deadline {
+            return Err(format!(
+                "Timed out after {:.1} s while stopping \
+                 the active runtime",
+                RUNTIME_STOP_TIMEOUT.as_secs_f64(),
+            ));
+        }
+
+        thread::sleep((deadline - now).min(RUNTIME_STOP_POLL_INTERVAL));
+
+        Ok(())
+    }
+
+    pub(crate) fn rebuild_from_startup(&mut self) -> Result<(Self, Receiver<LuaEvent>), String> {
+        let paths = self.paths.clone();
+
+        self.rebuild_from_paths(paths)
     }
 
     pub(crate) fn rebuild_from_profile(
-        &self,
+        &mut self,
         startup_script: &Path,
     ) -> Result<(Self, Receiver<LuaEvent>), String> {
         let paths = self
@@ -423,12 +509,14 @@ impl ApplicationRuntime {
     }
 
     fn rebuild_from_paths(
-        &self,
+        &mut self,
         paths: ApplicationPaths,
     ) -> Result<(Self, Receiver<LuaEvent>), String> {
         let startup_path = paths.startup_script().to_path_buf();
 
-        let result = self.try_rebuild_from_paths(paths);
+        let result = self
+            .stop_active_operations()
+            .and_then(|()| self.try_rebuild_from_paths(paths));
 
         match &result {
             Ok(_) => {
@@ -453,20 +541,6 @@ impl ApplicationRuntime {
         &self,
         paths: ApplicationPaths,
     ) -> Result<(Self, Receiver<LuaEvent>), String> {
-        if self.is_recording() {
-            return Err("Stop recording before loading an application profile.".to_owned());
-        }
-
-        if self.is_running() {
-            return Err("Stop acquisition before loading an application profile.".to_owned());
-        }
-
-        if self.device_emulator.is_running() {
-            return Err(
-                "Stop the device emulator before loading an application profile.".to_owned(),
-            );
-        }
-
         let (definition, source) = Self::load_startup_configuration(&paths)?;
 
         Self::build_initialized(
