@@ -6,7 +6,7 @@ use std::sync::{
 use crate::connection::ConnectionId;
 
 use super::{
-    NewSeries, Series, SeriesId, SeriesMetadata, SeriesNameError, SeriesSource,
+    NewSeries, Series, SeriesId, SeriesMetadata, SeriesNameError, SeriesPollingState, SeriesSource,
     series_name::normalize_series_name,
 };
 
@@ -206,13 +206,52 @@ impl SeriesStore {
         self.with(|series| series.iter().map(SeriesMetadata::from).collect())
     }
 
-    pub fn metadata_for_connection(&self, connection_id: ConnectionId) -> Vec<SeriesMetadata> {
+    pub fn polling_metadata_for_connection(
+        &self,
+        connection_id: ConnectionId,
+    ) -> Vec<SeriesMetadata> {
         self.with(|series| {
             series
                 .iter()
-                .filter(|series| series.connection_id == connection_id)
+                .filter(|series| {
+                    series.connection_id == connection_id
+                        && series.polling_state == SeriesPollingState::Enabled
+                })
                 .map(SeriesMetadata::from)
                 .collect()
+        })
+    }
+
+    pub fn suspend_polling(&self, id: SeriesId) -> bool {
+        self.with_mut(|series| {
+            let Some(series) = series.iter_mut().find(|series| series.id == id) else {
+                return false;
+            };
+
+            if series.polling_state == SeriesPollingState::Suspended {
+                return false;
+            }
+
+            series.polling_state = SeriesPollingState::Suspended;
+
+            true
+        })
+    }
+
+    pub fn resume_polling_for_connection(&self, connection_id: ConnectionId) -> usize {
+        self.with_mut(|series| {
+            let mut resumed = 0;
+
+            for series in series.iter_mut().filter(|series| {
+                series.connection_id == connection_id
+                    && series.polling_state == SeriesPollingState::Suspended
+            }) {
+                series.polling_state = SeriesPollingState::Enabled;
+
+                resumed += 1;
+            }
+
+            resumed
         })
     }
 
@@ -314,7 +353,8 @@ mod tests {
     use crate::{
         connection::ConnectionId,
         data::{
-            AddSeriesError, NewSeries, SamplingInterval, SeriesId, SeriesNameError, SeriesSource,
+            AddSeriesError, NewSeries, SamplingInterval, SeriesId, SeriesNameError,
+            SeriesPollingState, SeriesSource,
         },
         instrument::{
             InstrumentReadRequest,
@@ -798,11 +838,14 @@ mod tests {
     }
 
     #[test]
-    fn filters_metadata_by_connection() {
+    fn returns_metadata_for_requested_connection() {
         let store = SeriesStore::new();
 
         let primary_id = store
-            .add_series(NewSeries::named_serial_command("read primary", "primary"))
+            .add_series(
+                NewSeries::named_serial_command("read primary", "primary")
+                    .with_connection(ConnectionId::PRIMARY),
+            )
             .unwrap();
 
         let secondary_connection = ConnectionId::new(2);
@@ -814,14 +857,62 @@ mod tests {
             )
             .unwrap();
 
-        let primary = store.metadata_for_connection(ConnectionId::PRIMARY);
+        let primary = store.polling_metadata_for_connection(ConnectionId::PRIMARY);
 
         assert_eq!(primary.len(), 1);
         assert_eq!(primary[0].id, primary_id);
 
-        let secondary = store.metadata_for_connection(secondary_connection);
+        let secondary = store.polling_metadata_for_connection(secondary_connection);
 
         assert_eq!(secondary.len(), 1);
         assert_eq!(secondary[0].id, secondary_id);
+    }
+
+    #[test]
+    fn suspends_and_resumes_series_polling() {
+        let store = SeriesStore::new();
+
+        let id = add_named(&store, "temperature");
+
+        assert!(store.suspend_polling(id));
+        assert!(!store.suspend_polling(id));
+
+        let state = store.with(|series| {
+            series
+                .iter()
+                .find(|series| series.id == id)
+                .unwrap()
+                .polling_state
+        });
+
+        assert_eq!(state, SeriesPollingState::Suspended,);
+
+        assert!(
+            store
+                .polling_metadata_for_connection(ConnectionId::PRIMARY,)
+                .is_empty()
+        );
+
+        assert_eq!(
+            store.resume_polling_for_connection(ConnectionId::PRIMARY,),
+            1,
+        );
+
+        let state = store.with(|series| {
+            series
+                .iter()
+                .find(|series| series.id == id)
+                .unwrap()
+                .polling_state
+        });
+
+        assert_eq!(state, SeriesPollingState::Enabled,);
+
+        assert_eq!(
+            store
+                .polling_metadata_for_connection(ConnectionId::PRIMARY,)
+                .len(),
+            1,
+        );
     }
 }

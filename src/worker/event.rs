@@ -99,17 +99,10 @@ pub enum WorkerEvent {
         error: AcquisitionError,
     },
 
-    SeriesPollingFailed {
+    SeriesPollingSuspended {
         id: SeriesId,
         name: String,
         error: AcquisitionError,
-        consecutive_failures: u64,
-    },
-
-    SeriesPollingRecovered {
-        id: SeriesId,
-        name: String,
-        failed_attempts: u64,
     },
 }
 
@@ -239,40 +232,13 @@ impl std::fmt::Display for WorkerEvent {
                 )
             }
 
-            Self::SeriesPollingFailed {
-                id,
-                name,
-                error,
-                consecutive_failures,
-            } => {
-                if *consecutive_failures == 1 {
-                    write!(
-                        formatter,
-                        "Series '{name}' ({id}) polling \
-                         failed: {error}. Acquisition \
-                         continues.",
-                    )
-                } else {
-                    write!(
-                        formatter,
-                        "Series '{name}' ({id}) polling \
-                         still fails after \
-                         {consecutive_failures} consecutive \
-                         attempts: {error}",
-                    )
-                }
-            }
-
-            Self::SeriesPollingRecovered {
-                id,
-                name,
-                failed_attempts,
-            } => {
+            Self::SeriesPollingSuspended { id, name, error } => {
                 write!(
                     formatter,
-                    "Series '{name}' ({id}) polling \
-                     recovered after {failed_attempts} \
-                     failed attempts.",
+                    "Series '{name}' ({id}) polling was \
+                     suspended after the acquisition source \
+                     exhausted its retry attempts: {error}. \
+                     Stop and start acquisition to retry.",
                 )
             }
         }

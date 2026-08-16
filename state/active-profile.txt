@@ -1,1 +1,1 @@
-D:\rust_projects\com_port_reader\profiles\three_metakon.lua
+D:\rust\com_port_reader\startup.lua

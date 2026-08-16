@@ -21,6 +21,13 @@ impl std::fmt::Display for SeriesId {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SeriesPollingState {
+    #[default]
+    Enabled,
+    Suspended,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum SeriesSource {
     SerialCommand { command: String },
@@ -139,6 +146,7 @@ pub struct Series {
     pub samples: Vec<Sample>,
     pub visible: bool,
     pub sampling_interval: Option<SamplingInterval>,
+    pub polling_state: SeriesPollingState,
 }
 
 impl Series {
@@ -157,6 +165,7 @@ impl Series {
             samples: Vec::new(),
             visible: true,
             sampling_interval,
+            polling_state: SeriesPollingState::Enabled,
         }
     }
 }

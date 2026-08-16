@@ -117,13 +117,13 @@ fn show_control(
         ControlState::Number {
             id,
             label,
+            value,
             draft_value,
             pending,
             minimum,
             maximum,
             step,
             on_change,
-            ..
         } => {
             ui.label(label.as_str());
 
@@ -143,10 +143,13 @@ fn show_control(
 
             let response = ui.add_enabled(!*pending, editor);
 
-            let submitted = response.drag_stopped() || (response.changed() && !response.dragged());
+            let value_changed = *draft_value != *value;
+
+            let submitted = value_changed && (response.drag_stopped() || response.lost_focus());
 
             if submitted {
                 *pending = true;
+
                 invocations.push(LuaControlInvocation::new(
                     script_id,
                     panel_id,

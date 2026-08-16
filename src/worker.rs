@@ -71,7 +71,6 @@ enum AcquisitionState {
 struct SeriesSchedule {
     interval: Duration,
     next_poll: Instant,
-    consecutive_failures: u64,
 }
 
 pub struct Worker {
@@ -124,7 +123,7 @@ impl Worker {
                 let now = Instant::now();
 
                 let series_metadata = if matches!(&state, AcquisitionState::Running { .. }) {
-                    series.metadata_for_connection(connection_id)
+                    series.polling_metadata_for_connection(connection_id)
                 } else {
                     Vec::new()
                 };
@@ -157,13 +156,6 @@ impl Worker {
 
                     source.sample(&due_series, &mut sample_batch, &mut sample_failures);
 
-                    update_series_health(
-                        &mut series_schedules,
-                        &due_series,
-                        &sample_failures,
-                        &event_sender,
-                    );
-
                     let result = series
                         .with_mut(|all_series| append_series_samples(all_series, &sample_batch));
 
@@ -178,6 +170,13 @@ impl Worker {
                             match sink.write_batch(&sample_batch, &series_metadata) {
                                 Ok(()) => {
                                     let completed_at = Instant::now();
+
+                                    suspend_failed_series(
+                                        &mut series_schedules,
+                                        &series,
+                                        &sample_failures,
+                                        &event_sender,
+                                    );
 
                                     advance_series_schedules(
                                         &mut series_schedules,
@@ -308,6 +307,8 @@ impl Worker {
                         if matches!(state, AcquisitionState::Stopped) {
                             match source.start() {
                                 Ok(()) => {
+                                    series.resume_polling_for_connection(connection_id);
+
                                     series_schedules.clear();
 
                                     state = AcquisitionState::Running {
@@ -567,7 +568,6 @@ fn synchronize_series_schedules(
                     SeriesSchedule {
                         interval,
                         next_poll: now + interval,
-                        consecutive_failures: 0,
                     },
                 );
             }
@@ -613,64 +613,25 @@ fn advance_series_schedules(
     }
 }
 
-fn update_series_health(
+fn suspend_failed_series(
     schedules: &mut HashMap<SeriesId, SeriesSchedule>,
-    polled_series: &[SeriesMetadata],
+    series: &SeriesStore,
     failures: &[SeriesAcquisitionFailure],
     event_sender: &WorkerEventSender,
 ) {
-    for series in polled_series {
-        let Some(schedule) = schedules.get_mut(&series.id) else {
+    for failure in failures {
+        schedules.remove(&failure.series_id);
+
+        if !series.suspend_polling(failure.series_id) {
             continue;
-        };
-
-        let failure = failures
-            .iter()
-            .find(|failure| failure.series_id == series.id);
-
-        match failure {
-            Some(failure) => {
-                schedule.consecutive_failures = schedule.consecutive_failures.saturating_add(1);
-
-                let count = schedule.consecutive_failures;
-
-                if should_report_series_failure(count) {
-                    let _ = event_sender.send(WorkerEvent::SeriesPollingFailed {
-                        id: series.id,
-                        name: failure.series_name.clone(),
-                        error: failure.error.clone(),
-                        consecutive_failures: count,
-                    });
-                }
-            }
-
-            None => {
-                let failed_attempts = std::mem::take(&mut schedule.consecutive_failures);
-
-                if failed_attempts > 0 {
-                    let _ = event_sender.send(WorkerEvent::SeriesPollingRecovered {
-                        id: series.id,
-                        name: series.name.clone(),
-                        failed_attempts,
-                    });
-                }
-            }
         }
+
+        let _ = event_sender.send(WorkerEvent::SeriesPollingSuspended {
+            id: failure.series_id,
+            name: failure.series_name.clone(),
+            error: failure.error.clone(),
+        });
     }
-}
-
-fn should_report_series_failure(failure_count: u64) -> bool {
-    if failure_count == 0 {
-        return false;
-    }
-
-    let mut value = failure_count;
-
-    while value > 1 && value.is_multiple_of(10) {
-        value /= 10;
-    }
-
-    value == 1
 }
 
 fn handle_connection_command(
@@ -883,8 +844,7 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use super::{SeriesSchedule, should_report_series_failure, synchronize_series_schedules};
-
+    use super::{SeriesSchedule, synchronize_series_schedules};
     use crate::connection::ConnectionId;
     use crate::data::{SamplingInterval, SeriesId, SeriesMetadata, SeriesSource};
 
@@ -965,16 +925,5 @@ mod tests {
         );
 
         assert_eq!(schedules[&SeriesId::new(2)].next_poll, custom_deadline,);
-    }
-
-    #[test]
-    fn rate_limits_series_failure_reports() {
-        for count in [1, 10, 100, 1_000] {
-            assert!(should_report_series_failure(count),);
-        }
-
-        for count in [0, 2, 9, 11, 99, 101] {
-            assert!(!should_report_series_failure(count),);
-        }
     }
 }
