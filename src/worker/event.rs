@@ -104,6 +104,11 @@ pub enum WorkerEvent {
         name: String,
         error: AcquisitionError,
     },
+
+    SeriesPollingResumed {
+        id: SeriesId,
+        name: String,
+    },
 }
 
 impl std::fmt::Display for WorkerEvent {
@@ -239,6 +244,14 @@ impl std::fmt::Display for WorkerEvent {
                      suspended after the acquisition source \
                      exhausted its retry attempts: {error}. \
                      Stop and start acquisition to retry.",
+                )
+            }
+
+            Self::SeriesPollingResumed { id, name } => {
+                write!(
+                    formatter,
+                    "Series '{name}' ({id}) polling resumed \
+                     after successful manual instrument access.",
                 )
             }
         }

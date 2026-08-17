@@ -1,7 +1,9 @@
 use eframe::egui::{self, ScrollArea};
 
 use crate::{
-    application_runtime::ApplicationRuntime, components::plot_model::PlotModel, data::SeriesStore,
+    application_runtime::ApplicationRuntime,
+    components::plot_model::PlotModel,
+    data::{SeriesPollingState, SeriesStore},
 };
 
 pub fn show(
@@ -28,13 +30,23 @@ pub fn show(
                 .map_or(1, |index| index + 1);
 
             ui.group(|ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if ui.checkbox(&mut visible, "").changed() {
                         runtime.set_series_visibility(series.id, visible);
                     }
 
                     ui.label(&series.name)
                         .on_hover_text(series.source.to_string());
+
+                    if series.polling_state == SeriesPollingState::Suspended {
+                        ui.colored_label(offline_color(ui), "Offline")
+                            .on_hover_text(
+                                "Periodic polling is suspended. \
+                             Use the instrument Refresh button \
+                             or restart acquisition to retry. \
+                             Existing samples remain on the plot.",
+                            );
+                    }
                 });
 
                 ui.horizontal(|ui| {
@@ -47,7 +59,7 @@ pub fn show(
                                 ui.selectable_value(
                                     &mut selected_pane,
                                     pane_id,
-                                    format!("Plot {}", index + 1),
+                                    format!("Plot {}", index + 1,),
                                 );
                             }
                         });
@@ -59,4 +71,12 @@ pub fn show(
             }
         }
     });
+}
+
+fn offline_color(ui: &egui::Ui) -> egui::Color32 {
+    if ui.visuals().dark_mode {
+        egui::Color32::from_rgb(255, 100, 100)
+    } else {
+        egui::Color32::from_rgb(180, 30, 30)
+    }
 }

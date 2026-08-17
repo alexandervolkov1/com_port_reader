@@ -156,6 +156,36 @@ impl InstrumentReadRequest {
             Self::VirtualInstrument { .. } => "Virtual instrument",
         }
     }
+
+    pub fn refers_to_same_parameter(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Metakon5x3 {
+                    instrument: left_instrument,
+                    parameter: left_parameter,
+                    ..
+                },
+                Self::Metakon5x3 {
+                    instrument: right_instrument,
+                    parameter: right_parameter,
+                    ..
+                },
+            ) => left_instrument == right_instrument && left_parameter == right_parameter,
+
+            (
+                Self::VirtualInstrument {
+                    instrument: left_instrument,
+                    parameter: left_parameter,
+                },
+                Self::VirtualInstrument {
+                    instrument: right_instrument,
+                    parameter: right_parameter,
+                },
+            ) => left_instrument == right_instrument && left_parameter == right_parameter,
+
+            _ => false,
+        }
+    }
 }
 
 impl std::fmt::Display for InstrumentReadRequest {
@@ -231,6 +261,22 @@ impl InstrumentWriteRequest {
             instrument,
             parameter,
             value,
+        }
+    }
+
+    pub fn corresponding_read_request(&self) -> InstrumentReadRequest {
+        match self {
+            Self::Metakon5x3 {
+                instrument,
+                parameter,
+                scale,
+            } => InstrumentReadRequest::metakon_5x3(*instrument, parameter.register(), *scale),
+
+            Self::VirtualInstrument {
+                instrument,
+                parameter,
+                ..
+            } => InstrumentReadRequest::virtual_instrument(*instrument, *parameter),
         }
     }
 }

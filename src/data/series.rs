@@ -178,6 +178,7 @@ pub struct SeriesMetadata {
     pub source: SeriesSource,
     pub visible: bool,
     pub sampling_interval: Option<SamplingInterval>,
+    pub polling_state: SeriesPollingState,
 }
 
 impl From<&Series> for SeriesMetadata {
@@ -189,6 +190,7 @@ impl From<&Series> for SeriesMetadata {
             source: series.source.clone(),
             visible: series.visible,
             sampling_interval: series.sampling_interval,
+            polling_state: series.polling_state,
         }
     }
 }

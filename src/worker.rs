@@ -60,6 +60,10 @@ impl WorkerEventSender {
         self.sender
             .send(ConnectionWorkerEvent::new(self.connection_id, event))
     }
+
+    const fn connection_id(&self) -> ConnectionId {
+        self.connection_id
+    }
 }
 
 enum AcquisitionState {
@@ -468,6 +472,7 @@ impl Worker {
                             command,
                             acquisition_running,
                             source.as_mut(),
+                            &series,
                             &event_sender,
                         );
                     }
@@ -634,10 +639,24 @@ fn suspend_failed_series(
     }
 }
 
+fn resume_instrument_series(
+    series: &SeriesStore,
+    connection_id: ConnectionId,
+    request: InstrumentReadRequest,
+    event_sender: &WorkerEventSender,
+) {
+    let resumed = series.resume_instrument_polling(connection_id, request);
+
+    for (id, name) in resumed {
+        let _ = event_sender.send(WorkerEvent::SeriesPollingResumed { id, name });
+    }
+}
+
 fn handle_connection_command(
     command: ConnectionCommand,
     acquisition_running: bool,
     source: &mut dyn AcquisitionSource,
+    series: &SeriesStore,
     event_sender: &WorkerEventSender,
 ) {
     match command {
@@ -678,6 +697,15 @@ fn handle_connection_command(
 
             let result = close_source_after_one_shot(result, acquisition_running, source);
 
+            if result.is_ok() {
+                resume_instrument_series(
+                    series,
+                    event_sender.connection_id(),
+                    request,
+                    event_sender,
+                );
+            }
+
             let event = match &result {
                 Ok(value) => WorkerEvent::InstrumentReadSucceeded {
                     port_name,
@@ -704,6 +732,15 @@ fn handle_connection_command(
             let result = write_instrument_to_source(source, request);
 
             let result = close_source_after_one_shot(result, acquisition_running, source);
+
+            if result.is_ok() {
+                resume_instrument_series(
+                    series,
+                    event_sender.connection_id(),
+                    request.corresponding_read_request(),
+                    event_sender,
+                );
+            }
 
             let event = match &result {
                 Ok(actual_value) => WorkerEvent::InstrumentWriteSucceeded {
@@ -846,20 +883,21 @@ mod tests {
 
     use super::{SeriesSchedule, synchronize_series_schedules};
     use crate::connection::ConnectionId;
-    use crate::data::{SamplingInterval, SeriesId, SeriesMetadata, SeriesSource};
+    use crate::data::{
+        SamplingInterval, SeriesId, SeriesMetadata, SeriesPollingState, SeriesSource,
+    };
 
     fn metadata(id: u64, sampling_interval: Option<SamplingInterval>) -> SeriesMetadata {
         SeriesMetadata {
             id: SeriesId::new(id),
             connection_id: ConnectionId::PRIMARY,
             name: format!("series_{id}"),
-
             source: SeriesSource::SerialCommand {
                 command: "read".to_owned(),
             },
-
             sampling_interval,
             visible: true,
+            polling_state: SeriesPollingState::Enabled,
         }
     }
 

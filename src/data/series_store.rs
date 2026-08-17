@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use crate::connection::ConnectionId;
+use crate::{connection::ConnectionId, instrument::InstrumentReadRequest};
 
 use super::{
     NewSeries, Series, SeriesId, SeriesMetadata, SeriesNameError, SeriesPollingState, SeriesSource,
@@ -235,6 +235,35 @@ impl SeriesStore {
             series.polling_state = SeriesPollingState::Suspended;
 
             true
+        })
+    }
+
+    pub fn resume_instrument_polling(
+        &self,
+        connection_id: ConnectionId,
+        request: InstrumentReadRequest,
+    ) -> Vec<(SeriesId, String)> {
+        self.with_mut(|series| {
+            let mut resumed = Vec::new();
+
+            for series in series.iter_mut().filter(|series| {
+                series.connection_id == connection_id
+                    && series.polling_state == SeriesPollingState::Suspended
+            }) {
+                let SeriesSource::Instrument(stored_request) = &series.source else {
+                    continue;
+                };
+
+                if !stored_request.refers_to_same_parameter(&request) {
+                    continue;
+                }
+
+                series.polling_state = SeriesPollingState::Enabled;
+
+                resumed.push((series.id, series.name.clone()));
+            }
+
+            resumed
         })
     }
 
@@ -913,6 +942,53 @@ mod tests {
                 .polling_metadata_for_connection(ConnectionId::PRIMARY,)
                 .len(),
             1,
+        );
+    }
+
+    #[test]
+    fn resumes_matching_instrument_series() {
+        let store = SeriesStore::new();
+
+        let instrument = Metakon5x3::new(15, 0);
+
+        let measurement_request =
+            InstrumentReadRequest::metakon_5x3(instrument, Metakon5x3Register::Measurement, 1.0);
+
+        let setpoint_request =
+            InstrumentReadRequest::metakon_5x3(instrument, Metakon5x3Register::Setpoint, 1.0);
+
+        let measurement_id = store
+            .add_series(NewSeries::named_instrument(
+                measurement_request,
+                "temperature",
+            ))
+            .unwrap();
+
+        let setpoint_id = store
+            .add_series(NewSeries::named_instrument(setpoint_request, "setpoint"))
+            .unwrap();
+
+        assert!(store.suspend_polling(measurement_id));
+
+        assert!(store.suspend_polling(setpoint_id));
+
+        let resumed = store.resume_instrument_polling(ConnectionId::PRIMARY, measurement_request);
+
+        assert_eq!(resumed, vec![(measurement_id, "temperature".to_owned(),)],);
+
+        let series = store.with(|series| {
+            series
+                .iter()
+                .map(|series| (series.id, series.polling_state))
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(
+            series,
+            vec![
+                (measurement_id, SeriesPollingState::Enabled,),
+                (setpoint_id, SeriesPollingState::Suspended,),
+            ],
         );
     }
 }

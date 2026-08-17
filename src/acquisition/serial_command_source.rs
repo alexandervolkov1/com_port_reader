@@ -359,7 +359,7 @@ mod tests {
 
     use crate::{
         connection::ConnectionId,
-        data::{SeriesId, SeriesMetadata, SeriesSource},
+        data::{SeriesId, SeriesMetadata, SeriesPollingState, SeriesSource},
         instrument::{
             InstrumentReadRequest,
             metakon_5x3::{Metakon5x3, Metakon5x3IdentificationError, Metakon5x3Register},
@@ -389,12 +389,12 @@ mod tests {
             id: SeriesId::new(1),
             connection_id: ConnectionId::PRIMARY,
             name: "random_walk".to_owned(),
-
             source: SeriesSource::SerialCommand {
                 command: "read walue".to_owned(),
             },
             sampling_interval: None,
             visible: true,
+            polling_state: SeriesPollingState::Enabled,
         }];
 
         let mut output = Vec::new();
@@ -425,7 +425,6 @@ mod tests {
             id: SeriesId::new(1),
             connection_id: ConnectionId::PRIMARY,
             name: "temperature".to_owned(),
-
             source: SeriesSource::Instrument(InstrumentReadRequest::metakon_5x3(
                 Metakon5x3::new(1, 0),
                 Metakon5x3Register::Measurement,
@@ -433,6 +432,7 @@ mod tests {
             )),
             sampling_interval: None,
             visible: true,
+            polling_state: SeriesPollingState::Enabled,
         }];
 
         let mut output = Vec::new();
@@ -485,6 +485,7 @@ mod tests {
             source: SeriesSource::Instrument(request),
             sampling_interval: None,
             visible: true,
+            polling_state: SeriesPollingState::Enabled,
         }];
 
         let mut output = Vec::new();
@@ -529,13 +530,12 @@ mod tests {
             id: SeriesId::new(1),
             connection_id: ConnectionId::new(2),
             name: "foreign".to_owned(),
-
             source: SeriesSource::SerialCommand {
                 command: "read value".to_owned(),
             },
-
             visible: true,
             sampling_interval: None,
+            polling_state: SeriesPollingState::Enabled,
         };
 
         let result = source.sample_series(&series).unwrap();

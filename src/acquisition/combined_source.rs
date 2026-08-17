@@ -132,8 +132,8 @@ impl AcquisitionSource for CombinedSource {
 mod tests {
     use super::{AcquisitionError, AcquisitionSource, CombinedSource};
 
-    use crate::connection::ConnectionId;
     use crate::data::{Sample, SeriesId, SeriesMetadata, SeriesSample, SeriesSource};
+    use crate::{connection::ConnectionId, data::SeriesPollingState};
 
     struct FixedSource {
         series_id: SeriesId,
@@ -175,12 +175,12 @@ mod tests {
             id,
             connection_id: ConnectionId::PRIMARY,
             name: name.to_owned(),
-
             source: SeriesSource::SerialCommand {
                 command: "read".to_owned(),
             },
             sampling_interval: None,
             visible: true,
+            polling_state: SeriesPollingState::Enabled,
         }
     }
 

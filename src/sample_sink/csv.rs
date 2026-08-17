@@ -104,7 +104,7 @@ mod tests {
 
     use crate::{
         connection::ConnectionId,
-        data::{Sample, SeriesId, SeriesMetadata, SeriesSample, SeriesSource},
+        data::{Sample, SeriesId, SeriesMetadata, SeriesPollingState, SeriesSample, SeriesSource},
         sample_sink::SampleSink,
     };
 
@@ -168,12 +168,12 @@ mod tests {
             id,
             connection_id: ConnectionId::PRIMARY,
             name: name.to_owned(),
-
             source: SeriesSource::SerialCommand {
                 command: "test".to_owned(),
             },
             sampling_interval: None,
             visible: true,
+            polling_state: SeriesPollingState::Enabled,
         }
     }
 }
