@@ -23,14 +23,16 @@ pub struct PlotPane {
     pub id: PlotPaneId,
     pub lines: Vec<PlotLine>,
     pub auto_y: bool,
+    pub height_weight: f32,
 }
 
 impl PlotPane {
-    fn new(id: PlotPaneId) -> Self {
+    fn new(id: PlotPaneId, height_weight: f32) -> Self {
         Self {
             id,
             lines: Vec::new(),
             auto_y: true,
+            height_weight,
         }
     }
 }
@@ -48,7 +50,7 @@ impl PlotModel {
         Self {
             follow_latest: true,
             manual_x_bounds: None,
-            panes: vec![PlotPane::new(PlotPaneId::new(1))],
+            panes: vec![PlotPane::new(PlotPaneId::new(1), 1.0)],
             series_panes: HashMap::new(),
             next_pane_id: 2,
         }
@@ -59,7 +61,20 @@ impl PlotModel {
 
         self.next_pane_id += 1;
 
-        self.panes.push(PlotPane::new(id));
+        let new_weight = {
+            let last_pane = self
+                .panes
+                .last_mut()
+                .expect("plot model always has one pane");
+
+            let new_weight = last_pane.height_weight * 0.5;
+
+            last_pane.height_weight -= new_weight;
+
+            new_weight
+        };
+
+        self.panes.push(PlotPane::new(id, new_weight));
     }
 
     pub fn remove_last_pane(&mut self) {
@@ -69,8 +84,31 @@ impl PlotModel {
 
         let removed_pane = self.panes.pop().expect("more than one pane exists");
 
+        self.panes
+            .last_mut()
+            .expect("at least one pane remains")
+            .height_weight += removed_pane.height_weight;
+
         self.series_panes
             .retain(|_, pane_id| *pane_id != removed_pane.id);
+    }
+
+    pub fn resize_adjacent_panes(&mut self, upper_index: usize, delta_weight: f32) {
+        if !delta_weight.is_finite() || upper_index + 1 >= self.panes.len() {
+            return;
+        }
+
+        let (upper_panes, lower_panes) = self.panes.split_at_mut(upper_index + 1);
+
+        let upper = &mut upper_panes[upper_index];
+        let lower = &mut lower_panes[0];
+
+        let combined_weight = upper.height_weight + lower.height_weight;
+
+        let upper_weight = (upper.height_weight + delta_weight).clamp(0.0, combined_weight);
+
+        upper.height_weight = upper_weight;
+        lower.height_weight = combined_weight - upper_weight;
     }
 
     pub fn pane_for_series(&self, series_id: SeriesId) -> PlotPaneId {
@@ -113,6 +151,7 @@ mod tests {
         assert_eq!(plot.panes.len(), 1);
         assert!(plot.panes[0].lines.is_empty());
         assert!(plot.panes[0].auto_y);
+        assert_eq!(plot.panes[0].height_weight, 1.0);
     }
 
     #[test]
@@ -169,5 +208,51 @@ mod tests {
         plot.remove_last_pane();
 
         assert_eq!(plot.pane_for_series(series_id), first_pane_id,);
+    }
+
+    #[test]
+    fn splits_last_pane_weight_when_adding() {
+        let mut plot = PlotModel::new();
+
+        plot.add_pane();
+
+        assert_eq!(plot.panes[0].height_weight, 0.5);
+        assert_eq!(plot.panes[1].height_weight, 0.5);
+
+        plot.add_pane();
+
+        assert_eq!(plot.panes[0].height_weight, 0.5);
+        assert_eq!(plot.panes[1].height_weight, 0.25);
+        assert_eq!(plot.panes[2].height_weight, 0.25);
+    }
+
+    #[test]
+    fn returns_removed_weight_to_previous_pane() {
+        let mut plot = PlotModel::new();
+
+        plot.add_pane();
+        plot.add_pane();
+        plot.remove_last_pane();
+
+        assert_eq!(plot.panes[0].height_weight, 0.5);
+        assert_eq!(plot.panes[1].height_weight, 0.5);
+    }
+
+    #[test]
+    fn resizes_adjacent_panes() {
+        let mut plot = PlotModel::new();
+
+        plot.add_pane();
+
+        plot.resize_adjacent_panes(0, 0.2);
+
+        assert!((plot.panes[0].height_weight - 0.7).abs() < f32::EPSILON,);
+
+        assert!((plot.panes[1].height_weight - 0.3).abs() < f32::EPSILON,);
+
+        plot.resize_adjacent_panes(0, 10.0);
+
+        assert_eq!(plot.panes[0].height_weight, 1.0);
+        assert_eq!(plot.panes[1].height_weight, 0.0);
     }
 }

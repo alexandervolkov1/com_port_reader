@@ -8,7 +8,7 @@ local definition = {
 
     connections = {
         primary = {
-            port = "COM10",
+            port = "COM3",
             baud_rate = 9600,
             data_bits = 8,
             parity = "none",
@@ -20,7 +20,7 @@ local definition = {
 
     emulator = {
         connection = "primary",
-        port = "COM11",
+        port = "COM4",
         script = "emulator_scripts/sine_generator.lua",
     },
 

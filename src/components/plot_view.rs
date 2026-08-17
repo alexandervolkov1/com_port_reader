@@ -11,6 +11,7 @@ use crate::{
 };
 
 const MIN_PANE_HEIGHT: f32 = 80.0;
+const PANE_SEPARATOR_HEIGHT: f32 = 8.0;
 const Y_AXIS_MIN_WIDTH: f32 = 50.0;
 const Y_LABEL_MIN_SPACING: f32 = 14.0;
 const Y_LABEL_FULL_SPACING: f32 = 20.0;
@@ -43,13 +44,58 @@ pub fn show(
     let spacing = ui.spacing().item_spacing.y;
     let controls_height = ui.spacing().interact_size.y;
 
-    let reserved_height = controls_height + spacing * pane_count as f32;
+    let separator_count = pane_count.saturating_sub(1);
 
-    let pane_height =
-        ((ui.available_height() - reserved_height) / pane_count as f32).max(MIN_PANE_HEIGHT);
+    let spacing_count = pane_count + separator_count;
+
+    let reserved_height = controls_height
+        + PANE_SEPARATOR_HEIGHT * separator_count as f32
+        + spacing * spacing_count as f32;
+
+    let minimum_total_height = MIN_PANE_HEIGHT * pane_count as f32;
+
+    let total_pane_height = (ui.available_height() - reserved_height).max(minimum_total_height);
+
+    let flexible_height = (total_pane_height - minimum_total_height).max(0.0);
+
+    let total_weight = plot
+        .panes
+        .iter()
+        .map(|pane| pane.height_weight)
+        .sum::<f32>();
+
+    let pane_heights = plot
+        .panes
+        .iter()
+        .map(|pane| {
+            let normalized_weight = if total_weight > f32::EPSILON {
+                pane.height_weight / total_weight
+            } else {
+                1.0 / pane_count as f32
+            };
+
+            MIN_PANE_HEIGHT + flexible_height * normalized_weight
+        })
+        .collect::<Vec<_>>();
 
     for pane_index in 0..pane_count {
-        show_pane(ui, plot, pane_index, min_x, max_x, pane_height);
+        show_pane(ui, plot, pane_index, min_x, max_x, pane_heights[pane_index]);
+
+        if pane_index + 1 >= pane_count {
+            continue;
+        }
+
+        let separator = show_pane_separator(ui);
+
+        if separator.dragged() && flexible_height > 0.0 && total_weight > f32::EPSILON {
+            let delta_y = ui.input(|input| input.pointer.delta().y);
+
+            let delta_weight = delta_y * total_weight / flexible_height;
+
+            plot.resize_adjacent_panes(pane_index, delta_weight);
+
+            ui.ctx().request_repaint();
+        }
     }
 
     ui.horizontal(|ui| {
@@ -66,6 +112,29 @@ pub fn show(
             plot.remove_last_pane();
         }
     });
+}
+
+fn show_pane_separator(ui: &mut egui::Ui) -> egui::Response {
+    let desired_size = egui::vec2(ui.available_width(), PANE_SEPARATOR_HEIGHT);
+
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::drag());
+
+    let stroke = if response.dragged() {
+        ui.visuals().widgets.active.fg_stroke
+    } else if response.hovered() {
+        ui.visuals().widgets.hovered.fg_stroke
+    } else {
+        ui.visuals().widgets.noninteractive.bg_stroke
+    };
+
+    ui.painter()
+        .line_segment([rect.left_center(), rect.right_center()], stroke);
+
+    if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+
+    response
 }
 
 fn show_pane(
