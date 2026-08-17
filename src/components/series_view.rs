@@ -41,10 +41,12 @@ pub fn show(
                     if series.polling_state == SeriesPollingState::Suspended {
                         ui.colored_label(offline_color(ui), "Offline")
                             .on_hover_text(
-                                "Periodic polling is suspended. \
-                             Use the instrument Refresh button \
-                             or restart acquisition to retry. \
-                             Existing samples remain on the plot.",
+                                "Periodic polling was suspended after \
+                                 three consecutive failures. Use \
+                                 app.retry(name), app.retry_all(), a \
+                                 successful instrument Refresh, or stop \
+                                 and start acquisition to retry. Existing \
+                                 samples remain on the plot.",
                             );
                     }
                 });

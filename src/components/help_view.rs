@@ -226,14 +226,15 @@ fn show_english_reference(ui: &mut egui::Ui) {
     section(ui, "Application configuration");
 
     ui.label(
-        "The application reads startup.lua from the \
-         current working directory. The script must \
-         return one table.",
+        "The application loads the selected startup \
+         profile. If no profile was selected, it uses \
+         startup.lua from the application directory. \
+         The script must return one table.",
     );
 
     ui.label(
         "Supported root sections are application, \
-         connections, emulator and setup.",
+         connections, emulator, scripts and setup.",
     );
 
     ui.label(
@@ -247,9 +248,11 @@ fn show_english_reference(ui: &mut egui::Ui) {
     code(ui, STARTUP_EXAMPLE);
 
     ui.label(
-        "Relative paths, including the emulator model \
-         path, are resolved from the current working \
-         directory.",
+        "Relative script and emulator-model paths are \
+         resolved from the directory containing the \
+         selected startup profile. Logs, process \
+         databases and other application data are stored \
+         relative to the application directory.",
     );
 
     section(ui, "Runtime options");
@@ -393,6 +396,21 @@ fn show_english_reference(ui: &mut egui::Ui) {
 
     reference(
         ui,
+        "app.retry(name)",
+        "Re-enables periodic polling for one suspended \
+         series. The next request follows its normal \
+         polling schedule.",
+    );
+
+    reference(
+        ui,
+        "app.retry_all()",
+        "Re-enables periodic polling for every suspended \
+         series without restarting acquisition.",
+    );
+
+    reference(
+        ui,
         "app.log(message)",
         "Writes an informational message to the \
          application log.",
@@ -407,6 +425,14 @@ fn show_english_reference(ui: &mut egui::Ui) {
     reference(ui, "app.stop_emu()", "Stops the running emulator.");
 
     section(ui, "Series options");
+
+    ui.label(
+        "A series is marked Offline after three \
+         consecutive failed polling cycles. Existing \
+         samples remain available. A successful manual \
+         read or write of the same instrument parameter \
+         also restores its polling.",
+    );
 
     ui.label(
         "A series argument may be omitted, specified \
@@ -666,14 +692,15 @@ fn show_russian_reference(ui: &mut egui::Ui) {
     section(ui, "Конфигурация приложения");
 
     ui.label(
-        "Приложение читает startup.lua из текущей \
-         рабочей папки. Сценарий должен вернуть одну \
-         таблицу.",
+        "Приложение загружает выбранный стартовый профиль. \
+         Если профиль не выбран, используется startup.lua \
+         из каталога приложения. Сценарий должен вернуть \
+         одну таблицу.",
     );
 
     ui.label(
         "Поддерживаются корневые разделы application, \
-         connections, emulator и setup.",
+         connections, emulator, scripts и setup.",
     );
 
     ui.label(
@@ -686,9 +713,11 @@ fn show_russian_reference(ui: &mut egui::Ui) {
     code(ui, STARTUP_EXAMPLE);
 
     ui.label(
-        "Относительные пути, включая путь к модели \
-         эмулятора, отсчитываются от текущей рабочей \
-         папки.",
+        "Относительные пути к сценариям и модели \
+         эмулятора отсчитываются от каталога выбранного \
+         стартового профиля. Журналы, базы процесса и \
+         другие данные сохраняются относительно каталога \
+         приложения.",
     );
 
     section(ui, "Параметры приложения");
@@ -843,6 +872,21 @@ fn show_russian_reference(ui: &mut egui::Ui) {
 
     reference(
         ui,
+        "app.retry(name)",
+        "Возобновляет периодический опрос одной \
+         отключённой серии. Следующий запрос выполняется \
+         по её обычному расписанию.",
+    );
+
+    reference(
+        ui,
+        "app.retry_all()",
+        "Возобновляет опрос всех отключённых серий без \
+         перезапуска сбора данных.",
+    );
+
+    reference(
+        ui,
         "app.log(message)",
         "Записывает информационное сообщение в журнал \
          приложения.",
@@ -857,6 +901,14 @@ fn show_russian_reference(ui: &mut egui::Ui) {
     reference(ui, "app.stop_emu()", "Останавливает работающий эмулятор.");
 
     section(ui, "Параметры серий");
+
+    ui.label(
+        "После трёх последовательных неудачных циклов \
+         опроса серия получает состояние Offline. Уже \
+         накопленные точки сохраняются. Успешное ручное \
+         чтение или изменение того же параметра прибора \
+         также восстанавливает опрос.",
+    );
 
     ui.label(
         "Аргумент серии можно опустить, передать как \

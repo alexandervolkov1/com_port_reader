@@ -312,6 +312,21 @@ function app.rename(
 )
 end
 
+---Re-enables periodic polling for a suspended series.
+---
+---The series is identified by its unique name.
+---The next request follows the normal polling schedule.
+---If communication fails three more consecutive times,
+---the series is suspended again.
+---@param name string
+function app.retry(name) end
+
+---Re-enables periodic polling for every suspended series.
+---
+---Existing samples are preserved. Acquisition is not
+---stopped or restarted.
+function app.retry_all() end
+
 ---Sends one text command through a serial connection.
 ---
 ---The response or communication error is written
