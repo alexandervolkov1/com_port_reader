@@ -39,6 +39,8 @@ pub use handle::{WorkerHandle, WorkerHandleError};
 pub use router::ConnectionRouter;
 pub use serial::spawn_serial_connection_worker;
 
+const MAX_CONSECUTIVE_POLL_FAILURES: u8 = 3;
+
 #[derive(Clone)]
 struct WorkerEventSender {
     connection_id: ConnectionId,
@@ -75,6 +77,7 @@ enum AcquisitionState {
 struct SeriesSchedule {
     interval: Duration,
     next_poll: Instant,
+    consecutive_failures: u8,
 }
 
 pub struct Worker {
@@ -175,9 +178,10 @@ impl Worker {
                                 Ok(()) => {
                                     let completed_at = Instant::now();
 
-                                    suspend_failed_series(
+                                    update_series_polling_health(
                                         &mut series_schedules,
                                         &series,
+                                        &due_series,
                                         &sample_failures,
                                         &event_sender,
                                     );
@@ -575,6 +579,7 @@ fn synchronize_series_schedules(
                     SeriesSchedule {
                         interval,
                         next_poll: now + interval,
+                        consecutive_failures: 0,
                     },
                 );
             }
@@ -620,22 +625,42 @@ fn advance_series_schedules(
     }
 }
 
-fn suspend_failed_series(
+fn update_series_polling_health(
     schedules: &mut HashMap<SeriesId, SeriesSchedule>,
-    series: &SeriesStore,
+    series_store: &SeriesStore,
+    polled_series: &[SeriesMetadata],
     failures: &[SeriesAcquisitionFailure],
     event_sender: &WorkerEventSender,
 ) {
-    for failure in failures {
-        schedules.remove(&failure.series_id);
+    for series in polled_series {
+        let failure = failures
+            .iter()
+            .find(|failure| failure.series_id == series.id);
 
-        if !series.suspend_polling(failure.series_id) {
+        let Some(schedule) = schedules.get_mut(&series.id) else {
+            continue;
+        };
+
+        let Some(failure) = failure else {
+            schedule.consecutive_failures = 0;
+            continue;
+        };
+
+        schedule.consecutive_failures = schedule.consecutive_failures.saturating_add(1);
+
+        if schedule.consecutive_failures < MAX_CONSECUTIVE_POLL_FAILURES {
+            continue;
+        }
+
+        schedules.remove(&series.id);
+
+        if !series_store.suspend_polling(series.id) {
             continue;
         }
 
         let _ = event_sender.send(WorkerEvent::SeriesPollingSuspended {
-            id: failure.series_id,
-            name: failure.series_name.clone(),
+            id: series.id,
+            name: series.name.clone(),
             error: failure.error.clone(),
         });
     }

@@ -241,9 +241,10 @@ impl std::fmt::Display for WorkerEvent {
                 write!(
                     formatter,
                     "Series '{name}' ({id}) polling was \
-                     suspended after the acquisition source \
-                     exhausted its retry attempts: {error}. \
-                     Stop and start acquisition to retry.",
+                     suspended after three consecutive polling \
+                     failures: {error}. Use app.retry(\"{name}\"), \
+                     refresh the instrument, or restart \
+                     acquisition to retry.",
                 )
             }
 
