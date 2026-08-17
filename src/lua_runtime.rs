@@ -107,7 +107,7 @@ mod tests {
         data::{SamplingInterval, SeriesColor, SeriesSource},
         instrument::{
             InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
-            metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
+            metakon_5x3::{INTEGRAL_TIME_SCALE, Metakon5x3, Metakon5x3Register, Metakon5x3Write},
         },
         serial_connection::SerialPortConfig,
         user_command::UserCommand,
@@ -659,7 +659,11 @@ mod tests {
                 Metakon5x3Register::ProportionalBand,
                 0.1,
             ),
-            ("integral_time", Metakon5x3Register::IntegralTime, 1.0),
+            (
+                "integral_time",
+                Metakon5x3Register::IntegralTime,
+                INTEGRAL_TIME_SCALE,
+            ),
             ("derivative_time", Metakon5x3Register::DerivativeTime, 1.0),
             ("output_power", Metakon5x3Register::OutputPower, 1.0),
             ("pwm_positive", Metakon5x3Register::PwmPositive, 1.0),
@@ -782,6 +786,67 @@ mod tests {
     }
 
     #[test]
+    fn reads_metakon_integral_time_in_minutes() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
+
+        runtime
+            .execute(
+                r#"
+                    controller = app.metakon({
+                        device = 15,
+                        channel = 2,
+                        scale = 0.1,
+                    })
+                "#,
+            )
+            .unwrap();
+
+        let responder = std::thread::spawn(move || {
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::ReadInstrument {
+                connection_id,
+                request,
+                response_sender,
+            } = command
+            else {
+                panic!("expected ReadInstrument command");
+            };
+
+            assert_eq!(connection_id, ConnectionId::PRIMARY,);
+
+            assert_eq!(
+                request,
+                InstrumentReadRequest::metakon_5x3(
+                    Metakon5x3::new(15, 2),
+                    Metakon5x3Register::IntegralTime,
+                    INTEGRAL_TIME_SCALE,
+                ),
+            );
+
+            response_sender
+                .send(Ok(InstrumentValue::Number(10.0)))
+                .unwrap();
+        });
+
+        let output = runtime
+            .evaluate_for_repl(r#"controller:read("integral_time")"#)
+            .unwrap();
+
+        responder.join().unwrap();
+
+        assert_eq!(output, vec!["10.0"]);
+    }
+
+    #[test]
     fn returns_boolean_instrument_value_to_lua() {
         let runtime = LuaRuntime::new();
 
@@ -892,6 +957,73 @@ mod tests {
         responder.join().unwrap();
 
         assert_eq!(output, vec!["15.0"]);
+    }
+
+    #[test]
+    fn writes_metakon_integral_time_in_minutes() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
+
+        runtime
+            .execute(
+                r#"
+                    controller = app.metakon({
+                        device = 15,
+                        channel = 2,
+                        scale = 0.1,
+                    })
+                "#,
+            )
+            .unwrap();
+
+        let responder = std::thread::spawn(move || {
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::WriteInstrument {
+                connection_id,
+                request,
+                response_sender,
+            } = command
+            else {
+                panic!("expected WriteInstrument command");
+            };
+
+            assert_eq!(connection_id, ConnectionId::PRIMARY,);
+
+            assert_eq!(
+                request,
+                metakon_write_request(
+                    15,
+                    2,
+                    Metakon5x3Write::IntegralTime(600),
+                    INTEGRAL_TIME_SCALE,
+                ),
+            );
+
+            response_sender
+                .send(Ok(InstrumentValue::Number(10.0)))
+                .unwrap();
+        });
+
+        let output = runtime
+            .evaluate_for_repl(
+                r#"controller:write(
+                    "integral_time",
+                    10.0
+                )"#,
+            )
+            .unwrap();
+
+        responder.join().unwrap();
+
+        assert_eq!(output, vec!["10.0"]);
     }
 
     #[test]
@@ -1051,6 +1183,40 @@ mod tests {
 
                 assert(
                     proportional_band.scale == 0.1
+                )
+
+                local integral_time =
+                    by_key.integral_time
+
+                assert(
+                    integral_time.access
+                        == "read_write"
+                )
+
+                assert(
+                    integral_time.value_type
+                        == "number"
+                )
+
+                assert(
+                    math.abs(
+                        integral_time.minimum
+                            - (1.0 / 60.0)
+                    ) < 0.000001
+                )
+
+                assert(
+                    math.abs(
+                        integral_time.maximum
+                            - 500.0
+                    ) < 0.000001
+                )
+
+                assert(
+                    math.abs(
+                        integral_time.scale
+                            - (1.0 / 60.0)
+                    ) < 0.000001
                 )
 
                 local output_power =

@@ -746,24 +746,7 @@ impl LuaMetakon5x3 {
     }
 
     fn parameter_scale(&self, parameter: Metakon5x3Register) -> f64 {
-        match parameter {
-            Metakon5x3Register::Measurement
-            | Metakon5x3Register::Setpoint
-            | Metakon5x3Register::ProportionalBand
-            | Metakon5x3Register::UpperSetpoint
-            | Metakon5x3Register::UpperHysteresis
-            | Metakon5x3Register::LowerSetpoint
-            | Metakon5x3Register::LowerHysteresis => self.scale,
-
-            Metakon5x3Register::ChannelType
-            | Metakon5x3Register::IntegralTime
-            | Metakon5x3Register::DerivativeTime
-            | Metakon5x3Register::OutputPower
-            | Metakon5x3Register::PwmPositive
-            | Metakon5x3Register::PwmNegative
-            | Metakon5x3Register::UpperOutput
-            | Metakon5x3Register::LowerOutput => 1.0,
-        }
+        parameter.engineering_scale(self.scale)
     }
 
     fn parameters(&self, lua: &Lua) -> mlua::Result<Table> {

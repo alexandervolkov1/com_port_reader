@@ -355,13 +355,13 @@ impl AcquisitionSource for SerialCommandSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{AcquisitionSource, SerialCommandSource};
+    use super::{AcquisitionSource, SerialCommandSource, scale_instrument_value};
 
     use crate::{
         connection::ConnectionId,
         data::{SeriesId, SeriesMetadata, SeriesPollingState, SeriesSource},
         instrument::{
-            InstrumentReadRequest,
+            InstrumentReadRequest, InstrumentValue,
             metakon_5x3::{Metakon5x3, Metakon5x3IdentificationError, Metakon5x3Register},
             virtual_instrument::{VirtualInstrumentId, VirtualParameterId},
         },
@@ -379,6 +379,20 @@ mod tests {
 
         assert!(output.is_empty());
         assert!(failures.is_empty());
+    }
+
+    #[test]
+    fn scales_integral_time_seconds_to_minutes() {
+        let value = scale_instrument_value(
+            InstrumentValue::Integer(600),
+            1.0 / 60.0,
+        );
+
+        let InstrumentValue::Number(value) = value else {
+            panic!("scaled integral time must be a number");
+        };
+
+        assert!((value - 10.0).abs() < 0.000001);
     }
 
     #[test]

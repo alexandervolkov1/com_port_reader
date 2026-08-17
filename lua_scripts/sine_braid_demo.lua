@@ -13,6 +13,17 @@ local base_amplitudes = {
     100.0,
 }
 
+local colors = {
+    "#35B779", -- green
+    "#20A486",
+    "#1F968B",
+    "#23888E",
+    "#287D8E",
+    "#2D708E",
+    "#33638D",
+    "#3B528B", -- blue
+}
+
 local amplitude_multiplier =
     rawget(
         _G,
@@ -334,6 +345,7 @@ function script.run()
             {
                 name = "braid_" .. index,
                 interval = 1.0,
+                color = colors[index],
             }
         )
 

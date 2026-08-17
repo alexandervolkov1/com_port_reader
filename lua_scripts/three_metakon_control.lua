@@ -8,6 +8,13 @@ local addresses = {
     5,
 }
 
+local device_colors = {
+    "#D32F2F",
+    "#1976D2",
+    "#388E3C",
+}
+
+---@type table<string, any>[]
 local parameter_controls = {
     {
         parameter = "setpoint",
@@ -32,11 +39,11 @@ local parameter_controls = {
     {
         parameter = "integral_time",
         suffix = "integral_time",
-        label = "Integral time",
-        initial = 1.0,
-        min = 1.0,
-        max = 30000.0,
-        step = 1.0,
+        label = "Integral time, min",
+        initial = 0.1,
+        min = 0.1,
+        max = 500.0,
+        step = 0.1,
     },
 
     {
@@ -47,6 +54,35 @@ local parameter_controls = {
         min = 0.0,
         max = 255.0,
         step = 1.0,
+    },
+}
+
+---@type table<string, any>[]
+local readout_parameters = {
+    {
+        parameter = "measurement",
+        suffix = "temperature",
+        label = "Temperature",
+
+        format = function(value)
+            return string.format(
+                "%.1f °C",
+                value
+            )
+        end,
+    },
+
+    {
+        parameter = "output_power",
+        suffix = "power",
+        label = "Output power",
+
+        format = function(value)
+            return string.format(
+                "%.0f %%",
+                value
+            )
+        end,
     },
 }
 
@@ -126,27 +162,120 @@ local function write_parameter(
     )
 end
 
-local function refresh_device(device)
-    for _, definition in ipairs(
-        parameter_controls
-    ) do
-        local value =
-            device.controller:read(
+local function try_read_parameter(
+    device,
+    definition
+)
+    local ok, value_or_error = pcall(
+        function()
+            return device.controller:read(
                 definition.parameter
             )
+        end
+    )
 
-        set_panel_value(
-            device.address,
-            definition.suffix,
-            value
+    if not ok then
+        return false, value_or_error
+    end
+
+    local panel_value = value_or_error
+
+    if definition.format ~= nil then
+        panel_value =
+            definition.format(value_or_error)
+    end
+
+    set_panel_value(
+        device.address,
+        definition.suffix,
+        panel_value
+    )
+
+    return true, nil
+end
+
+local function refresh_device(device)
+    local failures = {}
+
+    -- Setpoint is used as a connectivity probe. If it
+    -- cannot be read, avoid waiting for every remaining
+    -- parameter to time out on a disconnected device.
+    local connected, connection_error =
+        try_read_parameter(
+            device,
+            parameter_controls[1]
         )
+
+    if not connected then
+        set_status(
+            "Metakon "
+                .. device.address
+                .. " is unavailable. See Application log."
+        )
+
+        return false, connection_error
+    end
+
+    -- Read measurement and output power separately.
+    -- Successful reads automatically resume their
+    -- suspended periodic series.
+    for _, definition in ipairs(
+        readout_parameters
+    ) do
+        local ok =
+            try_read_parameter(
+                device,
+                definition
+            )
+
+        if not ok then
+            table.insert(
+                failures,
+                definition.parameter
+            )
+        end
+    end
+
+    -- Setpoint has already been read as the connectivity
+    -- probe. Read the remaining PID parameters even if
+    -- measurement failed because of a thermocouple alarm.
+    for index = 2, #parameter_controls do
+        local definition =
+            parameter_controls[index]
+
+        local ok =
+            try_read_parameter(
+                device,
+                definition
+            )
+
+        if not ok then
+            table.insert(
+                failures,
+                definition.parameter
+            )
+        end
+    end
+
+    if #failures == 0 then
+        set_status(
+            "Metakon "
+                .. device.address
+                .. " parameters refreshed."
+        )
+
+        return true, nil
     end
 
     set_status(
         "Metakon "
             .. device.address
-            .. " parameters refreshed."
+            .. " refresh failed for: "
+            .. table.concat(failures, ", ")
+            .. ". See Application log."
     )
+
+    return false, table.concat(failures, ", ")
 end
 
 table.insert(
@@ -155,13 +284,14 @@ table.insert(
         kind = "readout",
         id = "status",
         label = "Status",
-        initial = "Use Refresh to read current PID settings.",
+        initial = "Waiting for initial Metakon read.",
     }
 )
 
-for _, address in ipairs(addresses) do
+for index, address in ipairs(addresses) do
     local device = {
         address = address,
+        color = device_colors[index],
 
         controller = app.metakon({
             connection = "primary",
@@ -187,6 +317,23 @@ for _, address in ipairs(addresses) do
                 .. " / channel 0",
         }
     )
+
+    for _, definition in ipairs(
+        readout_parameters
+    ) do
+        table.insert(
+            controls,
+            {
+                kind = "readout",
+                id = control_id(
+                    address,
+                    definition.suffix
+                ),
+                label = definition.label,
+                initial = "—",
+            }
+        )
+    end
 
     for _, definition in ipairs(
         parameter_controls
@@ -253,8 +400,8 @@ for _, address in ipairs(addresses) do
 end
 
 for _, address in ipairs(addresses) do
-    local controller =
-        devices[address].controller
+    local device = devices[address]
+    local controller = device.controller
 
     controller:add(
         "measurement",
@@ -263,6 +410,7 @@ for _, address in ipairs(addresses) do
                 .. address
                 .. "_temperature",
             interval = POLL_INTERVAL,
+            color = device.color,
         }
     )
 
@@ -273,6 +421,7 @@ for _, address in ipairs(addresses) do
                 .. address
                 .. "_power",
             interval = POLL_INTERVAL,
+            color = device.color,
         }
     )
 
@@ -283,10 +432,48 @@ for _, address in ipairs(addresses) do
                 .. address
                 .. "_setpoint",
             interval = POLL_INTERVAL,
+            color = device.color,
         }
     )
 end
 
-app.start()
-
 app.register_script(script)
+
+local initial_refresh_failures = 0
+
+for _, address in ipairs(addresses) do
+    local ok, refreshed_or_error =
+        pcall(
+            refresh_device,
+            devices[address]
+        )
+
+    if not ok or not refreshed_or_error then
+        initial_refresh_failures =
+            initial_refresh_failures + 1
+
+        if not ok then
+            app.log(
+                "Unexpected initial refresh failure "
+                    .. "for Metakon "
+                    .. address
+                    .. ": "
+                    .. tostring(refreshed_or_error)
+            )
+        end
+    end
+end
+
+if initial_refresh_failures == 0 then
+    set_status(
+        "Initial Metakon refresh completed."
+    )
+else
+    set_status(
+        "Initial refresh completed with "
+            .. initial_refresh_failures
+            .. " error(s). Use Refresh to retry."
+    )
+end
+
+app.start()

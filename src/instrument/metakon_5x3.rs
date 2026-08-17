@@ -12,6 +12,7 @@ use super::{ParameterAccess, ParameterDescriptor, ParameterRange, ParameterValue
 pub const DEFAULT_DEVICE: u8 = 1;
 pub const DEFAULT_CHANNEL: u8 = 0;
 pub const CHANNEL_TYPE_CODE: u8 = 0x03;
+pub const INTEGRAL_TIME_SCALE: f64 = 1.0 / 60.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Metakon5x3 {
@@ -287,6 +288,28 @@ impl Metakon5x3Register {
                 value_type: ParameterValueType::Boolean,
                 range: ParameterRange::integer(0, 1),
             },
+        }
+    }
+
+    pub const fn engineering_scale(self, process_value_scale: f64) -> f64 {
+        match self {
+            Self::Measurement
+            | Self::Setpoint
+            | Self::ProportionalBand
+            | Self::UpperSetpoint
+            | Self::UpperHysteresis
+            | Self::LowerSetpoint
+            | Self::LowerHysteresis => process_value_scale,
+
+            Self::IntegralTime => INTEGRAL_TIME_SCALE,
+
+            Self::ChannelType
+            | Self::DerivativeTime
+            | Self::OutputPower
+            | Self::PwmPositive
+            | Self::PwmNegative
+            | Self::UpperOutput
+            | Self::LowerOutput => 1.0,
         }
     }
 
