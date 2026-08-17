@@ -57,32 +57,16 @@ local parameter_controls = {
     },
 }
 
+-- These parameters are read during Refresh to restore
+-- their suspended series, but are not shown in the panel.
 ---@type table<string, any>[]
-local readout_parameters = {
+local recovery_parameters = {
     {
         parameter = "measurement",
-        suffix = "temperature",
-        label = "Temperature",
-
-        format = function(value)
-            return string.format(
-                "%.1f °C",
-                value
-            )
-        end,
     },
 
     {
         parameter = "output_power",
-        suffix = "power",
-        label = "Output power",
-
-        format = function(value)
-            return string.format(
-                "%.0f %%",
-                value
-            )
-        end,
     },
 }
 
@@ -178,18 +162,15 @@ local function try_read_parameter(
         return false, value_or_error
     end
 
-    local panel_value = value_or_error
-
-    if definition.format ~= nil then
-        panel_value =
-            definition.format(value_or_error)
+    -- Only PID parameters have a corresponding panel
+    -- control. Recovery parameters are read silently.
+    if definition.suffix ~= nil then
+        set_panel_value(
+            device.address,
+            definition.suffix,
+            value_or_error
+        )
     end
-
-    set_panel_value(
-        device.address,
-        definition.suffix,
-        panel_value
-    )
 
     return true, nil
 end
@@ -216,11 +197,11 @@ local function refresh_device(device)
         return false, connection_error
     end
 
-    -- Read measurement and output power separately.
-    -- Successful reads automatically resume their
-    -- suspended periodic series.
+    -- Successful reads restore the suspended temperature
+    -- and output-power series without showing the values
+    -- in the control panel.
     for _, definition in ipairs(
-        readout_parameters
+        recovery_parameters
     ) do
         local ok =
             try_read_parameter(
@@ -319,23 +300,6 @@ for index, address in ipairs(addresses) do
     )
 
     for _, definition in ipairs(
-        readout_parameters
-    ) do
-        table.insert(
-            controls,
-            {
-                kind = "readout",
-                id = control_id(
-                    address,
-                    definition.suffix
-                ),
-                label = definition.label,
-                initial = "—",
-            }
-        )
-    end
-
-    for _, definition in ipairs(
         parameter_controls
     ) do
         local current_device = device
@@ -376,7 +340,6 @@ for index, address in ipairs(addresses) do
     end
 
     local current_device = device
-
     local refresh_callback =
         "refresh_" .. address
 
