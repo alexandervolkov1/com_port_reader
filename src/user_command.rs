@@ -3,7 +3,7 @@ use crossbeam_channel::Sender;
 use crate::{
     acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
     connection::ConnectionId,
-    data::NewSeries,
+    data::{NewSeries, SeriesColor},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
 };
 
@@ -16,6 +16,10 @@ pub enum UserCommand {
     Rename {
         current_name: String,
         new_name: String,
+    },
+    SetSeriesColor {
+        name: String,
+        color: Option<SeriesColor>,
     },
     Retry {
         name: String,

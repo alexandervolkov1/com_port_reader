@@ -6,8 +6,8 @@ use std::sync::{
 use crate::{connection::ConnectionId, instrument::InstrumentReadRequest};
 
 use super::{
-    NewSeries, Series, SeriesId, SeriesMetadata, SeriesNameError, SeriesPollingState, SeriesSource,
-    series_name::normalize_series_name,
+    NewSeries, Series, SeriesColor, SeriesId, SeriesMetadata, SeriesNameError, SeriesPollingState,
+    SeriesSource, series_name::normalize_series_name,
 };
 
 struct SeriesStoreInner {
@@ -324,6 +324,16 @@ impl SeriesStore {
             series.visible = visible;
 
             true
+        })
+    }
+
+    pub fn set_color_by_name(&self, name: &str, color: Option<SeriesColor>) -> Option<SeriesId> {
+        self.with_mut(|series| {
+            let series = series.iter_mut().find(|series| series.name == name)?;
+
+            series.color = color;
+
+            Some(series.id)
         })
     }
 
@@ -1111,5 +1121,35 @@ mod tests {
             assert_eq!(series.len(), 1);
             assert_eq!(series[0].color, Some(color));
         });
+    }
+
+    #[test]
+    fn changes_and_resets_series_color_by_name() {
+        let store = SeriesStore::new();
+        let color = SeriesColor::new(0x1A, 0x2B, 0x3C);
+
+        let id = store
+            .add_series(NewSeries::named_serial_command(
+                "read temperature",
+                "temperature",
+            ))
+            .unwrap();
+
+        assert_eq!(
+            store.set_color_by_name("temperature", Some(color),),
+            Some(id),
+        );
+
+        store.with(|series| {
+            assert_eq!(series[0].color, Some(color));
+        });
+
+        assert_eq!(store.set_color_by_name("temperature", None), Some(id),);
+
+        store.with(|series| {
+            assert_eq!(series[0].color, None);
+        });
+
+        assert_eq!(store.set_color_by_name("missing", Some(color),), None,);
     }
 }

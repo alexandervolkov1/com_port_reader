@@ -157,6 +157,12 @@ impl CommandDispatcher {
                 }
             }
 
+            UserCommand::SetSeriesColor { name, color } => {
+                if let Err(error) = self.primary_worker().set_series_color(name, color) {
+                    self.set_worker_error(error);
+                }
+            }
+
             UserCommand::Retry { name } => {
                 self.retry_series(name);
             }

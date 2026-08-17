@@ -108,6 +108,8 @@ pub fn install(
 
     register_rename_series(lua, &app, command_sender.clone())?;
 
+    register_set_series_color(lua, &app, command_sender.clone())?;
+
     register_retry_series(lua, &app, command_sender.clone())?;
 
     register_command(
@@ -1162,6 +1164,23 @@ fn register_rename_series(
     })?;
 
     app.set("rename", function)
+}
+
+fn register_set_series_color(
+    lua: &Lua,
+    app: &Table,
+    command_sender: Sender<UserCommand>,
+) -> mlua::Result<()> {
+    let function = lua.create_function(move |_, (name, color): (String, Option<String>)| {
+        let color = color
+            .map(|value| value.parse::<SeriesColor>())
+            .transpose()
+            .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+        send_application_command(&command_sender, UserCommand::SetSeriesColor { name, color })
+    })?;
+
+    app.set("set_color", function)
 }
 
 fn register_retry_series(

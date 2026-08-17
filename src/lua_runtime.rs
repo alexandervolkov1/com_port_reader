@@ -440,7 +440,7 @@ mod tests {
 
         runtime
             .execute(
-                r#"
+                r##"
                     app.delete("temperature")
 
                     app.rename(
@@ -448,10 +448,20 @@ mod tests {
                         "reactor_pressure"
                     )
 
+                    app.set_color(
+                        "reactor_pressure",
+                        "#1A2B3C"
+                    )
+
+                    app.set_color(
+                        "reactor_pressure",
+                        nil
+                    )
+
                     app.retry("temperature")
 
                     app.retry_all()
-                "#,
+                "##,
             )
             .unwrap();
 
@@ -469,6 +479,30 @@ mod tests {
             }
                 if current_name == "pressure"
                     && new_name == "reactor_pressure",
+        ));
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::SetSeriesColor {
+                name,
+                color: Some(color),
+            }
+                if name == "reactor_pressure"
+                    && color
+                        == SeriesColor::new(
+                            0x1A,
+                            0x2B,
+                            0x3C,
+                        ),
+        ));
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::SetSeriesColor {
+                name,
+                color: None,
+            }
+                if name == "reactor_pressure",
         ));
 
         assert!(matches!(

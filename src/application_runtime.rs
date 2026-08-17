@@ -606,6 +606,11 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             new_name: new_name.clone(),
         }),
 
+        UserCommand::SetSeriesColor { name, color } => Some(ProcessAction::SetSeriesColor {
+            name: name.clone(),
+            color: color.map(|color| color.to_string()),
+        }),
+
         UserCommand::Retry { .. } | UserCommand::RetryAll | UserCommand::Log { .. } => None,
 
         UserCommand::Start => Some(ProcessAction::StartAcquisition),
@@ -688,6 +693,22 @@ mod tests {
                 name: Some("temperature".to_owned()),
                 source: "COM command: read temperature".to_owned(),
                 polling_interval_seconds: Some(0.25),
+                color: Some("#1A2B3C".to_owned()),
+            }),
+        );
+    }
+
+    #[test]
+    fn converts_series_color_change_to_process_action() {
+        let command = UserCommand::SetSeriesColor {
+            name: "temperature".to_owned(),
+            color: Some(SeriesColor::new(0x1A, 0x2B, 0x3C)),
+        };
+
+        assert_eq!(
+            process_action_from_command(&command),
+            Some(ProcessAction::SetSeriesColor {
+                name: "temperature".to_owned(),
                 color: Some("#1A2B3C".to_owned()),
             }),
         );

@@ -367,6 +367,7 @@ fn action_type_name(action: &ProcessAction) -> &'static str {
         ProcessAction::ReadInstrument { .. } => "read_instrument",
         ProcessAction::WriteInstrument { .. } => "write_instrument",
         ProcessAction::DescribeVirtualInstruments { .. } => "describe_virtual_instruments",
+        ProcessAction::SetSeriesColor { .. } => "set_series_color",
     }
 }
 
@@ -387,7 +388,8 @@ fn action_connection_id(action: &ProcessAction) -> Option<String> {
         | ProcessAction::StopEmulator
         | ProcessAction::DeleteSeriesByName { .. }
         | ProcessAction::RenameSeries { .. }
-        | ProcessAction::SetSeriesVisibility { .. } => None,
+        | ProcessAction::SetSeriesVisibility { .. }
+        | ProcessAction::SetSeriesColor { .. } => None,
     };
 
     connection_id.map(|connection_id| connection_id.value().to_string())

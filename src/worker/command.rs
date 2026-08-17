@@ -4,7 +4,7 @@ use crossbeam_channel::Sender;
 
 use crate::{
     acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
-    data::{NewSeries, SeriesId},
+    data::{NewSeries, SeriesColor, SeriesId},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     serial_connection::SerialPortConfig,
 };
@@ -23,6 +23,10 @@ pub enum WorkerCommand {
     RenameSeries {
         current_name: String,
         new_name: String,
+    },
+    SetSeriesColor {
+        name: String,
+        color: Option<SeriesColor>,
     },
     StartCsvRecording(PathBuf),
     StopRecording,

@@ -5,7 +5,7 @@ use crate::serial_connection::SerialConnectionError;
 use crate::{
     acquisition::AcquisitionError,
     connection::ConnectionId,
-    data::{AddSeriesError, RenameSeriesError, SeriesId},
+    data::{AddSeriesError, RenameSeriesError, SeriesColor, SeriesId},
     sample_sink::SampleSinkError,
 };
 
@@ -59,6 +59,11 @@ pub enum WorkerEvent {
     SeriesRenamed {
         id: SeriesId,
         name: String,
+    },
+    SeriesColorChanged {
+        id: SeriesId,
+        name: String,
+        color: Option<SeriesColor>,
     },
     SeriesRenameFailed(RenameSeriesError),
     SampleSinkFailed(SampleSinkError),
@@ -159,6 +164,28 @@ impl std::fmt::Display for WorkerEvent {
 
             Self::SeriesRenameFailed(error) => {
                 write!(formatter, "Failed to rename series: {error}")
+            }
+
+            Self::SeriesColorChanged {
+                id,
+                name,
+                color: Some(color),
+            } => {
+                write!(
+                    formatter,
+                    "Series '{name}' ({id}) color changed to {color}.",
+                )
+            }
+
+            Self::SeriesColorChanged {
+                id,
+                name,
+                color: None,
+            } => {
+                write!(
+                    formatter,
+                    "Series '{name}' ({id}) color reset to automatic.",
+                )
             }
 
             Self::SampleSinkFailed(error) => {

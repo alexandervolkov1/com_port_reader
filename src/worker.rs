@@ -468,6 +468,16 @@ impl Worker {
                         let _ = event_sender.send(event);
                     }
 
+                    Ok(WorkerCommand::SetSeriesColor { name, color }) => {
+                        let event = match series.set_color_by_name(&name, color) {
+                            Some(id) => WorkerEvent::SeriesColorChanged { id, name, color },
+
+                            None => WorkerEvent::SeriesNotFound(name),
+                        };
+
+                        let _ = event_sender.send(event);
+                    }
+
                     Ok(WorkerCommand::Connection(command)) => {
                         let acquisition_running =
                             matches!(&state, AcquisitionState::Running { .. });

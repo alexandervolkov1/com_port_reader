@@ -56,6 +56,11 @@ pub enum ProcessAction {
         new_name: String,
     },
 
+    SetSeriesColor {
+        name: String,
+        color: Option<String>,
+    },
+
     SetSeriesVisibility {
         series_id: SeriesId,
         visible: bool,

@@ -5,7 +5,7 @@ use crossbeam_channel::Sender;
 use crate::{
     acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
     connection::ConnectionId,
-    data::{NewSeries, SeriesId},
+    data::{NewSeries, SeriesColor, SeriesId},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     serial_connection::SerialPortConfig,
 };
@@ -59,6 +59,14 @@ impl WorkerHandle {
             current_name,
             new_name,
         })
+    }
+
+    pub fn set_series_color(
+        &self,
+        name: String,
+        color: Option<SeriesColor>,
+    ) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::SetSeriesColor { name, color })
     }
 
     pub fn set_visibility(&self, id: SeriesId, visible: bool) -> Result<(), WorkerHandleError> {
