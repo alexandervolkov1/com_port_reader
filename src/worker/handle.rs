@@ -151,7 +151,8 @@ mod tests {
     use crossbeam_channel::unbounded;
 
     use super::WorkerHandle;
-    use crate::connection::ConnectionId;
+
+    use crate::{connection::ConnectionId, worker::WorkerCommand};
 
     #[test]
     fn stores_connection_id() {
@@ -162,5 +163,19 @@ mod tests {
         let handle = WorkerHandle::new(connection_id, sender);
 
         assert_eq!(handle.connection_id(), connection_id,);
+    }
+
+    #[test]
+    fn requests_series_schedule_refresh() {
+        let (sender, receiver) = unbounded();
+
+        let handle = WorkerHandle::new(ConnectionId::PRIMARY, sender);
+
+        handle.refresh_series_schedule().unwrap();
+
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            WorkerCommand::RefreshSeriesSchedule,
+        ));
     }
 }

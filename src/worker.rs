@@ -908,10 +908,20 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use super::{SeriesSchedule, synchronize_series_schedules};
-    use crate::connection::ConnectionId;
-    use crate::data::{
-        SamplingInterval, SeriesId, SeriesMetadata, SeriesPollingState, SeriesSource,
+    use crossbeam_channel::unbounded;
+
+    use super::{
+        MAX_CONSECUTIVE_POLL_FAILURES, SeriesSchedule, WorkerEvent, WorkerEventSender,
+        synchronize_series_schedules, update_series_polling_health,
+    };
+
+    use crate::{
+        acquisition::{AcquisitionError, SeriesAcquisitionFailure},
+        connection::ConnectionId,
+        data::{
+            NewSeries, SamplingInterval, SeriesId, SeriesMetadata, SeriesPollingState,
+            SeriesSource, SeriesStore,
+        },
     };
 
     fn metadata(id: u64, sampling_interval: Option<SamplingInterval>) -> SeriesMetadata {
@@ -990,5 +1000,173 @@ mod tests {
         );
 
         assert_eq!(schedules[&SeriesId::new(2)].next_poll, custom_deadline,);
+    }
+
+    #[test]
+    fn suspends_only_failed_series_after_three_failures() {
+        let store = SeriesStore::new();
+
+        let failed_id = store
+            .add_series(NewSeries::named_serial_command("read failed", "failed"))
+            .unwrap();
+
+        let healthy_id = store
+            .add_series(NewSeries::named_serial_command("read healthy", "healthy"))
+            .unwrap();
+
+        let polled_series = store.polling_metadata_for_connection(ConnectionId::PRIMARY);
+
+        let mut schedules = HashMap::new();
+
+        synchronize_series_schedules(
+            &mut schedules,
+            &polled_series,
+            Duration::from_secs(1),
+            Instant::now(),
+        );
+
+        let failures = vec![SeriesAcquisitionFailure {
+            series_id: failed_id,
+            series_name: "failed".to_owned(),
+            error: AcquisitionError::from("timeout"),
+        }];
+
+        let (event_sender, event_receiver) = unbounded();
+
+        let event_sender = WorkerEventSender::new(ConnectionId::PRIMARY, event_sender);
+
+        for expected_failures in 1..MAX_CONSECUTIVE_POLL_FAILURES {
+            update_series_polling_health(
+                &mut schedules,
+                &store,
+                &polled_series,
+                &failures,
+                &event_sender,
+            );
+
+            assert_eq!(
+                schedules[&failed_id].consecutive_failures,
+                expected_failures,
+            );
+
+            assert_eq!(
+                store
+                    .metadata()
+                    .iter()
+                    .find(|series| series.id == failed_id)
+                    .unwrap()
+                    .polling_state,
+                SeriesPollingState::Enabled,
+            );
+
+            assert!(event_receiver.try_recv().is_err());
+        }
+
+        update_series_polling_health(
+            &mut schedules,
+            &store,
+            &polled_series,
+            &failures,
+            &event_sender,
+        );
+
+        let metadata = store.metadata();
+
+        assert_eq!(
+            metadata
+                .iter()
+                .find(|series| series.id == failed_id)
+                .unwrap()
+                .polling_state,
+            SeriesPollingState::Suspended,
+        );
+
+        assert_eq!(
+            metadata
+                .iter()
+                .find(|series| series.id == healthy_id)
+                .unwrap()
+                .polling_state,
+            SeriesPollingState::Enabled,
+        );
+
+        assert!(!schedules.contains_key(&failed_id));
+        assert!(schedules.contains_key(&healthy_id));
+
+        let event = event_receiver.try_recv().unwrap();
+
+        assert_eq!(event.connection_id(), ConnectionId::PRIMARY,);
+
+        assert!(matches!(
+            event.event(),
+            WorkerEvent::SeriesPollingSuspended {
+                id,
+                name,
+                error,
+            } if *id == failed_id
+                && name == "failed"
+                && error.to_string() == "timeout",
+        ));
+
+        assert!(event_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn successful_poll_resets_failure_counter() {
+        let store = SeriesStore::new();
+
+        let id = store
+            .add_series(NewSeries::named_serial_command("read value", "value"))
+            .unwrap();
+
+        let polled_series = store.polling_metadata_for_connection(ConnectionId::PRIMARY);
+
+        let mut schedules = HashMap::new();
+
+        synchronize_series_schedules(
+            &mut schedules,
+            &polled_series,
+            Duration::from_secs(1),
+            Instant::now(),
+        );
+
+        let failures = vec![SeriesAcquisitionFailure {
+            series_id: id,
+            series_name: "value".to_owned(),
+            error: AcquisitionError::from("timeout"),
+        }];
+
+        let (event_sender, event_receiver) = unbounded();
+
+        let event_sender = WorkerEventSender::new(ConnectionId::PRIMARY, event_sender);
+
+        update_series_polling_health(
+            &mut schedules,
+            &store,
+            &polled_series,
+            &failures,
+            &event_sender,
+        );
+
+        update_series_polling_health(
+            &mut schedules,
+            &store,
+            &polled_series,
+            &failures,
+            &event_sender,
+        );
+
+        assert_eq!(schedules[&id].consecutive_failures, 2,);
+
+        update_series_polling_health(&mut schedules, &store, &polled_series, &[], &event_sender);
+
+        assert_eq!(schedules[&id].consecutive_failures, 0,);
+
+        assert_eq!(
+            store.metadata()[0].polling_state,
+            SeriesPollingState::Enabled,
+        );
+
+        assert!(event_receiver.try_recv().is_err());
     }
 }

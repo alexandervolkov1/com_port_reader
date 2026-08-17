@@ -1020,4 +1020,76 @@ mod tests {
             ],
         );
     }
+
+    #[test]
+    fn resumes_series_polling_by_name() {
+        let store = SeriesStore::new();
+
+        let id = add_named(&store, "temperature");
+
+        assert!(store.suspend_polling(id));
+
+        assert_eq!(
+            store.resume_polling_by_name("temperature"),
+            Some((id, ConnectionId::PRIMARY, true,)),
+        );
+
+        assert_eq!(
+            store.metadata()[0].polling_state,
+            SeriesPollingState::Enabled,
+        );
+
+        assert_eq!(
+            store.resume_polling_by_name("temperature"),
+            Some((id, ConnectionId::PRIMARY, false,)),
+        );
+
+        assert_eq!(store.resume_polling_by_name("missing"), None,);
+    }
+
+    #[test]
+    fn resumes_all_suspended_series() {
+        let store = SeriesStore::new();
+
+        let primary_id = store
+            .add_series(
+                NewSeries::named_serial_command("read primary", "primary")
+                    .with_connection(ConnectionId::PRIMARY),
+            )
+            .unwrap();
+
+        let secondary_connection = ConnectionId::new(2);
+
+        let secondary_id = store
+            .add_series(
+                NewSeries::named_serial_command("read secondary", "secondary")
+                    .with_connection(secondary_connection),
+            )
+            .unwrap();
+
+        let enabled_id = add_named(&store, "enabled");
+
+        assert!(store.suspend_polling(primary_id));
+        assert!(store.suspend_polling(secondary_id));
+
+        assert_eq!(
+            store.resume_all_polling(),
+            vec![
+                (primary_id, "primary".to_owned(), ConnectionId::PRIMARY,),
+                (secondary_id, "secondary".to_owned(), secondary_connection,),
+            ],
+        );
+
+        let metadata = store.metadata();
+
+        assert!(
+            metadata
+                .iter()
+                .all(|series| { series.polling_state == SeriesPollingState::Enabled })
+        );
+
+        assert!(metadata.iter().any(|series| { series.id == enabled_id }));
+
+        assert!(store.resume_all_polling().is_empty());
+    }
 }
