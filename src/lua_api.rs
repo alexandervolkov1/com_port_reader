@@ -107,6 +107,16 @@ pub fn install(
 
     register_rename_series(lua, &app, command_sender.clone())?;
 
+    register_retry_series(lua, &app, command_sender.clone())?;
+
+    register_command(
+        lua,
+        &app,
+        "retry_all",
+        command_sender.clone(),
+        retry_all_command,
+    )?;
+
     register_send_serial(lua, &app, command_sender, application_definition.clone())?;
 
     crate::lua_application_script::install(lua, &app, application_event_sender)?;
@@ -1140,6 +1150,18 @@ fn register_rename_series(
     app.set("rename", function)
 }
 
+fn register_retry_series(
+    lua: &Lua,
+    app: &Table,
+    command_sender: Sender<UserCommand>,
+) -> mlua::Result<()> {
+    let function = lua.create_function(move |_, name: String| {
+        send_application_command(&command_sender, UserCommand::Retry { name })
+    })?;
+
+    app.set("retry", function)
+}
+
 fn register_log(lua: &Lua, app: &Table, command_sender: Sender<UserCommand>) -> mlua::Result<()> {
     let function = lua.create_function(move |_, message: String| {
         send_application_command(&command_sender, UserCommand::Log { message })
@@ -1227,4 +1249,8 @@ fn start_emulator_command() -> UserCommand {
 
 fn stop_emulator_command() -> UserCommand {
     UserCommand::StopEmulator
+}
+
+fn retry_all_command() -> UserCommand {
+    UserCommand::RetryAll
 }

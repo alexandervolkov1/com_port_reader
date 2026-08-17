@@ -399,12 +399,16 @@ mod tests {
         runtime
             .execute(
                 r#"
-                app.delete("temperature")
+                    app.delete("temperature")
 
-                app.rename(
-                    "pressure",
-                    "reactor_pressure"
-                )
+                    app.rename(
+                        "pressure",
+                        "reactor_pressure"
+                    )
+
+                    app.retry("temperature")
+
+                    app.retry_all()
                 "#,
             )
             .unwrap();
@@ -422,8 +426,18 @@ mod tests {
                 new_name,
             }
                 if current_name == "pressure"
-                    && new_name
-                        == "reactor_pressure",
+                    && new_name == "reactor_pressure",
+        ));
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::Retry { name }
+                if name == "temperature",
+        ));
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::RetryAll,
         ));
 
         assert!(command_receiver.try_recv().is_err());

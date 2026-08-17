@@ -477,6 +477,8 @@ impl Worker {
                         );
                     }
 
+                    Ok(WorkerCommand::RefreshSeriesSchedule) => {}
+
                     Err(RecvTimeoutError::Timeout) => {}
 
                     Err(RecvTimeoutError::Disconnected) => {

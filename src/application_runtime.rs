@@ -164,6 +164,7 @@ impl ApplicationRuntime {
             connection_router,
             serial_connections,
             definition.clone(),
+            series.clone(),
             event_receiver,
             log.clone(),
         );
@@ -603,6 +604,8 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             new_name: new_name.clone(),
         }),
 
+        UserCommand::Retry { .. } | UserCommand::RetryAll | UserCommand::Log { .. } => None,
+
         UserCommand::Start => Some(ProcessAction::StartAcquisition),
 
         UserCommand::Stop => Some(ProcessAction::StopAcquisition),
@@ -648,8 +651,6 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
                 connection_id: *connection_id,
             })
         }
-
-        UserCommand::Log { .. } => None,
     }
 }
 

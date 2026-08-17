@@ -1,11 +1,12 @@
 use crossbeam_channel::Receiver;
+use std::collections::BTreeSet;
 
 use crate::{
     acquisition::AcquisitionError,
     app_log::LogHandle,
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
-    data::{NewSeries, SeriesId},
+    data::{NewSeries, SeriesId, SeriesStore},
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
     user_command::UserCommand,
     worker::{
@@ -21,6 +22,7 @@ pub(crate) struct CommandDispatcher {
     connections: ConnectionRouter,
     serial_connections: SerialConnectionRegistry,
     application_definition: ApplicationDefinition,
+    series: SeriesStore,
     event_receiver: Receiver<ConnectionWorkerEvent>,
     log: LogHandle,
 }
@@ -30,6 +32,7 @@ impl CommandDispatcher {
         connections: ConnectionRouter,
         serial_connections: SerialConnectionRegistry,
         application_definition: ApplicationDefinition,
+        series: SeriesStore,
         event_receiver: Receiver<ConnectionWorkerEvent>,
         log: LogHandle,
     ) -> Self {
@@ -37,6 +40,7 @@ impl CommandDispatcher {
             connections,
             serial_connections,
             application_definition,
+            series,
             event_receiver,
             log,
         }
@@ -151,6 +155,14 @@ impl CommandDispatcher {
                 if let Err(error) = self.primary_worker().rename_series(current_name, new_name) {
                     self.set_worker_error(error);
                 }
+            }
+
+            UserCommand::Retry { name } => {
+                self.retry_series(name);
+            }
+
+            UserCommand::RetryAll => {
+                self.retry_all_series();
             }
 
             UserCommand::Start => {
@@ -373,6 +385,75 @@ impl CommandDispatcher {
         if let Err(error) = self.primary_worker().add_series(new_series) {
             self.set_worker_error(error);
         }
+    }
+
+    fn retry_series(&self, name: String) {
+        let Some((id, connection_id, was_suspended)) = self.series.resume_polling_by_name(&name)
+        else {
+            self.log.error(format!("Series '{name}' not found."));
+
+            return;
+        };
+
+        if !was_suspended {
+            self.log.info(format!(
+                "Series '{name}' ({id}) polling is already enabled.",
+            ));
+
+            return;
+        }
+
+        let worker = match self.connection_worker(connection_id) {
+            Ok(worker) => worker,
+
+            Err(error) => {
+                self.log.error(error.to_string());
+                return;
+            }
+        };
+
+        if let Err(error) = worker.refresh_series_schedule() {
+            self.set_worker_error(error);
+            return;
+        }
+
+        self.log
+            .info(format!("Series '{name}' ({id}) polling retry requested.",));
+    }
+
+    fn retry_all_series(&self) {
+        let resumed = self.series.resume_all_polling();
+
+        if resumed.is_empty() {
+            self.log.info("There are no suspended series to retry.");
+
+            return;
+        }
+
+        let connection_ids = resumed
+            .iter()
+            .map(|(_, _, connection_id)| *connection_id)
+            .collect::<BTreeSet<_>>();
+
+        for connection_id in connection_ids {
+            let worker = match self.connection_worker(connection_id) {
+                Ok(worker) => worker,
+
+                Err(error) => {
+                    self.log.error(error.to_string());
+                    continue;
+                }
+            };
+
+            if let Err(error) = worker.refresh_series_schedule() {
+                self.set_worker_error(error);
+            }
+        }
+
+        self.log.info(format!(
+            "Polling retry requested for {} suspended series.",
+            resumed.len(),
+        ));
     }
 
     fn set_worker_error(&self, error: WorkerHandleError) {

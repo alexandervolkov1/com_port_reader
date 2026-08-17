@@ -129,6 +129,10 @@ impl WorkerHandle {
             ConnectionCommand::DescribeVirtualInstruments { response_sender },
         ))
     }
+
+    pub fn refresh_series_schedule(&self) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::RefreshSeriesSchedule)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -17,7 +17,10 @@ pub enum UserCommand {
         current_name: String,
         new_name: String,
     },
-
+    Retry {
+        name: String,
+    },
+    RetryAll,
     Start,
     Stop,
     Clear,

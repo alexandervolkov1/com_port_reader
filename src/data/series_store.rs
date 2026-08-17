@@ -284,6 +284,35 @@ impl SeriesStore {
         })
     }
 
+    pub fn resume_polling_by_name(&self, name: &str) -> Option<(SeriesId, ConnectionId, bool)> {
+        self.with_mut(|series| {
+            let series = series.iter_mut().find(|series| series.name == name)?;
+
+            let was_suspended = series.polling_state == SeriesPollingState::Suspended;
+
+            series.polling_state = SeriesPollingState::Enabled;
+
+            Some((series.id, series.connection_id, was_suspended))
+        })
+    }
+
+    pub fn resume_all_polling(&self) -> Vec<(SeriesId, String, ConnectionId)> {
+        self.with_mut(|series| {
+            series
+                .iter_mut()
+                .filter_map(|series| {
+                    if series.polling_state != SeriesPollingState::Suspended {
+                        return None;
+                    }
+
+                    series.polling_state = SeriesPollingState::Enabled;
+
+                    Some((series.id, series.name.clone(), series.connection_id))
+                })
+                .collect()
+        })
+    }
+
     pub fn set_visibility(&self, id: SeriesId, visible: bool) -> bool {
         self.with_mut(|series| {
             let Some(series) = series.iter_mut().find(|series| series.id == id) else {

@@ -27,6 +27,7 @@ pub enum WorkerCommand {
     StartCsvRecording(PathBuf),
     StopRecording,
     Connection(ConnectionCommand),
+    RefreshSeriesSchedule,
 }
 
 pub enum ConnectionCommand {
