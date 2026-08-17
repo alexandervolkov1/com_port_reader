@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use egui_plot::PlotPoint;
 
-use crate::data::SeriesId;
+use crate::data::{SeriesColor, SeriesId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PlotPaneId(u64);
@@ -17,6 +17,7 @@ impl PlotPaneId {
 pub struct PlotLine {
     pub name: String,
     pub points: Vec<PlotPoint>,
+    pub color: Option<SeriesColor>,
 }
 
 pub struct PlotPane {

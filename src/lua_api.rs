@@ -8,7 +8,7 @@ use crate::{
     connection::ConnectionId,
     data::{
         DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, NewSeries,
-        SamplingInterval,
+        SamplingInterval, SeriesColor,
     },
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterRange,
@@ -32,6 +32,7 @@ const VIRTUAL_INSTRUMENT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 struct LuaSeriesOptions {
     name: Option<String>,
     sampling_interval: Option<SamplingInterval>,
+    color: Option<SeriesColor>,
 }
 
 pub fn install(
@@ -145,6 +146,7 @@ fn parse_series_options(value: Option<Value>) -> mlua::Result<LuaSeriesOptions> 
         Some(Value::String(name)) => Ok(LuaSeriesOptions {
             name: Some(name.to_str()?.to_string()),
             sampling_interval: None,
+            ..LuaSeriesOptions::default()
         }),
 
         Some(Value::Table(options)) => parse_series_options_table(&options),
@@ -174,6 +176,7 @@ fn parse_serial_series_options(
             LuaSeriesOptions {
                 name: Some(name.to_str()?.to_string()),
                 sampling_interval: None,
+                ..LuaSeriesOptions::default()
             },
             ConnectionId::PRIMARY,
         )),
@@ -200,7 +203,7 @@ fn validate_series_option_keys(options: &Table, allow_connection: bool) -> mlua:
     for pair in options.pairs::<String, Value>() {
         let (key, _) = pair?;
 
-        let known_option = matches!(key.as_str(), "name" | "interval")
+        let known_option = matches!(key.as_str(), "name" | "interval" | "color")
             || (allow_connection && key == "connection");
 
         if !known_option {
@@ -223,9 +226,16 @@ fn parse_series_option_values(options: &Table) -> mlua::Result<LuaSeriesOptions>
         .transpose()
         .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
+    let color = options
+        .get::<Option<String>>("color")?
+        .map(|value| value.parse::<SeriesColor>())
+        .transpose()
+        .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
     Ok(LuaSeriesOptions {
         name,
         sampling_interval,
+        color,
     })
 }
 
@@ -238,6 +248,10 @@ fn apply_series_options(
 
     if let Some(interval) = options.sampling_interval {
         new_series = new_series.with_sampling_interval(interval);
+    }
+
+    if let Some(color) = options.color {
+        new_series = new_series.with_color(color);
     }
 
     new_series

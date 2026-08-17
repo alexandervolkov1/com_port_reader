@@ -44,6 +44,7 @@ pub enum ProcessAction {
         name: Option<String>,
         source: String,
         polling_interval_seconds: Option<f64>,
+        color: Option<String>,
     },
 
     DeleteSeriesByName {

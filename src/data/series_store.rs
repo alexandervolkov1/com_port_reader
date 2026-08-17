@@ -125,6 +125,7 @@ impl SeriesStore {
 
     pub fn add_series(&self, new_series: NewSeries) -> Result<SeriesId, AddSeriesError> {
         let connection_id = new_series.connection_id();
+        let color = new_series.color();
 
         let (source, requested_name, sampling_interval) = new_series.into_parts();
 
@@ -156,6 +157,7 @@ impl SeriesStore {
                 source,
                 sampling_interval,
                 connection_id,
+                color,
             ));
             Ok(id)
         })
@@ -411,7 +413,7 @@ mod tests {
     use crate::{
         connection::ConnectionId,
         data::{
-            AddSeriesError, NewSeries, SamplingInterval, SeriesId, SeriesNameError,
+            AddSeriesError, NewSeries, SamplingInterval, SeriesColor, SeriesId, SeriesNameError,
             SeriesPollingState, SeriesSource,
         },
         instrument::{
@@ -1091,5 +1093,23 @@ mod tests {
         assert!(metadata.iter().any(|series| { series.id == enabled_id }));
 
         assert!(store.resume_all_polling().is_empty());
+    }
+
+    #[test]
+    fn stores_explicit_series_color() {
+        let store = SeriesStore::new();
+        let color = SeriesColor::new(0x1A, 0x2B, 0x3C);
+
+        store
+            .add_series(
+                NewSeries::named_serial_command("read temperature", "temperature")
+                    .with_color(color),
+            )
+            .unwrap();
+
+        store.with(|series| {
+            assert_eq!(series.len(), 1);
+            assert_eq!(series[0].color, Some(color));
+        });
     }
 }

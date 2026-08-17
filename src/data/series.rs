@@ -1,6 +1,6 @@
 use crate::{connection::ConnectionId, instrument::InstrumentReadRequest};
 
-use super::{Sample, SamplingInterval};
+use super::{Sample, SamplingInterval, SeriesColor};
 
 pub const DEFAULT_METAKON_DEVICE: u8 = 1;
 pub const DEFAULT_METAKON_CHANNEL: u8 = 0;
@@ -63,6 +63,7 @@ pub struct NewSeries {
     name: Option<String>,
     sampling_interval: Option<SamplingInterval>,
     connection_id: ConnectionId,
+    color: Option<SeriesColor>,
 }
 
 impl NewSeries {
@@ -74,6 +75,7 @@ impl NewSeries {
             name: None,
             sampling_interval: None,
             connection_id: ConnectionId::PRIMARY,
+            color: None,
         }
     }
 
@@ -85,6 +87,7 @@ impl NewSeries {
             name: Some(name.into()),
             sampling_interval: None,
             connection_id: ConnectionId::PRIMARY,
+            color: None,
         }
     }
 
@@ -94,6 +97,7 @@ impl NewSeries {
             name: None,
             sampling_interval: None,
             connection_id: ConnectionId::PRIMARY,
+            color: None,
         }
     }
 
@@ -103,11 +107,17 @@ impl NewSeries {
             name: Some(name.into()),
             sampling_interval: None,
             connection_id: ConnectionId::PRIMARY,
+            color: None,
         }
     }
 
     pub fn with_sampling_interval(mut self, interval: SamplingInterval) -> Self {
         self.sampling_interval = Some(interval);
+        self
+    }
+
+    pub fn with_color(mut self, color: SeriesColor) -> Self {
+        self.color = Some(color);
         self
     }
 
@@ -125,6 +135,10 @@ impl NewSeries {
 
     pub(crate) fn into_parts(self) -> (SeriesSource, Option<String>, Option<SamplingInterval>) {
         (self.source, self.name, self.sampling_interval)
+    }
+
+    pub(crate) const fn color(&self) -> Option<SeriesColor> {
+        self.color
     }
 
     pub fn with_connection(mut self, connection_id: ConnectionId) -> Self {
@@ -147,6 +161,7 @@ pub struct Series {
     pub visible: bool,
     pub sampling_interval: Option<SamplingInterval>,
     pub polling_state: SeriesPollingState,
+    pub color: Option<SeriesColor>,
 }
 
 impl Series {
@@ -156,6 +171,7 @@ impl Series {
         source: SeriesSource,
         sampling_interval: Option<SamplingInterval>,
         connection_id: ConnectionId,
+        color: Option<SeriesColor>,
     ) -> Self {
         Self {
             id,
@@ -166,6 +182,7 @@ impl Series {
             visible: true,
             sampling_interval,
             polling_state: SeriesPollingState::Enabled,
+            color,
         }
     }
 }

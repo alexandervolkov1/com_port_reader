@@ -6,7 +6,7 @@ use crate::{
         plot_downsampling::downsample_min_max_into,
         plot_model::{PlotLine, PlotModel},
     },
-    data::{Sample, SeriesId, SeriesStore},
+    data::{Sample, SeriesColor, SeriesId, SeriesStore},
     utils::{current_time_f64, mark_for_timestamp},
 };
 
@@ -28,6 +28,7 @@ struct VisibleSeriesSnapshot {
     id: SeriesId,
     name: String,
     samples: Vec<Sample>,
+    color: Option<SeriesColor>,
 }
 
 pub fn show(
@@ -206,9 +207,22 @@ fn show_pane(
 
         plot_ui.set_plot_bounds_x(requested_x_bounds.0..=requested_x_bounds.1);
 
-        for line in &plot.panes[pane_index].lines {
-            plot_ui
-                .line(Line::new(line.name.clone(), PlotPoints::Borrowed(&line.points)).width(4.0));
+        for prepared_line in &plot.panes[pane_index].lines {
+            let mut line = Line::new(
+                prepared_line.name.clone(),
+                PlotPoints::Borrowed(&prepared_line.points),
+            )
+            .width(4.0);
+
+            if let Some(color) = prepared_line.color {
+                line = line.color(egui::Color32::from_rgb(
+                    color.red(),
+                    color.green(),
+                    color.blue(),
+                ));
+            }
+
+            plot_ui.line(line);
         }
     });
 
@@ -368,6 +382,7 @@ fn prepare_lines(
             let line = &mut pane.lines[prepared_count];
 
             line.name.clone_from(&series.name);
+            line.color = series.color;
             line.points.clear();
 
             downsample_min_max_into(&series.samples, max_points_per_series, &mut line.points);
@@ -434,6 +449,7 @@ fn take_plot_snapshot(
                     id: series.id,
                     name: series.name.clone(),
                     samples: series.samples[start_idx..end_idx].to_vec(),
+                    color: series.color,
                 }
             })
             .collect();

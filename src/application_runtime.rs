@@ -590,6 +590,8 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             polling_interval_seconds: new_series
                 .sampling_interval()
                 .map(|interval| interval.duration().as_secs_f64()),
+
+            color: new_series.color().map(|color| color.to_string()),
         }),
 
         UserCommand::Delete { name } => {
@@ -662,7 +664,7 @@ mod tests {
 
     use crate::{
         connection::ConnectionId,
-        data::{NewSeries, SamplingInterval},
+        data::{NewSeries, SamplingInterval, SeriesColor},
         user_command::UserCommand,
     };
 
@@ -670,10 +672,13 @@ mod tests {
     fn converts_added_series_to_process_action() {
         let interval = SamplingInterval::new(Duration::from_millis(250)).unwrap();
 
+        let color = SeriesColor::new(0x1A, 0x2B, 0x3C);
+
         let command = UserCommand::Add(
             NewSeries::named_serial_command("read temperature", "temperature")
                 .with_connection(ConnectionId::new(2))
-                .with_sampling_interval(interval),
+                .with_sampling_interval(interval)
+                .with_color(color),
         );
 
         assert_eq!(
@@ -683,6 +688,7 @@ mod tests {
                 name: Some("temperature".to_owned()),
                 source: "COM command: read temperature".to_owned(),
                 polling_interval_seconds: Some(0.25),
+                color: Some("#1A2B3C".to_owned()),
             }),
         );
     }

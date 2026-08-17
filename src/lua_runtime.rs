@@ -104,7 +104,7 @@ mod tests {
     use crate::{
         application_definition::{ApplicationDefinition, SerialConnectionDefinition},
         connection::ConnectionId,
-        data::{SamplingInterval, SeriesSource},
+        data::{SamplingInterval, SeriesColor, SeriesSource},
         instrument::{
             InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest,
             metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
@@ -311,12 +311,13 @@ mod tests {
 
         runtime
             .execute(
-                r#"
+                r##"
                     app.add_serial(
                         "read sine",
                         {
                             name = "sine",
                             interval = 2.5,
+                            color = "#1A2B3C",
                         }
                     )
 
@@ -327,7 +328,7 @@ mod tests {
                     app.send_serial(
                         "set amplitude 25"
                     )
-                "#,
+                "##,
             )
             .unwrap();
 
@@ -336,6 +337,8 @@ mod tests {
         };
 
         assert_eq!(new_series.connection_id(), ConnectionId::PRIMARY,);
+
+        assert_eq!(new_series.color(), Some(SeriesColor::new(0x1A, 0x2B, 0x3C)),);
 
         let (source, name, sampling_interval) = new_series.into_parts();
 
@@ -358,6 +361,8 @@ mod tests {
         };
 
         assert_eq!(new_series.connection_id(), ConnectionId::PRIMARY,);
+
+        assert_eq!(new_series.color(), None);
 
         let (source, name, sampling_interval) = new_series.into_parts();
 
@@ -382,6 +387,43 @@ mod tests {
         ));
 
         assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_series_color() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
+
+        let error = runtime
+            .execute(
+                r#"
+                    app.add_serial(
+                        "read sine",
+                        {
+                            color = "red",
+                        }
+                    )
+                "#,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains("Series color must use the #RRGGBB format",),
+            "unexpected Lua error: {error}",
+        );
+
+        assert!(
+            command_receiver.try_recv().is_err(),
+            "invalid series must not send an Add command",
+        );
     }
 
     #[test]
