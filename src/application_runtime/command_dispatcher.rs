@@ -115,11 +115,9 @@ impl CommandDispatcher {
         }
     }
 
-    pub fn poll_events(&mut self, controls: &mut AcquisitionController) {
+    pub fn poll_events(&mut self) {
         while let Ok(connection_event) = self.event_receiver.try_recv() {
             let event = connection_event.event();
-
-            controls.handle_worker_event(event);
 
             let message = self.format_worker_event(&connection_event);
 
@@ -181,14 +179,6 @@ impl CommandDispatcher {
 
             UserCommand::Clear => {
                 controls.clear();
-            }
-
-            UserCommand::StartRecording => {
-                controls.start_recording();
-            }
-
-            UserCommand::StopRecording => {
-                controls.stop_recording();
             }
 
             UserCommand::StartEmulator => {
@@ -476,7 +466,6 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
             | WorkerEvent::AcquisitionStopFailed(_)
             | WorkerEvent::SeriesNotFound(_)
             | WorkerEvent::SeriesRenameFailed(_)
-            | WorkerEvent::SampleSinkFailed(_)
             | WorkerEvent::SerialTextCommandFailed { .. }
             | WorkerEvent::InstrumentReadFailed { .. }
             | WorkerEvent::InstrumentWriteFailed { .. }

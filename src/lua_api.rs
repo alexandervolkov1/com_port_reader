@@ -52,22 +52,6 @@ pub fn install(
     register_command(
         lua,
         &app,
-        "start_rec",
-        command_sender.clone(),
-        start_recording_command,
-    )?;
-
-    register_command(
-        lua,
-        &app,
-        "stop_rec",
-        command_sender.clone(),
-        stop_recording_command,
-    )?;
-
-    register_command(
-        lua,
-        &app,
         "start_emu",
         command_sender.clone(),
         start_emulator_command,
@@ -1249,14 +1233,6 @@ fn stop_command() -> UserCommand {
 
 fn clear_command() -> UserCommand {
     UserCommand::Clear
-}
-
-fn start_recording_command() -> UserCommand {
-    UserCommand::StartRecording
-}
-
-fn stop_recording_command() -> UserCommand {
-    UserCommand::StopRecording
 }
 
 fn start_emulator_command() -> UserCommand {

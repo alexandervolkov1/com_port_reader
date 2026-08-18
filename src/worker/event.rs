@@ -1,12 +1,9 @@
-use std::path::PathBuf;
-
 use crate::instrument::{InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest};
 use crate::serial_connection::SerialConnectionError;
 use crate::{
     acquisition::AcquisitionError,
     connection::ConnectionId,
     data::{AddSeriesError, RenameSeriesError, SeriesColor, SeriesId},
-    sample_sink::SampleSinkError,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -46,8 +43,6 @@ impl std::fmt::Display for ConnectionWorkerEvent {
 pub enum WorkerEvent {
     AcquisitionStarted,
     AcquisitionStopped,
-    RecordingStarted(PathBuf),
-    RecordingStopped,
     SeriesCleared,
     SeriesAdded(SeriesId),
     SeriesAddFailed(AddSeriesError),
@@ -66,7 +61,6 @@ pub enum WorkerEvent {
         color: Option<SeriesColor>,
     },
     SeriesRenameFailed(RenameSeriesError),
-    SampleSinkFailed(SampleSinkError),
 
     SerialTextCommandSucceeded {
         port_name: String,
@@ -122,12 +116,6 @@ impl std::fmt::Display for WorkerEvent {
             Self::AcquisitionStarted => formatter.write_str("Acquisition started."),
 
             Self::AcquisitionStopped => formatter.write_str("Acquisition stopped."),
-
-            Self::RecordingStarted(path) => {
-                write!(formatter, "CSV recording started: '{}'.", path.display(),)
-            }
-
-            Self::RecordingStopped => formatter.write_str("CSV recording stopped."),
 
             Self::SeriesCleared => formatter.write_str("All series cleared."),
             Self::SeriesAdded(id) => {
@@ -186,10 +174,6 @@ impl std::fmt::Display for WorkerEvent {
                     formatter,
                     "Series '{name}' ({id}) color reset to automatic.",
                 )
-            }
-
-            Self::SampleSinkFailed(error) => {
-                write!(formatter, "Sample output failed: {error}")
             }
 
             Self::SerialTextCommandSucceeded {

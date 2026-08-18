@@ -355,8 +355,6 @@ fn action_type_name(action: &ProcessAction) -> &'static str {
         ProcessAction::StartAcquisition => "start_acquisition",
         ProcessAction::StopAcquisition => "stop_acquisition",
         ProcessAction::ClearSeries => "clear_series",
-        ProcessAction::StartRecording => "start_recording",
-        ProcessAction::StopRecording => "stop_recording",
         ProcessAction::StartEmulator => "start_emulator",
         ProcessAction::StopEmulator => "stop_emulator",
         ProcessAction::AddSeries { .. } => "add_series",
@@ -382,8 +380,6 @@ fn action_connection_id(action: &ProcessAction) -> Option<String> {
         ProcessAction::StartAcquisition
         | ProcessAction::StopAcquisition
         | ProcessAction::ClearSeries
-        | ProcessAction::StartRecording
-        | ProcessAction::StopRecording
         | ProcessAction::StartEmulator
         | ProcessAction::StopEmulator
         | ProcessAction::DeleteSeriesByName { .. }

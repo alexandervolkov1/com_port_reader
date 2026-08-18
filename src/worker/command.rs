@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crossbeam_channel::Sender;
 
 use crate::{
@@ -28,8 +26,6 @@ pub enum WorkerCommand {
         name: String,
         color: Option<SeriesColor>,
     },
-    StartCsvRecording(PathBuf),
-    StopRecording,
     Connection(ConnectionCommand),
     RefreshSeriesSchedule,
 }

@@ -260,8 +260,6 @@ app = {}
 function app.start() end
 
 ---Stops periodic acquisition on every configured connection.
----
----Active CSV recording remains open but is paused.
 function app.stop() end
 
 ---Removes every series and all accumulated samples.
@@ -270,14 +268,6 @@ function app.clear() end
 ---Writes an informational message to the application log.
 ---@param message string
 function app.log(message) end
-
----Starts CSV recording and creates a new protocol file.
----
----Recording currently belongs to the primary worker.
-function app.start_rec() end
-
----Flushes and closes the active CSV protocol file.
-function app.stop_rec() end
 
 ---Starts the emulator configured by the active startup profile.
 function app.start_emu() end

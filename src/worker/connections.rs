@@ -2,7 +2,6 @@ use std::{
     collections::{BTreeMap, btree_map::Entry},
     error::Error,
     fmt,
-    path::PathBuf,
 };
 
 use crate::connection::ConnectionId;
@@ -73,22 +72,6 @@ impl ConnectionWorkers {
 
     pub fn is_running(&self) -> bool {
         self.workers.values().any(Worker::is_running)
-    }
-
-    pub fn start_csv_recording(&self, path: PathBuf) -> Result<(), ConnectionWorkersError> {
-        self.primary()
-            .start_csv_recording(path)
-            .map_err(|source| ConnectionWorkersError::new(ConnectionId::PRIMARY, source))
-    }
-
-    pub fn stop_recording(&self) -> Result<(), ConnectionWorkersError> {
-        self.primary()
-            .stop_recording()
-            .map_err(|source| ConnectionWorkersError::new(ConnectionId::PRIMARY, source))
-    }
-
-    pub fn is_recording(&self) -> bool {
-        self.primary().is_recording()
     }
 
     fn primary(&self) -> &Worker {
@@ -185,7 +168,6 @@ mod tests {
         connection::ConnectionId,
         data::{NewSeries, Sample, SeriesId, SeriesMetadata, SeriesStore},
         process_recorder::ProcessRecorder,
-        sample_sink::NullSampleSink,
         utils::current_time_f64,
         worker::{ConnectionWorkerEvent, Worker, WorkerConfig, WorkerHandle},
     };
@@ -219,7 +201,6 @@ mod tests {
             event_sender,
             series,
             Box::new(FixedSource { value }),
-            Box::new(NullSampleSink::new()),
             ProcessRecorder::default(),
             WorkerConfig::new(Duration::from_millis(10)),
         )

@@ -34,8 +34,6 @@ pub enum ProcessAction {
     StartAcquisition,
     StopAcquisition,
     ClearSeries,
-    StartRecording,
-    StopRecording,
     StartEmulator,
     StopEmulator,
 

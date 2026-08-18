@@ -16,7 +16,6 @@ use crate::{
     lua_application_script::{LuaApplicationEvent, LuaControlInvocation},
     lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle, LuaWorkerHandleError},
     process_recorder::{ProcessAction, ProcessActionOrigin, ProcessRecord, ProcessRecorder},
-    sample_sink::NullSampleSink,
     serial_connection::SerialConnectionRegistry,
     user_command::UserCommand,
     worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
@@ -26,7 +25,7 @@ mod acquisition_controller;
 mod command_dispatcher;
 mod device_emulator_service;
 
-pub(crate) use acquisition_controller::{AcquisitionController, RecordingTransition};
+pub(crate) use acquisition_controller::AcquisitionController;
 pub(crate) use command_dispatcher::CommandDispatcher;
 pub(crate) use device_emulator_service::DeviceEmulatorService;
 
@@ -93,8 +92,6 @@ impl ApplicationRuntime {
         let device_emulator =
             DeviceEmulatorService::new(emulator_port, emulator_script_path, log.clone());
 
-        let recording_directory = paths.resolve_data("protocols");
-
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
 
         let serial_connections = SerialConnectionRegistry::new();
@@ -121,7 +118,6 @@ impl ApplicationRuntime {
             serial_connections.primary(),
             event_sender.clone(),
             series.clone(),
-            Box::new(NullSampleSink::new()),
             process_recorder.clone(),
             worker_config,
         );
@@ -145,7 +141,6 @@ impl ApplicationRuntime {
                 config_store,
                 event_sender.clone(),
                 series.clone(),
-                Box::new(NullSampleSink::new()),
                 process_recorder.clone(),
                 worker_config,
             );
@@ -158,7 +153,7 @@ impl ApplicationRuntime {
 
         let connection_router = workers.router();
 
-        let acquisition = AcquisitionController::new(workers, recording_directory, log.clone());
+        let acquisition = AcquisitionController::new(workers, log.clone());
 
         let dispatcher = CommandDispatcher::new(
             connection_router,
@@ -288,7 +283,7 @@ impl ApplicationRuntime {
 
         self.device_emulator.poll();
 
-        self.dispatcher.poll_events(&mut self.acquisition);
+        self.dispatcher.poll_events();
 
         let commands = self.lua_command_receiver.try_iter().collect::<Vec<_>>();
 
@@ -312,22 +307,6 @@ impl ApplicationRuntime {
 
     pub fn is_running(&self) -> bool {
         self.acquisition.is_running()
-    }
-
-    pub fn is_recording(&self) -> bool {
-        self.acquisition.is_recording()
-    }
-
-    pub fn recording_transition(&self) -> Option<RecordingTransition> {
-        self.acquisition.recording_transition()
-    }
-
-    pub fn recording_file(&self) -> Option<&Path> {
-        self.acquisition.recording_file()
-    }
-
-    pub fn recording_error(&self) -> Option<&str> {
-        self.acquisition.recording_error()
     }
 
     pub fn set_series_visibility(&self, id: SeriesId, visible: bool) {
@@ -402,10 +381,7 @@ impl ApplicationRuntime {
     }
 
     fn stop_active_operations(&mut self) -> Result<(), String> {
-        let has_active_operations = self.is_running()
-            || self.is_recording()
-            || self.recording_transition().is_some()
-            || self.device_emulator.is_running();
+        let has_active_operations = self.is_running() || self.device_emulator.is_running();
 
         if !has_active_operations {
             return Ok(());
@@ -417,30 +393,6 @@ impl ApplicationRuntime {
         );
 
         let deadline = Instant::now() + RUNTIME_STOP_TIMEOUT;
-
-        while self.recording_transition().is_some() {
-            self.poll();
-
-            if self.recording_transition().is_none() {
-                break;
-            }
-
-            Self::wait_for_stop_progress(deadline)?;
-        }
-
-        if self.is_recording() {
-            self.execute(UserCommand::StopRecording);
-        }
-
-        while self.is_recording() || self.recording_transition().is_some() {
-            self.poll();
-
-            if !self.is_recording() && self.recording_transition().is_none() {
-                break;
-            }
-
-            Self::wait_for_stop_progress(deadline)?;
-        }
 
         if self.is_running() {
             self.execute(UserCommand::Stop);
@@ -618,10 +570,6 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
         UserCommand::Stop => Some(ProcessAction::StopAcquisition),
 
         UserCommand::Clear => Some(ProcessAction::ClearSeries),
-
-        UserCommand::StartRecording => Some(ProcessAction::StartRecording),
-
-        UserCommand::StopRecording => Some(ProcessAction::StopRecording),
 
         UserCommand::StartEmulator => Some(ProcessAction::StartEmulator),
 

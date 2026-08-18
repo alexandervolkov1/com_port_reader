@@ -29,9 +29,6 @@ pub enum UserCommand {
     Stop,
     Clear,
 
-    StartRecording,
-    StopRecording,
-
     StartEmulator,
     StopEmulator,
 

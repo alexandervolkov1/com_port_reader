@@ -215,13 +215,11 @@ mod tests {
         runtime
             .execute(
                 r#"
-                app.start()
-                app.stop()
-                app.clear()
-                app.start_rec()
-                app.stop_rec()
-                app.start_emu()
-                app.stop_emu()
+                    app.start()
+                    app.stop()
+                    app.clear()
+                    app.start_emu()
+                    app.stop_emu()
                 "#,
             )
             .unwrap();
@@ -239,16 +237,6 @@ mod tests {
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
             UserCommand::Clear,
-        ));
-
-        assert!(matches!(
-            command_receiver.try_recv().unwrap(),
-            UserCommand::StartRecording,
-        ));
-
-        assert!(matches!(
-            command_receiver.try_recv().unwrap(),
-            UserCommand::StopRecording,
         ));
 
         assert!(matches!(

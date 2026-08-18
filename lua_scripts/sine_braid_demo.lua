@@ -311,7 +311,6 @@ end
 
 function script.run()
     app.stop()
-    app.stop_rec()
     app.stop_emu()
     app.clear()
 

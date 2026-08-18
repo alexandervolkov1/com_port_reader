@@ -279,9 +279,9 @@ fn show_english_reference(ui: &mut egui::Ui) {
 
     ui.label(
         "Application scripts and the REPL control \
-         acquisition, series, instruments, recording \
-         and the device emulator through the global \
-         'app' table.",
+         acquisition, series, instruments and the \
+         device emulator through the global 'app' \
+         table.",
     );
 
     ui.label(
@@ -475,8 +475,8 @@ fn show_english_reference(ui: &mut egui::Ui) {
     reference(
         ui,
         "app.stop()",
-        "Stops periodic acquisition. Active recording \
-         remains open and paused.",
+        "Stops periodic acquisition on every \
+         configured connection.",
     );
 
     reference(
@@ -874,41 +874,32 @@ fn show_english_reference(ui: &mut egui::Ui) {
          automatic Y bounds.",
     );
 
-    section(ui, "Process database and CSV recording");
+    section(ui, "Process database");
 
     ui.label(
-        "A new timestamped SQLite process database is created \
-         automatically on every application launch under \
-         processes/YYYY-MM-DD in the application directory. \
-         This is independent of CSV recording.",
-    );
-
-    ui.label(
-        "The database records the loaded configuration source, \
-         application log, requested actions and every \
-         successful periodic measurement. Its path is written \
-         to the application log. If SQLite cannot be opened, \
-         the application continues and reports that process \
-         recording is disabled.",
-    );
-
-    reference(
-        ui,
-        "app.start_rec()",
-        "Creates a timestamped CSV protocol file. \
-         Recording currently belongs to the primary \
-         connection worker.",
-    );
-
-    reference(
-        ui,
-        "app.stop_rec()",
-        "Flushes and closes the active CSV file.",
+        "A new timestamped SQLite process database \
+         is created automatically on every application \
+         launch under processes/YYYY-MM-DD in the \
+         application directory.",
     );
 
     ui.label(
-        "Stopping acquisition pauses recording without \
-         closing the file.",
+        "Every successful periodic measurement is \
+         recorded automatically. No explicit recording \
+         command is required.",
+    );
+
+    ui.label(
+        "The database also records the loaded \
+         configuration source, application log and \
+         requested actions. Its path is written to the \
+         application log.",
+    );
+
+    ui.label(
+        "If SQLite cannot be opened or writing fails, \
+         the application continues running and reports \
+         that process recording is disabled.",
     );
 }
 
@@ -922,7 +913,7 @@ fn show_russian_reference(ui: &mut egui::Ui) {
 
     ui.label(
         "Сценарии приложения и REPL управляют опросом, \
-         сериями, приборами, записью и эмулятором через \
+         сериями, приборами и эмулятором через \
          глобальную таблицу 'app'.",
     );
 
@@ -1130,8 +1121,8 @@ fn show_russian_reference(ui: &mut egui::Ui) {
     reference(
         ui,
         "app.stop()",
-        "Останавливает опрос. Активная запись остаётся \
-         открытой и приостановленной.",
+        "Останавливает периодический опрос всех \
+         настроенных подключений.",
     );
 
     reference(ui, "app.clear()", "Удаляет все серии и накопленные точки.");
@@ -1524,41 +1515,32 @@ fn show_russian_reference(ui: &mut egui::Ui) {
          данными и автоматические границы оси Y.",
     );
 
-    section(ui, "База процесса и запись CSV");
+    section(ui, "База процесса");
 
     ui.label(
-        "При каждом запуске приложения автоматически создаётся \
-         новая база SQLite с временной меткой в каталоге \
-         processes/YYYY-MM-DD внутри каталога приложения. \
-         Она не зависит от записи CSV.",
-    );
-
-    ui.label(
-        "В базу попадают исходный текст загруженной \
-         конфигурации, журнал приложения, запрошенные действия \
-         и все успешные периодические измерения. Путь к базе \
-         записывается в журнал. Если SQLite открыть не удалось, \
-         приложение продолжает работу и сообщает, что запись \
-         процесса отключена.",
-    );
-
-    reference(
-        ui,
-        "app.start_rec()",
-        "Создаёт CSV-файл протокола с временной меткой. \
-         Сейчас запись относится к worker основного \
-         подключения.",
-    );
-
-    reference(
-        ui,
-        "app.stop_rec()",
-        "Сбрасывает буфер и закрывает активный CSV-файл.",
+        "При каждом запуске приложения автоматически \
+         создаётся новая база SQLite с временной меткой \
+         в каталоге processes/YYYY-MM-DD внутри \
+         каталога приложения.",
     );
 
     ui.label(
-        "Остановка опроса приостанавливает запись, но \
-         не закрывает файл.",
+        "Каждое успешное периодическое измерение \
+         записывается автоматически. Отдельно запускать \
+         запись не требуется.",
+    );
+
+    ui.label(
+        "В базу также попадают исходный текст \
+         загруженной конфигурации, журнал приложения и \
+         запрошенные действия. Путь к базе записывается \
+         в журнал.",
+    );
+
+    ui.label(
+        "Если SQLite открыть не удалось или при записи \
+         произошла ошибка, приложение продолжает работу \
+         и сообщает, что запись процесса отключена.",
     );
 }
 

@@ -4,7 +4,6 @@ use crate::{
     acquisition::{CombinedSource, SerialCommandSource},
     data::SeriesStore,
     process_recorder::ProcessRecorder,
-    sample_sink::SampleSink,
     serial_connection::SerialConfigStore,
 };
 
@@ -16,7 +15,6 @@ pub fn spawn_serial_connection_worker(
     config_store: SerialConfigStore,
     event_sender: Sender<ConnectionWorkerEvent>,
     series: SeriesStore,
-    sink: Box<dyn SampleSink>,
     process_recorder: ProcessRecorder,
     worker_config: WorkerConfig,
 ) -> Worker {
@@ -34,7 +32,6 @@ pub fn spawn_serial_connection_worker(
         event_sender,
         series,
         Box::new(source),
-        sink,
         process_recorder,
         worker_config,
     )

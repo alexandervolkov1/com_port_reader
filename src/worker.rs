@@ -19,7 +19,6 @@ use crate::{
     data::{Series, SeriesId, SeriesMetadata, SeriesSample, SeriesStore},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     process_recorder::ProcessRecorder,
-    sample_sink::{CsvSampleSink, NullSampleSink, SampleSink, SampleSinkError},
     serial_connection::SerialConnectionError,
 };
 
@@ -84,18 +83,15 @@ pub struct Worker {
     thread: Option<JoinHandle<()>>,
     commands: WorkerHandle,
     running: Arc<AtomicBool>,
-    sample_sink_active: Arc<AtomicBool>,
 }
 
 impl Worker {
-    #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         commands: WorkerHandle,
         command_receiver: Receiver<WorkerCommand>,
         event_sender: Sender<ConnectionWorkerEvent>,
         series: SeriesStore,
         mut source: Box<dyn AcquisitionSource>,
-        mut sink: Box<dyn SampleSink>,
         process_recorder: ProcessRecorder,
         config: WorkerConfig,
     ) -> Self {
@@ -104,10 +100,6 @@ impl Worker {
         let event_sender = WorkerEventSender::new(connection_id, event_sender);
 
         let running = Arc::new(AtomicBool::new(false));
-
-        let sample_sink_active = Arc::new(AtomicBool::new(false));
-
-        let thread_sample_sink_active = sample_sink_active.clone();
 
         let thread_running = running.clone();
 
@@ -151,8 +143,6 @@ impl Worker {
 
                 let mut acquisition_error: Option<AcquisitionError> = None;
 
-                let mut sink_error: Option<SampleSinkError> = None;
-
                 if let AcquisitionState::Running { next_poll } = &mut state
                     && now >= *next_poll
                 {
@@ -174,34 +164,26 @@ impl Worker {
                                 &series_metadata,
                             );
 
-                            match sink.write_batch(&sample_batch, &series_metadata) {
-                                Ok(()) => {
-                                    let completed_at = Instant::now();
+                            let completed_at = Instant::now();
 
-                                    update_series_polling_health(
-                                        &mut series_schedules,
-                                        &series,
-                                        &due_series,
-                                        &sample_failures,
-                                        &event_sender,
-                                    );
+                            update_series_polling_health(
+                                &mut series_schedules,
+                                &series,
+                                &due_series,
+                                &sample_failures,
+                                &event_sender,
+                            );
 
-                                    advance_series_schedules(
-                                        &mut series_schedules,
-                                        &due_series,
-                                        completed_at,
-                                    );
+                            advance_series_schedules(
+                                &mut series_schedules,
+                                &due_series,
+                                completed_at,
+                            );
 
-                                    *next_poll = next_series_poll(&series_schedules)
-                                        .unwrap_or(completed_at + default_poll_interval);
+                            *next_poll = next_series_poll(&series_schedules)
+                                .unwrap_or(completed_at + default_poll_interval);
 
-                                    poll_completed = true;
-                                }
-
-                                Err(error) => {
-                                    sink_error = Some(error);
-                                }
-                            }
+                            poll_completed = true;
                         }
 
                         Err(error) => {
@@ -226,50 +208,7 @@ impl Worker {
                         .into();
                     }
 
-                    if let Err(flush_error) = sink.flush() {
-                        error = format!(
-                            "{error}; additionally \
-                             failed to flush sink: \
-                             {flush_error}",
-                        )
-                        .into();
-                    }
-
                     let _ = event_sender.send(WorkerEvent::AcquisitionFailed(error));
-
-                    continue;
-                }
-
-                if let Some(mut error) = sink_error {
-                    state = AcquisitionState::Stopped;
-
-                    series_schedules.clear();
-
-                    thread_running.store(false, Ordering::Release);
-
-                    if let Err(stop_error) = source.stop() {
-                        error = format!(
-                            "{error}; additionally \
-                             failed to stop source: \
-                             {stop_error}",
-                        )
-                        .into();
-                    }
-
-                    if let Err(flush_error) = sink.flush() {
-                        error = format!(
-                            "{error}; additionally \
-                             failed to flush sink: \
-                             {flush_error}",
-                        )
-                        .into();
-                    }
-
-                    let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
-
-                    sink = Box::new(NullSampleSink::new());
-
-                    thread_sample_sink_active.store(false, Ordering::Release);
 
                     continue;
                 }
@@ -344,27 +283,15 @@ impl Worker {
 
                             thread_running.store(false, Ordering::Release);
 
-                            let mut stopped_cleanly = true;
+                            match source.stop() {
+                                Ok(()) => {
+                                    let _ = event_sender.send(WorkerEvent::AcquisitionStopped);
+                                }
 
-                            if let Err(error) = source.stop() {
-                                stopped_cleanly = false;
-
-                                let _ =
-                                    event_sender.send(WorkerEvent::AcquisitionStopFailed(error));
-                            }
-
-                            if let Err(error) = sink.flush() {
-                                stopped_cleanly = false;
-
-                                let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
-
-                                sink = Box::new(NullSampleSink::new());
-
-                                thread_sample_sink_active.store(false, Ordering::Release);
-                            }
-
-                            if stopped_cleanly {
-                                let _ = event_sender.send(WorkerEvent::AcquisitionStopped);
+                                Err(error) => {
+                                    let _ = event_sender
+                                        .send(WorkerEvent::AcquisitionStopFailed(error));
+                                }
                             }
                         }
                     }
@@ -385,63 +312,13 @@ impl Worker {
 
                     Ok(WorkerCommand::ClearSeries) => {
                         series.clear();
-
                         let _ = event_sender.send(WorkerEvent::SeriesCleared);
-                    }
-
-                    Ok(WorkerCommand::StartCsvRecording(path)) => {
-                        if let Err(error) = sink.flush() {
-                            let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
-                        }
-
-                        sink = Box::new(NullSampleSink::new());
-
-                        thread_sample_sink_active.store(false, Ordering::Release);
-
-                        match CsvSampleSink::create(&path) {
-                            Ok(csv_sink) => {
-                                sink = Box::new(csv_sink);
-
-                                thread_sample_sink_active.store(true, Ordering::Release);
-
-                                let _ = event_sender.send(WorkerEvent::RecordingStarted(path));
-                            }
-
-                            Err(error) => {
-                                let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
-                            }
-                        }
-                    }
-
-                    Ok(WorkerCommand::StopRecording) => {
-                        let was_recording = thread_sample_sink_active.load(Ordering::Acquire);
-
-                        let flush_result = sink.flush();
-
-                        sink = Box::new(NullSampleSink::new());
-
-                        thread_sample_sink_active.store(false, Ordering::Release);
-
-                        match flush_result {
-                            Ok(()) if was_recording => {
-                                let _ = event_sender.send(WorkerEvent::RecordingStopped);
-                            }
-
-                            Ok(()) => {}
-
-                            Err(error) => {
-                                let _ = event_sender.send(WorkerEvent::SampleSinkFailed(error));
-                            }
-                        }
                     }
 
                     Ok(WorkerCommand::Shutdown) => {
                         if matches!(state, AcquisitionState::Running { .. }) {
                             let _ = source.stop();
                         }
-
-                        let _ = sink.flush();
-
                         break;
                     }
 
@@ -502,15 +379,12 @@ impl Worker {
             }
 
             thread_running.store(false, Ordering::Release);
-
-            thread_sample_sink_active.store(false, Ordering::Release);
         });
 
         Self {
             thread: Some(thread),
             commands,
             running,
-            sample_sink_active,
         }
     }
 
@@ -536,18 +410,6 @@ impl Worker {
 
     pub(crate) fn handle(&self) -> WorkerHandle {
         self.commands.clone()
-    }
-
-    pub fn start_csv_recording(&self, path: std::path::PathBuf) -> Result<(), WorkerHandleError> {
-        self.commands.start_csv_recording(path)
-    }
-
-    pub fn stop_recording(&self) -> Result<(), WorkerHandleError> {
-        self.commands.stop_recording()
-    }
-
-    pub fn is_recording(&self) -> bool {
-        self.sample_sink_active.load(Ordering::Acquire)
     }
 }
 

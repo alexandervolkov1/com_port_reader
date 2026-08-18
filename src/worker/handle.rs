@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, path::PathBuf};
+use std::{error::Error, fmt};
 
 use crossbeam_channel::Sender;
 
@@ -79,14 +79,6 @@ impl WorkerHandle {
 
     pub fn remove_series_by_name(&self, name: String) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::RemoveSeriesByName(name))
-    }
-
-    pub fn start_csv_recording(&self, path: PathBuf) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::StartCsvRecording(path))
-    }
-
-    pub fn stop_recording(&self) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::StopRecording)
     }
 
     pub fn send_serial_text(

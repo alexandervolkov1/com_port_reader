@@ -79,8 +79,8 @@ pub fn show(
         })
         .collect::<Vec<_>>();
 
-    for pane_index in 0..pane_count {
-        show_pane(ui, plot, pane_index, min_x, max_x, pane_heights[pane_index]);
+    for (pane_index, &pane_height) in pane_heights.iter().enumerate() {
+        show_pane(ui, plot, pane_index, min_x, max_x, pane_height);
 
         if pane_index + 1 >= pane_count {
             continue;
