@@ -133,8 +133,8 @@ impl SerialCommandSource {
                     )
                 {
                     return Err(AcquisitionError::from(
-                        "instrument reported alarm \
-                             value -32768",
+                        "Metakon thermocouple/sensor fault: \
+                         instrument reported alarm value -32768",
                     ));
                 }
 
@@ -383,10 +383,7 @@ mod tests {
 
     #[test]
     fn scales_integral_time_seconds_to_minutes() {
-        let value = scale_instrument_value(
-            InstrumentValue::Integer(600),
-            1.0 / 60.0,
-        );
+        let value = scale_instrument_value(InstrumentValue::Integer(600), 1.0 / 60.0);
 
         let InstrumentValue::Number(value) = value else {
             panic!("scaled integral time must be a number");

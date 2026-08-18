@@ -27,6 +27,10 @@ const STARTUP_EXAMPLE: &str = r#"local definition = {
         port = "COM4",
         script = "emulator_scripts/sine_generator.lua",
     },
+
+    scripts = {
+        "lua_scripts/experiment.lua",
+    },
 }
 
 function definition.setup()
@@ -35,16 +39,17 @@ end
 
 return definition"#;
 
-const SERIAL_SERIES_EXAMPLE: &str = r#"app.add_serial(
+const SERIAL_SERIES_EXAMPLE: &str = r##"app.add_serial(
     "read temperature",
     {
         name = "temperature",
         connection = "primary",
         interval = 0.5,
+        color = "#1976D2",
     }
-)"#;
+)"##;
 
-const METAKON_EXAMPLE: &str = r#"controller = app.metakon({
+const METAKON_EXAMPLE: &str = r##"controller = app.metakon({
     connection = "primary",
     device = 15,
     channel = 0,
@@ -56,19 +61,20 @@ controller:add(
     {
         name = "temperature",
         interval = 1.0,
+        color = "#D32F2F",
     }
 )
 
 controller:add("setpoint", "setpoint")
 controller:add("output_power", "power")
 
-app.start()"#;
+app.start()"##;
 
 const METAKON_REPL_EXAMPLE: &str = r#"controller:read("measurement")
 controller:write("setpoint", 150)
 controller:write("proportional_band", 20)"#;
 
-const VIRTUAL_INSTRUMENT_EXAMPLE: &str = r#"app.start_emu()
+const VIRTUAL_INSTRUMENT_EXAMPLE: &str = r##"app.start_emu()
 
 generator = app.virtual_instrument({
     connection = "primary",
@@ -84,10 +90,11 @@ generator:add(
     {
         name = "virtual_sine",
         interval = 0.25,
+        color = "#35B779",
     }
 )
 
-app.start()"#;
+app.start()"##;
 
 const VIRTUAL_MODEL_EXAMPLE: &str = r#"local amplitude = 1.0
 
@@ -148,6 +155,67 @@ function write(
 
     error("parameter is not writable: " .. parameter)
 end"#;
+
+const SERIES_COLOR_EXAMPLE: &str = r##"app.set_color("temperature", "#D32F2F")
+app.set_color("temperature", nil) -- restore automatic color"##;
+
+const CONTROL_PANEL_EXAMPLE: &str = r#"local controller = app.metakon({
+    connection = "primary",
+    device = 15,
+    channel = 0,
+})
+
+local script = {
+    id = "heater_control",
+
+    panels = {
+        {
+            id = "heater",
+            title = "Heater",
+            controls = {
+                {
+                    kind = "readout",
+                    id = "temperature",
+                    label = "Temperature",
+                    initial = "—",
+                },
+                {
+                    kind = "number",
+                    id = "setpoint",
+                    label = "Setpoint",
+                    initial = 20.0,
+                    min = 0.0,
+                    max = 400.0,
+                    step = 1.0,
+                    on_change = "set_setpoint",
+                },
+                {
+                    kind = "button",
+                    id = "refresh",
+                    label = "Refresh",
+                    on_click = "refresh",
+                },
+            },
+        },
+    },
+}
+
+function script.set_setpoint(value)
+    local actual = controller:write("setpoint", value)
+    app.set_control(script.id, "heater", "setpoint", actual)
+end
+
+function script.refresh()
+    local value = controller:read("measurement")
+    app.set_control(
+        script.id,
+        "heater",
+        "temperature",
+        string.format("%.1f °C", value)
+    )
+end
+
+app.register_script(script)"#;
 
 pub fn show_menu_button(ui: &mut egui::Ui, model: &mut HelpModel) {
     ui.menu_button("Help", |ui| {
@@ -255,6 +323,20 @@ fn show_english_reference(ui: &mut egui::Ui) {
          relative to the application directory.",
     );
 
+    ui.label(
+        "Use Settings to select and validate another Lua \
+         profile before loading it. The active profile is \
+         remembered for the next launch. The --config \
+         command-line option selects a profile explicitly.",
+    );
+
+    ui.label(
+        "Loading or reloading a profile replaces the whole \
+         runtime: acquisition and the emulator are stopped, \
+         registered control panels are removed, and all \
+         series and plot history are cleared.",
+    );
+
     section(ui, "Runtime options");
 
     reference(
@@ -349,6 +431,15 @@ fn show_english_reference(ui: &mut egui::Ui) {
          the application.",
     );
 
+    reference(
+        ui,
+        "scripts = { \"path.lua\", ... }",
+        "Runs application scripts in the listed order \
+         after setup() succeeds. A script may configure \
+         an experiment, add series, define REPL helpers, \
+         or register declarative control panels.",
+    );
+
     section(ui, "Lua REPL");
 
     ui.label(
@@ -392,6 +483,18 @@ fn show_english_reference(ui: &mut egui::Ui) {
         ui,
         "app.clear()",
         "Removes all series and accumulated samples.",
+    );
+
+    reference(
+        ui,
+        "app.delete(name)",
+        "Deletes one series by its unique name.",
+    );
+
+    reference(
+        ui,
+        "app.rename(current_name, new_name)",
+        "Renames an existing series.",
     );
 
     reference(
@@ -448,6 +551,22 @@ fn show_english_reference(ui: &mut egui::Ui) {
         "Optional polling interval in seconds. The \
          application default is used when omitted.",
     );
+
+    reference(
+        ui,
+        "color",
+        "Optional line color in strict #RRGGBB format. \
+         An automatic color is selected when omitted.",
+    );
+
+    reference(
+        ui,
+        "app.set_color(name, color)",
+        "Changes an existing series color. Pass nil to \
+         restore automatic color selection.",
+    );
+
+    code(ui, SERIES_COLOR_EXAMPLE);
 
     ui.label(
         "Text-command serial series additionally \
@@ -530,6 +649,29 @@ fn show_english_reference(ui: &mut egui::Ui) {
     );
 
     ui.label(
+        "For the measurement parameter, the Metakon alarm \
+         value -32768 is treated as a failed poll rather than \
+         a temperature. No sample is stored. After three \
+         consecutive alarm values, only the temperature series \
+         is marked Offline; other readable parameters continue \
+         to be polled.",
+    );
+
+    ui.label(
+        "After the sensor fault is removed, read measurement \
+         successfully or call app.retry() for the temperature \
+         series. Calling app.retry_all() re-enables every \
+         suspended series.",
+    );
+
+    ui.label(
+        "A Refresh callback may read measurement and output_power \
+         without displaying them as controls. Successful reads still \
+         restore the matching suspended series, so temperature and \
+         power may remain available only on the plot.",
+    );
+
+    ui.label(
         "Available parameters: channel_type, \
          measurement, setpoint, proportional_band, \
          integral_time, derivative_time, output_power, \
@@ -537,6 +679,21 @@ fn show_english_reference(ui: &mut egui::Ui) {
          upper_hysteresis, upper_output, \
          lower_setpoint, lower_hysteresis and \
          lower_output.",
+    );
+
+    ui.label(
+        "integral_time is exposed in minutes. The driver \
+         converts the raw register value from seconds when \
+         reading and back to seconds when writing. The \
+         controller's scale option does not affect this \
+         conversion.",
+    );
+
+    ui.label(
+        "The Metakon front-panel OFF state for the integral \
+         component is not reported by the integral_time \
+         register; reading it returns the last stored numeric \
+         value.",
     );
 
     code(ui, METAKON_EXAMPLE);
@@ -597,6 +754,60 @@ fn show_english_reference(ui: &mut egui::Ui) {
 
     code(ui, VIRTUAL_INSTRUMENT_EXAMPLE);
 
+    section(ui, "Application scripts and control panels");
+
+    ui.label(
+        "A script run from the startup profile or with Run \
+         script may publish one or more declarative panels. \
+         Until a script registers a panel, the Control panel \
+         menu button remains disabled.",
+    );
+
+    reference(
+        ui,
+        "app.register_script(script)",
+        "Registers a script table and publishes its panels. \
+         The table requires a unique id; panels require id, \
+         title and controls fields.",
+    );
+
+    reference(
+        ui,
+        "app.unregister_script(script_id)",
+        "Removes the registered script and all of its \
+         panels.",
+    );
+
+    reference(
+        ui,
+        "app.set_control(script_id, panel_id, control_id, value)",
+        "Updates a readout, number or toggle from Lua. \
+         Buttons do not store a value.",
+    );
+
+    ui.label(
+        "Control kinds are readout, number, toggle and \
+         button. Number and toggle controls use on_change; \
+         buttons use on_click. Callback names must refer to \
+         functions stored in the registered script table.",
+    );
+
+    ui.label(
+        "A number control is submitted after dragging stops \
+         or keyboard editing loses focus, so partially typed \
+         numbers are not sent. The callback should write the \
+         value, read back the actual device value and update \
+         the control with app.set_control().",
+    );
+
+    ui.label(
+        "The Control panel opens as a separate native window \
+         and is closed by default. Closing it does not \
+         unregister the script or stop acquisition.",
+    );
+
+    code(ui, CONTROL_PANEL_EXAMPLE);
+
     section(ui, "Virtual instrument models");
 
     ui.label(
@@ -647,7 +858,39 @@ fn show_english_reference(ui: &mut egui::Ui) {
 
     code(ui, VIRTUAL_MODEL_EXAMPLE);
 
-    section(ui, "CSV recording");
+    section(ui, "Plot controls");
+
+    ui.label(
+        "Use Add plot and Remove last plot to change the \
+         number of panes. Drag the separator between panes to \
+         change their relative heights. The proportions are \
+         preserved while the window is resized.",
+    );
+
+    ui.label(
+        "Use the series side panel to select visibility and \
+         assign each series to a plot pane. Double-click a \
+         plot to resume following the latest data and restore \
+         automatic Y bounds.",
+    );
+
+    section(ui, "Process database and CSV recording");
+
+    ui.label(
+        "A new timestamped SQLite process database is created \
+         automatically on every application launch under \
+         processes/YYYY-MM-DD in the application directory. \
+         This is independent of CSV recording.",
+    );
+
+    ui.label(
+        "The database records the loaded configuration source, \
+         application log, requested actions and every \
+         successful periodic measurement. Its path is written \
+         to the application log. If SQLite cannot be opened, \
+         the application continues and reports that process \
+         recording is disabled.",
+    );
 
     reference(
         ui,
@@ -718,6 +961,20 @@ fn show_russian_reference(ui: &mut egui::Ui) {
          стартового профиля. Журналы, базы процесса и \
          другие данные сохраняются относительно каталога \
          приложения.",
+    );
+
+    ui.label(
+        "В Settings можно выбрать и проверить другой \
+         Lua-профиль перед загрузкой. Активный профиль \
+         запоминается для следующего запуска. Параметр \
+         командной строки --config явно выбирает профиль.",
+    );
+
+    ui.label(
+        "Загрузка или перезагрузка профиля полностью заменяет \
+         рабочую среду: опрос и эмулятор останавливаются, \
+         панели управления удаляются, а серии и история \
+         графиков очищаются.",
     );
 
     section(ui, "Параметры приложения");
@@ -828,6 +1085,15 @@ fn show_russian_reference(ui: &mut egui::Ui) {
          приложение.",
     );
 
+    reference(
+        ui,
+        "scripts = { \"path.lua\", ... }",
+        "После успешного setup() выполняет сценарии \
+         приложения в указанном порядке. Сценарий может \
+         настраивать эксперимент, добавлять серии, создавать \
+         функции для REPL и регистрировать панели управления.",
+    );
+
     section(ui, "Lua REPL");
 
     ui.label(
@@ -869,6 +1135,18 @@ fn show_russian_reference(ui: &mut egui::Ui) {
     );
 
     reference(ui, "app.clear()", "Удаляет все серии и накопленные точки.");
+
+    reference(
+        ui,
+        "app.delete(name)",
+        "Удаляет одну серию по уникальному имени.",
+    );
+
+    reference(
+        ui,
+        "app.rename(current_name, new_name)",
+        "Переименовывает существующую серию.",
+    );
 
     reference(
         ui,
@@ -923,6 +1201,23 @@ fn show_russian_reference(ui: &mut egui::Ui) {
         "Необязательный интервал опроса в секундах. При \
          отсутствии используется интервал приложения.",
     );
+
+    reference(
+        ui,
+        "color",
+        "Необязательный цвет линии в строгом формате \
+         #RRGGBB. Если цвет не указан, он выбирается \
+         автоматически.",
+    );
+
+    reference(
+        ui,
+        "app.set_color(name, color)",
+        "Меняет цвет существующей серии. Передайте nil, \
+         чтобы снова выбирать цвет автоматически.",
+    );
+
+    code(ui, SERIES_COLOR_EXAMPLE);
 
     ui.label(
         "Текстовые серии последовательного порта также \
@@ -1008,6 +1303,30 @@ fn show_russian_reference(ui: &mut egui::Ui) {
     );
 
     ui.label(
+        "Для параметра measurement аварийное значение \
+         МЕТАКОНа -32768 считается ошибкой опроса, а не \
+         температурой. Точка не сохраняется. После трёх \
+         последовательных аварийных значений состояние Offline \
+         получает только серия температуры; остальные \
+         доступные параметры продолжают опрашиваться.",
+    );
+
+    ui.label(
+        "После устранения неисправности датчика успешно \
+         прочитайте measurement или вызовите app.retry() для \
+         серии температуры. app.retry_all() возобновляет все \
+         приостановленные серии.",
+    );
+
+    ui.label(
+        "Обработчик Refresh может читать measurement и output_power, \
+         не создавая для них элементов панели. Успешное чтение всё \
+         равно восстанавливает соответствующую приостановленную серию, \
+         поэтому температура и мощность могут отображаться только на \
+         графике.",
+    );
+
+    ui.label(
         "Доступные параметры: channel_type, \
          measurement, setpoint, proportional_band, \
          integral_time, derivative_time, output_power, \
@@ -1015,6 +1334,20 @@ fn show_russian_reference(ui: &mut egui::Ui) {
          upper_hysteresis, upper_output, \
          lower_setpoint, lower_hysteresis и \
          lower_output.",
+    );
+
+    ui.label(
+        "integral_time передаётся в минутах. При чтении \
+         драйвер преобразует сырое значение регистра из \
+         секунд, а при записи — обратно в секунды. Параметр \
+         scale контроллера на это преобразование не влияет.",
+    );
+
+    ui.label(
+        "Состояние OFF интегральной составляющей на панели \
+         МЕТАКОНа не передаётся регистром integral_time: его \
+         чтение возвращает последнее сохранённое числовое \
+         значение.",
     );
 
     code(ui, METAKON_EXAMPLE);
@@ -1068,6 +1401,63 @@ fn show_russian_reference(ui: &mut egui::Ui) {
 
     code(ui, VIRTUAL_INSTRUMENT_EXAMPLE);
 
+    section(ui, "Сценарии приложения и панели управления");
+
+    ui.label(
+        "Сценарий из стартового профиля или запущенный \
+         кнопкой Run script может опубликовать одну или \
+         несколько декларативных панелей. Пока ни один \
+         сценарий не зарегистрировал панель, кнопка Control \
+         panel недоступна.",
+    );
+
+    reference(
+        ui,
+        "app.register_script(script)",
+        "Регистрирует таблицу сценария и публикует её панели. \
+         Таблице нужен уникальный id; панели содержат id, \
+         title и controls.",
+    );
+
+    reference(
+        ui,
+        "app.unregister_script(script_id)",
+        "Удаляет зарегистрированный сценарий и все его \
+         панели.",
+    );
+
+    reference(
+        ui,
+        "app.set_control(script_id, panel_id, control_id, value)",
+        "Обновляет из Lua поле readout, number или toggle. \
+         Кнопки не хранят значение.",
+    );
+
+    ui.label(
+        "Поддерживаются элементы readout, number, toggle и \
+         button. Для number и toggle используется on_change, \
+         для button — on_click. Имена обработчиков должны \
+         указывать на функции в зарегистрированной таблице \
+         сценария.",
+    );
+
+    ui.label(
+        "Числовое поле отправляет значение после окончания \
+         перетаскивания или потери фокуса при вводе с \
+         клавиатуры, поэтому неполное число не попадает в \
+         прибор. Обработчику лучше записать значение, прочитать \
+         фактический результат и обновить поле через \
+         app.set_control().",
+    );
+
+    ui.label(
+        "Control panel открывается отдельным системным окном \
+         и по умолчанию закрыта. Закрытие окна не отменяет \
+         регистрацию сценария и не останавливает опрос.",
+    );
+
+    code(ui, CONTROL_PANEL_EXAMPLE);
+
     section(ui, "Модели виртуальных приборов");
 
     ui.label(
@@ -1118,7 +1508,39 @@ fn show_russian_reference(ui: &mut egui::Ui) {
 
     code(ui, VIRTUAL_MODEL_EXAMPLE);
 
-    section(ui, "Запись CSV");
+    section(ui, "Управление графиками");
+
+    ui.label(
+        "Кнопки Add plot и Remove last plot меняют число \
+         панелей графиков. Перетаскивайте разделитель между \
+         панелями, чтобы менять их относительную высоту. \
+         Пропорции сохраняются при изменении размера окна.",
+    );
+
+    ui.label(
+        "В боковой панели серий настраивается видимость и \
+         выбирается панель графика для каждой серии. Двойной \
+         щелчок по графику возвращает слежение за последними \
+         данными и автоматические границы оси Y.",
+    );
+
+    section(ui, "База процесса и запись CSV");
+
+    ui.label(
+        "При каждом запуске приложения автоматически создаётся \
+         новая база SQLite с временной меткой в каталоге \
+         processes/YYYY-MM-DD внутри каталога приложения. \
+         Она не зависит от записи CSV.",
+    );
+
+    ui.label(
+        "В базу попадают исходный текст загруженной \
+         конфигурации, журнал приложения, запрошенные действия \
+         и все успешные периодические измерения. Путь к базе \
+         записывается в журнал. Если SQLite открыть не удалось, \
+         приложение продолжает работу и сообщает, что запись \
+         процесса отключена.",
+    );
 
     reference(
         ui,

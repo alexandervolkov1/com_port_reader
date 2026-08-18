@@ -31,6 +31,9 @@
 ---| number
 ---| boolean
 
+---Line color written as a hexadecimal RGB value such as "#1A2B3C".
+---@alias SeriesColor string
+
 ---@class RuntimeDefinition
 ---@field fps? integer GUI refresh rate. Default: 30.
 ---@field poll_interval? number Default series polling interval in seconds. Default: 1.0.
@@ -61,6 +64,7 @@
 ---@class SeriesOptions
 ---@field name? string Optional unique series name.
 ---@field interval? number Polling interval in seconds. The application default is used when omitted.
+---@field color? SeriesColor Line color in #RRGGBB format. An automatic color is used when omitted.
 
 ---@class SerialSeriesOptions: SeriesOptions
 ---@field connection? string Serial connection name. Default: "primary".
@@ -74,6 +78,13 @@
 ---@field channel? integer Device channel from 0 to 255. Default: 0.
 ---@field scale? number Positive multiplier applied to scaled parameters. Default: 1.0.
 
+---Typed Metakon 5X3 parameter key.
+---
+---Driver-specific behavior:
+---* integral_time is exposed in minutes; the raw device register uses seconds;
+---* measurement value -32768 is treated as a sensor fault, not as a temperature;
+---* the device's front-panel integral OFF state is not exposed by integral_time,
+---  so reading it returns the last stored numeric value.
 ---@alias Metakon5x3Parameter
 ---| '"channel_type"'
 ---| '"measurement"'
@@ -128,6 +139,8 @@ end
 ---The operation is queued behind periodic polling
 ---that is already due. The result or communication
 ---error is also written to the application log.
+---A successful read also re-enables periodic polling
+---for a suspended series of the same parameter.
 ---@param parameter Metakon5x3Parameter
 ---@return InstrumentValue
 function Metakon5x3:read(parameter) end
@@ -238,6 +251,7 @@ end
 ---@class ApplicationScript
 ---@field id string
 ---@field panels? ControlPanelDefinition[]
+---@field [string] any Named Lua callbacks may be stored in the script table.
 
 ---@class ApplicationApi
 app = {}
@@ -265,7 +279,7 @@ function app.start_rec() end
 ---Flushes and closes the active CSV protocol file.
 function app.stop_rec() end
 
----Starts the emulator configured in startup.lua.
+---Starts the emulator configured by the active startup profile.
 function app.start_emu() end
 
 ---Stops the running device emulator.
@@ -309,6 +323,17 @@ function app.delete(name) end
 function app.rename(
     current_name,
     new_name
+)
+end
+
+---Changes the line color of an existing series.
+---
+---Pass nil to restore automatic color selection.
+---@param name string Existing unique series name.
+---@param color? SeriesColor Line color in #RRGGBB format, or nil for automatic color.
+function app.set_color(
+    name,
+    color
 )
 end
 
