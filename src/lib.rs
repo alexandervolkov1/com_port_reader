@@ -20,6 +20,7 @@ mod lua_worker;
 mod process_recorder;
 pub mod protocol;
 pub mod serial_connection;
+pub mod signal_processing;
 mod user_command;
 mod utils;
 mod worker;
