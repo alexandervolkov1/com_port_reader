@@ -2,7 +2,7 @@ use crossbeam_channel::Sender;
 
 use crate::{
     acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
-    data::{NewSeries, SeriesColor, SeriesId},
+    data::{NewFilteredSeries, NewSeries, SeriesColor, SeriesId},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     serial_connection::SerialPortConfig,
 };
@@ -11,6 +11,7 @@ pub enum WorkerCommand {
     Start,
     Stop,
     AddSeries(NewSeries),
+    AddFilter(NewFilteredSeries),
     SetVisibility {
         id: SeriesId,
         visible: bool,

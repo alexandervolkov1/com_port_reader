@@ -21,6 +21,8 @@ pub enum AddSeriesError {
     EmptySerialCommand,
     SerialCommandContainsLineBreak,
     InvalidInstrumentScale,
+    MissingFilteredInput(SeriesId),
+    FilteredSeriesHasSamplingInterval,
 }
 
 impl std::fmt::Display for AddSeriesError {
@@ -38,6 +40,14 @@ impl std::fmt::Display for AddSeriesError {
                 "Instrument series scale must be finite \
                      and greater than zero",
             ),
+
+            Self::MissingFilteredInput(id) => {
+                write!(formatter, "Filtered series input {id} does not exist",)
+            }
+
+            Self::FilteredSeriesHasSamplingInterval => {
+                formatter.write_str("Filtered series cannot have a polling interval")
+            }
         }
     }
 }
@@ -49,7 +59,9 @@ impl std::error::Error for AddSeriesError {
 
             Self::EmptySerialCommand
             | Self::SerialCommandContainsLineBreak
-            | Self::InvalidInstrumentScale => None,
+            | Self::InvalidInstrumentScale
+            | Self::MissingFilteredInput(_)
+            | Self::FilteredSeriesHasSamplingInterval => None,
         }
     }
 }
@@ -141,7 +153,8 @@ impl SeriesStore {
     }
 
     pub fn add_series(&self, new_series: NewSeries) -> Result<SeriesId, AddSeriesError> {
-        let connection_id = new_series.connection_id();
+        let requested_connection_id = new_series.connection_id();
+
         let color = new_series.color();
 
         let (source, requested_name, sampling_interval) = new_series.into_parts();
@@ -149,6 +162,22 @@ impl SeriesStore {
         let source = normalize_series_source(source)?;
 
         self.with_mut(|series| {
+            let connection_id = match &source {
+                SeriesSource::Filtered { input, .. } => {
+                    if sampling_interval.is_some() {
+                        return Err(AddSeriesError::FilteredSeriesHasSamplingInterval);
+                    }
+
+                    series
+                        .iter()
+                        .find(|series| series.id == *input)
+                        .map(|series| series.connection_id)
+                        .ok_or(AddSeriesError::MissingFilteredInput(*input))?
+                }
+
+                _ => requested_connection_id,
+            };
+
             let custom_name = match requested_name {
                 Some(name) => {
                     let name = normalize_series_name(&name)?;
@@ -176,6 +205,7 @@ impl SeriesStore {
                 connection_id,
                 color,
             ));
+
             Ok(id)
         })
     }
@@ -273,6 +303,7 @@ impl SeriesStore {
                 .filter(|series| {
                     series.connection_id == connection_id
                         && series.polling_state == SeriesPollingState::Enabled
+                        && series.source.is_polled()
                 })
                 .map(SeriesMetadata::from)
                 .collect()
@@ -430,6 +461,10 @@ fn normalize_series_source(source: SeriesSource) -> Result<SeriesSource, AddSeri
             }
 
             Ok(SeriesSource::Instrument(request))
+        }
+
+        SeriesSource::Filtered { input, definition } => {
+            Ok(SeriesSource::Filtered { input, definition })
         }
     }
 }

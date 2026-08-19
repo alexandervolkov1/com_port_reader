@@ -110,6 +110,7 @@ mod tests {
             metakon_5x3::{INTEGRAL_TIME_SCALE, Metakon5x3, Metakon5x3Register, Metakon5x3Write},
         },
         serial_connection::SerialPortConfig,
+        signal_processing::SignalFilterDefinition,
         user_command::UserCommand,
     };
 
@@ -373,6 +374,88 @@ mod tests {
                 if connection_id == ConnectionId::PRIMARY
                     && command == "set amplitude 25",
         ));
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn exposes_signal_filter_command() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
+
+        runtime
+            .execute(
+                r##"
+                    app.filter(
+                        "temperature",
+                        {
+                            name = "temperature_filtered",
+                            kind = "exponential",
+                            time_constant = 5.0,
+                            color = "#00AACC",
+                        }
+                    )
+                "##,
+            )
+            .unwrap();
+
+        let UserCommand::AddFilter(filter) = command_receiver.try_recv().unwrap() else {
+            panic!("expected AddFilter command");
+        };
+
+        assert_eq!(filter.input_name(), "temperature",);
+
+        assert_eq!(filter.name(), "temperature_filtered",);
+
+        assert_eq!(
+            filter.definition(),
+            SignalFilterDefinition::exponential(5.0).unwrap(),
+        );
+
+        assert_eq!(filter.color(), Some(SeriesColor::new(0x00, 0xAA, 0xCC,)),);
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_median_filter_window() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
+
+        let error = runtime
+            .execute(
+                r#"
+                    app.filter(
+                        "temperature",
+                        {
+                            name = "temperature_filtered",
+                            kind = "median",
+                            window = 4,
+                        }
+                    )
+                "#,
+            )
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains("Median filter window size must be odd",),
+            "unexpected Lua error: {error}",
+        );
 
         assert!(command_receiver.try_recv().is_err());
     }

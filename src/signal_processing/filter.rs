@@ -87,6 +87,45 @@ impl SignalFilterDefinition {
     }
 }
 
+impl fmt::Display for SignalFilterDefinition {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.kind() {
+            SignalFilterKind::Exponential => {
+                write!(
+                    formatter,
+                    "exponential filter, time constant {} s",
+                    self.time_constant_seconds().expect(
+                        "exponential filter must have \
+                             a time constant",
+                    ),
+                )
+            }
+
+            SignalFilterKind::MovingAverage => {
+                write!(
+                    formatter,
+                    "moving-average filter, window {} samples",
+                    self.window_size().expect(
+                        "moving-average filter must have \
+                         a window size",
+                    ),
+                )
+            }
+
+            SignalFilterKind::Median => {
+                write!(
+                    formatter,
+                    "median filter, window {} samples",
+                    self.window_size().expect(
+                        "median filter must have \
+                         a window size",
+                    ),
+                )
+            }
+        }
+    }
+}
+
 fn validate_window_size(window_size: usize) -> Result<(), SignalFilterDefinitionError> {
     if window_size == 0 || window_size > MAX_FILTER_WINDOW_SIZE {
         return Err(SignalFilterDefinitionError::InvalidWindowSize);

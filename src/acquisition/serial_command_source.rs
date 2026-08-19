@@ -290,6 +290,10 @@ impl AcquisitionSource for SerialCommandSource {
 
                 value.as_f64()
             }
+
+            SeriesSource::Filtered { .. } => {
+                return Ok(None);
+            }
         };
 
         let timestamp = current_time_f64();

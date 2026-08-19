@@ -5,7 +5,7 @@ use crossbeam_channel::Sender;
 use crate::{
     acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
     connection::ConnectionId,
-    data::{NewSeries, SeriesColor, SeriesId},
+    data::{NewFilteredSeries, NewSeries, SeriesColor, SeriesId},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     serial_connection::SerialPortConfig,
 };
@@ -40,6 +40,10 @@ impl WorkerHandle {
 
     pub fn add_series(&self, new_series: NewSeries) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::AddSeries(new_series))
+    }
+
+    pub fn add_filter(&self, filter: NewFilteredSeries) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::AddFilter(filter))
     }
 
     pub(super) fn shutdown(&self) -> Result<(), WorkerHandleError> {

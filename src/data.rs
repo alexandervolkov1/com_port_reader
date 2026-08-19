@@ -9,8 +9,8 @@ pub mod series_store;
 pub use sample::Sample;
 pub use sampling_interval::SamplingInterval;
 pub use series::{
-    DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, NewSeries, Series,
-    SeriesId, SeriesMetadata, SeriesPollingState, SeriesSource,
+    DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, NewFilteredSeries,
+    NewSeries, Series, SeriesId, SeriesMetadata, SeriesPollingState, SeriesSource,
 };
 pub use series_color::SeriesColor;
 pub use series_name::SeriesNameError;

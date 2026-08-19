@@ -629,6 +629,13 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             color: new_series.color().map(|color| color.to_string()),
         }),
 
+        UserCommand::AddFilter(filter) => Some(ProcessAction::AddFilteredSeries {
+            input_name: filter.input_name().to_owned(),
+            name: filter.name().to_owned(),
+            definition: filter.definition().to_string(),
+            color: filter.color().map(|color| color.to_string()),
+        }),
+
         UserCommand::Delete { name } => {
             Some(ProcessAction::DeleteSeriesByName { name: name.clone() })
         }

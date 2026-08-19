@@ -45,6 +45,13 @@ pub enum ProcessAction {
         color: Option<String>,
     },
 
+    AddFilteredSeries {
+        input_name: String,
+        name: String,
+        definition: String,
+        color: Option<String>,
+    },
+
     DeleteSeriesByName {
         name: String,
     },

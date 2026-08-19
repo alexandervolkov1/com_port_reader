@@ -1,4 +1,7 @@
-use crate::{connection::ConnectionId, instrument::InstrumentReadRequest};
+use crate::{
+    connection::ConnectionId, instrument::InstrumentReadRequest,
+    signal_processing::SignalFilterDefinition,
+};
 
 use super::{Sample, SamplingInterval, SeriesColor};
 
@@ -30,9 +33,14 @@ pub enum SeriesPollingState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SeriesSource {
-    SerialCommand { command: String },
-
+    SerialCommand {
+        command: String,
+    },
     Instrument(InstrumentReadRequest),
+    Filtered {
+        input: SeriesId,
+        definition: SignalFilterDefinition,
+    },
 }
 
 impl SeriesSource {
@@ -41,7 +49,13 @@ impl SeriesSource {
             Self::SerialCommand { .. } => "serial",
 
             Self::Instrument(request) => request.default_name_prefix(),
+
+            Self::Filtered { .. } => "filtered",
         }
+    }
+
+    pub(crate) const fn is_polled(&self) -> bool {
+        !matches!(self, Self::Filtered { .. })
     }
 }
 
@@ -53,6 +67,10 @@ impl std::fmt::Display for SeriesSource {
             }
 
             Self::Instrument(request) => request.fmt(formatter),
+
+            Self::Filtered { input, definition } => {
+                write!(formatter, "Filtered series {input}: {definition}",)
+            }
         }
     }
 }
@@ -111,6 +129,20 @@ impl NewSeries {
         }
     }
 
+    pub(crate) fn named_filtered(
+        input: SeriesId,
+        definition: SignalFilterDefinition,
+        name: impl Into<String>,
+    ) -> Self {
+        Self {
+            source: SeriesSource::Filtered { input, definition },
+            name: Some(name.into()),
+            sampling_interval: None,
+            connection_id: ConnectionId::PRIMARY,
+            color: None,
+        }
+    }
+
     pub fn with_sampling_interval(mut self, interval: SamplingInterval) -> Self {
         self.sampling_interval = Some(interval);
         self
@@ -148,6 +180,56 @@ impl NewSeries {
 
     pub(crate) const fn connection_id(&self) -> ConnectionId {
         self.connection_id
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NewFilteredSeries {
+    input_name: String,
+    name: String,
+    definition: SignalFilterDefinition,
+    color: Option<SeriesColor>,
+}
+
+impl NewFilteredSeries {
+    pub fn new(
+        input_name: impl Into<String>,
+        name: impl Into<String>,
+        definition: SignalFilterDefinition,
+    ) -> Self {
+        Self {
+            input_name: input_name.into(),
+            name: name.into(),
+            definition,
+            color: None,
+        }
+    }
+
+    pub fn with_color(mut self, color: SeriesColor) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    pub(crate) fn input_name(&self) -> &str {
+        &self.input_name
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) const fn definition(&self) -> SignalFilterDefinition {
+        self.definition
+    }
+
+    pub(crate) const fn color(&self) -> Option<SeriesColor> {
+        self.color
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (String, String, SignalFilterDefinition, Option<SeriesColor>) {
+        (self.input_name, self.name, self.definition, self.color)
     }
 }
 

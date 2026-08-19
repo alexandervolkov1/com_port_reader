@@ -140,6 +140,12 @@ impl CommandDispatcher {
                 self.add_series(new_series);
             }
 
+            UserCommand::AddFilter(filter) => {
+                if let Err(error) = self.primary_worker().add_filter(filter) {
+                    self.set_worker_error(error);
+                }
+            }
+
             UserCommand::Delete { name } => {
                 if let Err(error) = self.primary_worker().remove_series_by_name(name) {
                     self.set_worker_error(error);

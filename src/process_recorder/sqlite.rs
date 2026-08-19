@@ -358,6 +358,7 @@ fn action_type_name(action: &ProcessAction) -> &'static str {
         ProcessAction::StartEmulator => "start_emulator",
         ProcessAction::StopEmulator => "stop_emulator",
         ProcessAction::AddSeries { .. } => "add_series",
+        ProcessAction::AddFilteredSeries { .. } => "add_filtered_series",
         ProcessAction::DeleteSeriesByName { .. } => "delete_series_by_name",
         ProcessAction::RenameSeries { .. } => "rename_series",
         ProcessAction::SetSeriesVisibility { .. } => "set_series_visibility",
@@ -382,6 +383,7 @@ fn action_connection_id(action: &ProcessAction) -> Option<String> {
         | ProcessAction::ClearSeries
         | ProcessAction::StartEmulator
         | ProcessAction::StopEmulator
+        | ProcessAction::AddFilteredSeries { .. }
         | ProcessAction::DeleteSeriesByName { .. }
         | ProcessAction::RenameSeries { .. }
         | ProcessAction::SetSeriesVisibility { .. }

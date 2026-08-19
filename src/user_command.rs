@@ -3,13 +3,14 @@ use crossbeam_channel::Sender;
 use crate::{
     acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
     connection::ConnectionId,
-    data::{NewSeries, SeriesColor},
+    data::{NewFilteredSeries, NewSeries, SeriesColor},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
 };
 
 #[derive(Debug)]
 pub enum UserCommand {
     Add(NewSeries),
+    AddFilter(NewFilteredSeries),
     Delete {
         name: String,
     },

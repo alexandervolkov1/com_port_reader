@@ -140,7 +140,7 @@ impl std::fmt::Display for WorkerEvent {
             }
 
             Self::SignalProcessingFailed(error) => {
-                write!(formatter, "Signal processing was disabled: {error}",)
+                write!(formatter, "Signal processing failed: {error}",)
             }
 
             Self::SeriesRemoved(id) => {

@@ -1,6 +1,10 @@
 -- Number of independent virtual sine generators.
--- Change this value without recompiling the Rust application.
 local GENERATOR_COUNT = 8
+
+-- Park–Miller deterministic pseudo-random generator.
+-- Each virtual instrument has an independent state.
+local RANDOM_MODULUS = 2147483647
+local RANDOM_MULTIPLIER = 48271
 
 local generators = {}
 
@@ -10,7 +14,7 @@ local function create_parameter_descriptors()
     return {
         {
             key = "value",
-            name = "Value",
+            name = "Noisy sine value",
             type = "number",
             access = "read_only",
             series = true,
@@ -18,7 +22,17 @@ local function create_parameter_descriptors()
 
         {
             key = "amplitude",
-            name = "Amplitude",
+            name = "Sine amplitude",
+            type = "number",
+            access = "read_write",
+            series = false,
+            min = 0.0,
+            max = 1000000.0,
+        },
+
+        {
+            key = "noise_amplitude",
+            name = "Noise amplitude",
             type = "number",
             access = "read_write",
             series = false,
@@ -49,20 +63,34 @@ local function create_parameter_descriptors()
 end
 
 for instrument_id = 1, GENERATOR_COUNT do
+    local random_state =
+        (instrument_id * 104729)
+        % RANDOM_MODULUS
+
+    if random_state == 0 then
+        random_state = instrument_id
+    end
+
     generators[instrument_id] = {
         amplitude = 1.0,
+        noise_amplitude = 0.0,
         period = 300.0,
         phase = 0.0,
+        random_state = random_state,
     }
 
     instruments[instrument_id] = {
-        name = "Sine generator " .. instrument_id,
-        parameters = create_parameter_descriptors(),
+        name = "Sine generator "
+            .. instrument_id,
+
+        parameters =
+            create_parameter_descriptors(),
     }
 end
 
 local function get_generator(instrument_id)
-    local generator = generators[instrument_id]
+    local generator =
+        generators[instrument_id]
 
     if generator == nil then
         error(
@@ -74,22 +102,65 @@ local function get_generator(instrument_id)
     return generator
 end
 
-function read(instrument_id, parameter, time)
-    local generator = get_generator(instrument_id)
+local function next_uniform(generator)
+    generator.random_state =
+        (
+            generator.random_state
+            * RANDOM_MULTIPLIER
+        )
+        % RANDOM_MODULUS
+
+    return generator.random_state
+        / RANDOM_MODULUS
+end
+
+local function sine_value(
+    generator,
+    time
+)
+    local angular_frequency =
+        2.0 * math.pi / generator.period
+
+    return generator.amplitude
+        * math.sin(
+            angular_frequency * time
+                + generator.phase
+        )
+end
+
+local function noise_value(generator)
+    if generator.noise_amplitude == 0.0 then
+        return 0.0
+    end
+
+    -- Uniform noise in the interval
+    -- [-noise_amplitude, +noise_amplitude].
+    return generator.noise_amplitude
+        * (
+            2.0 * next_uniform(generator)
+            - 1.0
+        )
+end
+
+function read(
+    instrument_id,
+    parameter,
+    time
+)
+    local generator =
+        get_generator(instrument_id)
 
     if parameter == "value" then
-        local angular_frequency =
-            2.0 * math.pi / generator.period
-
-        return generator.amplitude
-            * math.sin(
-                angular_frequency * time
-                    + generator.phase
-            )
+        return sine_value(generator, time)
+            + noise_value(generator)
     end
 
     if parameter == "amplitude" then
         return generator.amplitude
+    end
+
+    if parameter == "noise_amplitude" then
+        return generator.noise_amplitude
     end
 
     if parameter == "period" then
@@ -112,11 +183,29 @@ function write(
     value,
     _time
 )
-    local generator = get_generator(instrument_id)
+    local generator =
+        get_generator(instrument_id)
 
     if parameter == "amplitude" then
+        if value < 0.0 then
+            error(
+                "sine amplitude must not be negative"
+            )
+        end
+
         generator.amplitude = value
         return generator.amplitude
+    end
+
+    if parameter == "noise_amplitude" then
+        if value < 0.0 then
+            error(
+                "noise amplitude must not be negative"
+            )
+        end
+
+        generator.noise_amplitude = value
+        return generator.noise_amplitude
     end
 
     if parameter == "period" then

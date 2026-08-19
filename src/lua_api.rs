@@ -7,8 +7,8 @@ use crate::{
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
     data::{
-        DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, NewSeries,
-        SamplingInterval, SeriesColor,
+        DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, NewFilteredSeries,
+        NewSeries, SamplingInterval, SeriesColor,
     },
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterRange,
@@ -19,6 +19,7 @@ use crate::{
         },
     },
     lua_application_script::LuaApplicationEvent,
+    signal_processing::SignalFilterDefinition,
     user_command::UserCommand,
 };
 
@@ -73,6 +74,8 @@ pub fn install(
         command_sender.clone(),
         application_definition.clone(),
     )?;
+
+    register_add_filter(lua, &app, command_sender.clone())?;
 
     register_metakon_controller(
         lua,
@@ -265,6 +268,130 @@ fn register_add_serial(
     })?;
 
     app.set("add_serial", function)
+}
+
+fn register_add_filter(
+    lua: &Lua,
+    app: &Table,
+    command_sender: Sender<UserCommand>,
+) -> mlua::Result<()> {
+    let function = lua.create_function(move |_, (input_name, options): (String, Table)| {
+        let name = options.get::<Option<String>>("name")?.ok_or_else(|| {
+            mlua::Error::RuntimeError(
+                "Filtered series option 'name' \
+                         is required"
+                    .to_owned(),
+            )
+        })?;
+
+        let kind = options.get::<Option<String>>("kind")?.ok_or_else(|| {
+            mlua::Error::RuntimeError(
+                "Filtered series option 'kind' \
+                         is required"
+                    .to_owned(),
+            )
+        })?;
+
+        validate_filter_option_keys(&options, &kind)?;
+
+        let definition = parse_filter_definition(&options, &kind)?;
+
+        let color = options
+            .get::<Option<String>>("color")?
+            .map(|value| value.parse::<SeriesColor>())
+            .transpose()
+            .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+        let mut filter = NewFilteredSeries::new(input_name, name, definition);
+
+        if let Some(color) = color {
+            filter = filter.with_color(color);
+        }
+
+        send_application_command(&command_sender, UserCommand::AddFilter(filter))
+    })?;
+
+    app.set("filter", function)
+}
+
+fn validate_filter_option_keys(options: &Table, kind: &str) -> mlua::Result<()> {
+    for pair in options.pairs::<String, Value>() {
+        let (key, _) = pair?;
+
+        let known = match kind {
+            "exponential" => matches!(key.as_str(), "name" | "kind" | "time_constant" | "color"),
+
+            "moving_average" | "median" => {
+                matches!(key.as_str(), "name" | "kind" | "window" | "color")
+            }
+
+            _ => {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "Unknown signal filter kind \
+                             '{kind}'",
+                )));
+            }
+        };
+
+        if !known {
+            return Err(mlua::Error::RuntimeError(format!(
+                "Unknown option '{key}' for \
+                         signal filter kind '{kind}'",
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_filter_definition(options: &Table, kind: &str) -> mlua::Result<SignalFilterDefinition> {
+    let result = match kind {
+        "exponential" => {
+            let time_constant = options
+                .get::<Option<f64>>("time_constant")?
+                .ok_or_else(|| {
+                    mlua::Error::RuntimeError(
+                        "Exponential filter option \
+                         'time_constant' is required"
+                            .to_owned(),
+                    )
+                })?;
+
+            SignalFilterDefinition::exponential(time_constant)
+        }
+
+        "moving_average" => {
+            let window = options.get::<Option<usize>>("window")?.ok_or_else(|| {
+                mlua::Error::RuntimeError(
+                    "Moving-average filter option \
+                         'window' is required"
+                        .to_owned(),
+                )
+            })?;
+
+            SignalFilterDefinition::moving_average(window)
+        }
+
+        "median" => {
+            let window = options.get::<Option<usize>>("window")?.ok_or_else(|| {
+                mlua::Error::RuntimeError(
+                    "Median filter option 'window' \
+                         is required"
+                        .to_owned(),
+                )
+            })?;
+
+            SignalFilterDefinition::median(window)
+        }
+
+        _ => {
+            return Err(mlua::Error::RuntimeError(format!(
+                "Unknown signal filter kind '{kind}'",
+            )));
+        }
+    };
+
+    result.map_err(|error| mlua::Error::RuntimeError(error.to_string()))
 }
 
 fn connection_id_from_options(
