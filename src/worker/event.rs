@@ -49,6 +49,7 @@ pub enum WorkerEvent {
     AcquisitionStartFailed(AcquisitionError),
     AcquisitionFailed(AcquisitionError),
     AcquisitionStopFailed(AcquisitionError),
+    SignalProcessingFailed(String),
     SeriesRemoved(SeriesId),
     SeriesNotFound(String),
     SeriesRenamed {
@@ -136,6 +137,10 @@ impl std::fmt::Display for WorkerEvent {
 
             Self::AcquisitionStopFailed(error) => {
                 write!(formatter, "Failed to stop acquisition: {error}")
+            }
+
+            Self::SignalProcessingFailed(error) => {
+                write!(formatter, "Signal processing was disabled: {error}",)
             }
 
             Self::SeriesRemoved(id) => {

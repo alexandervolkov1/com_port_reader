@@ -16,10 +16,11 @@ use crate::{
         VirtualInstrumentDescribeResult,
     },
     connection::ConnectionId,
-    data::{Series, SeriesId, SeriesMetadata, SeriesSample, SeriesStore},
+    data::{SeriesId, SeriesMetadata, SeriesSample, SeriesStore},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     process_recorder::ProcessRecorder,
     serial_connection::SerialConnectionError,
+    signal_processing::{SignalProcessingHandle, SignalProcessingInput},
 };
 
 mod command;
@@ -79,6 +80,26 @@ struct SeriesSchedule {
     consecutive_failures: u8,
 }
 
+pub(crate) struct WorkerServices {
+    series: SeriesStore,
+    process_recorder: ProcessRecorder,
+    signal_processing: SignalProcessingHandle<SeriesId>,
+}
+
+impl WorkerServices {
+    pub(crate) fn new(
+        series: SeriesStore,
+        process_recorder: ProcessRecorder,
+        signal_processing: SignalProcessingHandle<SeriesId>,
+    ) -> Self {
+        Self {
+            series,
+            process_recorder,
+            signal_processing,
+        }
+    }
+}
+
 pub struct Worker {
     thread: Option<JoinHandle<()>>,
     commands: WorkerHandle,
@@ -90,11 +111,16 @@ impl Worker {
         commands: WorkerHandle,
         command_receiver: Receiver<WorkerCommand>,
         event_sender: Sender<ConnectionWorkerEvent>,
-        series: SeriesStore,
+        services: WorkerServices,
         mut source: Box<dyn AcquisitionSource>,
-        process_recorder: ProcessRecorder,
         config: WorkerConfig,
     ) -> Self {
+        let WorkerServices {
+            series,
+            process_recorder,
+            signal_processing,
+        } = services;
+
         let connection_id = commands.connection_id();
 
         let event_sender = WorkerEventSender::new(connection_id, event_sender);
@@ -117,6 +143,8 @@ impl Worker {
             let mut sample_failures: Vec<SeriesAcquisitionFailure> = Vec::new();
 
             let mut pending_command: Option<WorkerCommand> = None;
+
+            let mut signal_processing_available = true;
 
             loop {
                 let now = Instant::now();
@@ -154,7 +182,8 @@ impl Worker {
                     source.sample(&due_series, &mut sample_batch, &mut sample_failures);
 
                     let result = series
-                        .with_mut(|all_series| append_series_samples(all_series, &sample_batch));
+                        .append_samples(&sample_batch)
+                        .map_err(|error| AcquisitionError::from(error.to_string()));
 
                     match result {
                         Ok(()) => {
@@ -163,6 +192,29 @@ impl Worker {
                                 &sample_batch,
                                 &series_metadata,
                             );
+
+                            if signal_processing_available {
+                                let processing_inputs = sample_batch
+                                    .iter()
+                                    .map(|series_sample| {
+                                        SignalProcessingInput::new(
+                                            series_sample.series_id,
+                                            series_sample.sample.timestamp,
+                                            series_sample.sample.value,
+                                        )
+                                    })
+                                    .collect();
+
+                                if let Err(error) =
+                                    signal_processing.process_batch(processing_inputs)
+                                {
+                                    signal_processing_available = false;
+
+                                    let _ = event_sender.send(WorkerEvent::SignalProcessingFailed(
+                                        error.to_string(),
+                                    ));
+                                }
+                            }
 
                             let completed_at = Instant::now();
 
@@ -691,36 +743,6 @@ fn close_source_after_one_shot<T>(
     }
 
     result
-}
-
-fn append_series_samples(
-    series: &mut [Series],
-    samples: &[SeriesSample],
-) -> Result<(), AcquisitionError> {
-    for series_sample in samples {
-        if !series
-            .iter()
-            .any(|series| series.id == series_sample.series_id)
-        {
-            return Err(format!(
-                "Acquisition source returned a \
-                 sample for unknown series {}",
-                series_sample.series_id,
-            )
-            .into());
-        }
-    }
-
-    for series_sample in samples {
-        let target = series
-            .iter_mut()
-            .find(|series| series.id == series_sample.series_id)
-            .expect("series IDs were validated above");
-
-        target.samples.push(series_sample.sample);
-    }
-
-    Ok(())
 }
 
 fn read_instrument_from_source(

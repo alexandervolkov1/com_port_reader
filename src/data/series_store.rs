@@ -7,7 +7,7 @@ use crate::{connection::ConnectionId, instrument::InstrumentReadRequest};
 
 use super::{
     NewSeries, Series, SeriesColor, SeriesId, SeriesMetadata, SeriesNameError, SeriesPollingState,
-    SeriesSource, series_name::normalize_series_name,
+    SeriesSample, SeriesSource, series_name::normalize_series_name,
 };
 
 struct SeriesStoreInner {
@@ -59,6 +59,23 @@ impl From<SeriesNameError> for AddSeriesError {
         Self::InvalidName(error)
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppendSeriesSamplesError {
+    UnknownSeries(SeriesId),
+}
+
+impl std::fmt::Display for AppendSeriesSamplesError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownSeries(id) => {
+                write!(formatter, "Cannot append sample for unknown series {id}",)
+            }
+        }
+    }
+}
+
+impl std::error::Error for AppendSeriesSamplesError {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RenameSeriesError {
@@ -160,6 +177,32 @@ impl SeriesStore {
                 color,
             ));
             Ok(id)
+        })
+    }
+
+    pub fn append_samples(&self, samples: &[SeriesSample]) -> Result<(), AppendSeriesSamplesError> {
+        self.with_mut(|series| {
+            for series_sample in samples {
+                if !series
+                    .iter()
+                    .any(|series| series.id == series_sample.series_id)
+                {
+                    return Err(AppendSeriesSamplesError::UnknownSeries(
+                        series_sample.series_id,
+                    ));
+                }
+            }
+
+            for series_sample in samples {
+                let target = series
+                    .iter_mut()
+                    .find(|series| series.id == series_sample.series_id)
+                    .expect("series IDs were validated before appending samples");
+
+                target.samples.push(series_sample.sample);
+            }
+
+            Ok(())
         })
     }
 
@@ -423,8 +466,8 @@ mod tests {
     use crate::{
         connection::ConnectionId,
         data::{
-            AddSeriesError, NewSeries, SamplingInterval, SeriesColor, SeriesId, SeriesNameError,
-            SeriesPollingState, SeriesSource,
+            AddSeriesError, AppendSeriesSamplesError, NewSeries, Sample, SamplingInterval,
+            SeriesColor, SeriesId, SeriesNameError, SeriesPollingState, SeriesSample, SeriesSource,
         },
         instrument::{
             InstrumentReadRequest,
@@ -1151,5 +1194,33 @@ mod tests {
         });
 
         assert_eq!(store.set_color_by_name("missing", Some(color),), None,);
+    }
+
+    #[test]
+    fn appends_samples_atomically() {
+        let store = SeriesStore::new();
+
+        let id = add_named(&store, "temperature");
+
+        let valid = SeriesSample::new(id, Sample::new(1.0, 100.0));
+
+        let missing_id = SeriesId::new(999);
+
+        let invalid = SeriesSample::new(missing_id, Sample::new(1.0, 200.0));
+
+        assert_eq!(
+            store.append_samples(&[valid, invalid]),
+            Err(AppendSeriesSamplesError::UnknownSeries(missing_id,)),
+        );
+
+        store.with(|series| {
+            assert!(series[0].samples.is_empty());
+        });
+
+        assert_eq!(store.append_samples(&[valid]), Ok(()));
+
+        store.with(|series| {
+            assert_eq!(series[0].samples, vec![Sample::new(1.0, 100.0)],);
+        });
     }
 }

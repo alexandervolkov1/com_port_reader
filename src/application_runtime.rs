@@ -1,5 +1,6 @@
 use crossbeam_channel::{Receiver, RecvTimeoutError, unbounded};
 use std::{
+    collections::BTreeMap,
     fs,
     path::Path,
     thread,
@@ -11,12 +12,13 @@ use crate::{
     application_definition::ApplicationDefinition,
     application_paths::ApplicationPaths,
     connection::ConnectionId,
-    data::{SeriesId, SeriesStore},
+    data::{Sample, SeriesId, SeriesSample, SeriesStore},
     lua_application_definition::apply_lua_definition,
     lua_application_script::{LuaApplicationEvent, LuaControlInvocation},
     lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle, LuaWorkerHandleError},
     process_recorder::{ProcessAction, ProcessActionOrigin, ProcessRecord, ProcessRecorder},
     serial_connection::SerialConnectionRegistry,
+    signal_processing::{SignalProcessingEvent, SignalProcessingService},
     user_command::UserCommand,
     worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
 };
@@ -42,6 +44,7 @@ pub struct ApplicationRuntime {
     process_recorder: ProcessRecorder,
     series: SeriesStore,
     acquisition: AcquisitionController,
+    signal_processing: SignalProcessingService<SeriesId>,
     dispatcher: CommandDispatcher,
     device_emulator: DeviceEmulatorService,
     lua_command_receiver: Receiver<UserCommand>,
@@ -81,6 +84,10 @@ impl ApplicationRuntime {
 
         let series = SeriesStore::new();
 
+        let signal_processing = SignalProcessingService::<SeriesId>::spawn()?;
+
+        let signal_processing_handle = signal_processing.handle();
+
         let emulator_port = definition
             .emulator()
             .map(|emulator| emulator.port_name().to_owned());
@@ -119,6 +126,7 @@ impl ApplicationRuntime {
             event_sender.clone(),
             series.clone(),
             process_recorder.clone(),
+            signal_processing_handle.clone(),
             worker_config,
         );
 
@@ -142,6 +150,7 @@ impl ApplicationRuntime {
                 event_sender.clone(),
                 series.clone(),
                 process_recorder.clone(),
+                signal_processing_handle.clone(),
                 worker_config,
             );
 
@@ -178,6 +187,7 @@ impl ApplicationRuntime {
             process_recorder,
             series,
             acquisition,
+            signal_processing,
             dispatcher,
             device_emulator,
             lua_command_receiver,
@@ -256,6 +266,7 @@ impl ApplicationRuntime {
         process_recorder: ProcessRecorder,
         series: SeriesStore,
         acquisition: AcquisitionController,
+        signal_processing: SignalProcessingService<SeriesId>,
         dispatcher: CommandDispatcher,
         device_emulator: DeviceEmulatorService,
         lua_command_receiver: Receiver<UserCommand>,
@@ -269,6 +280,7 @@ impl ApplicationRuntime {
             process_recorder,
             series,
             acquisition,
+            signal_processing,
             dispatcher,
             device_emulator,
             lua_command_receiver,
@@ -284,6 +296,8 @@ impl ApplicationRuntime {
         self.device_emulator.poll();
 
         self.dispatcher.poll_events();
+
+        self.poll_signal_processing();
 
         let commands = self.lua_command_receiver.try_iter().collect::<Vec<_>>();
 
@@ -527,6 +541,75 @@ impl ApplicationRuntime {
 
     pub(crate) fn take_lua_application_events(&self) -> Vec<LuaApplicationEvent> {
         self.lua_application_event_receiver.try_iter().collect()
+    }
+
+    fn poll_signal_processing(&self) {
+        for event in self.signal_processing.take_events() {
+            match event {
+                SignalProcessingEvent::Samples(samples) => {
+                    self.store_processed_samples(samples);
+                }
+
+                SignalProcessingEvent::Error(error) => {
+                    self.log.error(error.to_string());
+                }
+            }
+        }
+    }
+
+    fn store_processed_samples(
+        &self,
+        samples: Vec<crate::signal_processing::ProcessedSignal<SeriesId>>,
+    ) {
+        if samples.is_empty() {
+            return;
+        }
+
+        let series_samples = samples
+            .into_iter()
+            .map(|processed| {
+                SeriesSample::new(
+                    processed.signal_id,
+                    Sample::new(processed.timestamp, processed.value),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        if let Err(error) = self.series.append_samples(&series_samples) {
+            self.log
+                .error(format!("Failed to store processed signal: {error}",));
+
+            return;
+        }
+
+        let metadata = self.series.metadata();
+
+        let mut samples_by_connection: BTreeMap<ConnectionId, Vec<SeriesSample>> = BTreeMap::new();
+
+        for series_sample in series_samples {
+            let Some(series_metadata) = metadata
+                .iter()
+                .find(|metadata| metadata.id == series_sample.series_id)
+            else {
+                self.log.error(format!(
+                    "Processed series {} disappeared \
+                     before it could be recorded",
+                    series_sample.series_id,
+                ));
+
+                continue;
+            };
+
+            samples_by_connection
+                .entry(series_metadata.connection_id)
+                .or_default()
+                .push(series_sample);
+        }
+
+        for (connection_id, samples) in samples_by_connection {
+            self.process_recorder
+                .record_measurements(connection_id, &samples, &metadata);
+        }
     }
 }
 

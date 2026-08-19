@@ -464,6 +464,7 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
             | WorkerEvent::AcquisitionStartFailed(_)
             | WorkerEvent::AcquisitionFailed(_)
             | WorkerEvent::AcquisitionStopFailed(_)
+            | WorkerEvent::SignalProcessingFailed(_)
             | WorkerEvent::SeriesNotFound(_)
             | WorkerEvent::SeriesRenameFailed(_)
             | WorkerEvent::SerialTextCommandFailed { .. }

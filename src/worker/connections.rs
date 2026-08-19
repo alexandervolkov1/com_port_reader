@@ -168,8 +168,9 @@ mod tests {
         connection::ConnectionId,
         data::{NewSeries, Sample, SeriesId, SeriesMetadata, SeriesStore},
         process_recorder::ProcessRecorder,
+        signal_processing::{SignalProcessingHandle, SignalProcessingService},
         utils::current_time_f64,
-        worker::{ConnectionWorkerEvent, Worker, WorkerConfig, WorkerHandle},
+        worker::{ConnectionWorkerEvent, Worker, WorkerConfig, WorkerHandle, WorkerServices},
     };
 
     struct FixedSource {
@@ -190,18 +191,20 @@ mod tests {
         value: f64,
         series: SeriesStore,
         event_sender: Sender<ConnectionWorkerEvent>,
+        signal_processing: SignalProcessingHandle<SeriesId>,
     ) -> Worker {
         let (command_sender, command_receiver) = bounded(32);
 
         let handle = WorkerHandle::new(connection_id, command_sender);
 
+        let services = WorkerServices::new(series, ProcessRecorder::default(), signal_processing);
+
         Worker::spawn(
             handle,
             command_receiver,
             event_sender,
-            series,
+            services,
             Box::new(FixedSource { value }),
-            ProcessRecorder::default(),
             WorkerConfig::new(Duration::from_millis(10)),
         )
     }
@@ -219,6 +222,10 @@ mod tests {
     #[test]
     fn polls_connections_on_independent_workers() {
         let series = SeriesStore::new();
+
+        let signal_processing = SignalProcessingService::<SeriesId>::spawn().unwrap();
+
+        let signal_processing_handle = signal_processing.handle();
 
         let primary_series_id = series
             .add_series(
@@ -243,10 +250,16 @@ mod tests {
             10.0,
             series.clone(),
             event_sender.clone(),
+            signal_processing_handle.clone(),
         );
 
-        let secondary_worker =
-            spawn_test_worker(secondary_connection, 20.0, series.clone(), event_sender);
+        let secondary_worker = spawn_test_worker(
+            secondary_connection,
+            20.0,
+            series.clone(),
+            event_sender,
+            signal_processing_handle,
+        );
 
         let mut workers = ConnectionWorkers::new(primary_worker);
 
