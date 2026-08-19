@@ -206,11 +206,23 @@ impl SeriesStore {
         })
     }
 
-    pub fn remove_series_by_name(&self, name: &str) -> Option<SeriesId> {
-        self.with_mut(|series| {
-            let index = series.iter().position(|series| series.name == name)?;
+    pub fn id_by_name(&self, name: &str) -> Option<SeriesId> {
+        self.with(|series| {
+            series
+                .iter()
+                .find(|series| series.name == name)
+                .map(|series| series.id)
+        })
+    }
 
-            Some(series.remove(index).id)
+    pub fn remove_series(&self, id: SeriesId) -> bool {
+        self.with_mut(|series| {
+            let Some(index) = series.iter().position(|series| series.id == id) else {
+                return false;
+            };
+
+            series.remove(index);
+            true
         })
     }
 
@@ -379,19 +391,6 @@ impl SeriesStore {
             Some(series.id)
         })
     }
-
-    #[cfg(test)]
-    pub fn remove_series(&self, id: SeriesId) -> bool {
-        self.with_mut(|series| {
-            let Some(index) = series.iter().position(|series| series.id == id) else {
-                return false;
-            };
-
-            series.remove(index);
-
-            true
-        })
-    }
 }
 
 impl Default for SeriesStore {
@@ -461,13 +460,13 @@ fn generate_default_name(series: &[Series], prefix: &str, id: SeriesId) -> Strin
 
 #[cfg(test)]
 mod tests {
-    use super::{RenameSeriesError, SeriesStore};
+    use super::{AppendSeriesSamplesError, RenameSeriesError, SeriesStore};
 
     use crate::{
         connection::ConnectionId,
         data::{
-            AddSeriesError, AppendSeriesSamplesError, NewSeries, Sample, SamplingInterval,
-            SeriesColor, SeriesId, SeriesNameError, SeriesPollingState, SeriesSample, SeriesSource,
+            AddSeriesError, NewSeries, Sample, SamplingInterval, SeriesColor, SeriesId,
+            SeriesNameError, SeriesPollingState, SeriesSample, SeriesSource,
         },
         instrument::{
             InstrumentReadRequest,
@@ -675,11 +674,13 @@ mod tests {
 
         let id = add_named(&store, "temperature");
 
-        assert_eq!(store.remove_series_by_name("temperature",), Some(id),);
+        assert_eq!(store.id_by_name("temperature"), Some(id),);
 
-        assert!(store.metadata().is_empty());
+        assert!(store.remove_series(id));
 
-        assert_eq!(store.remove_series_by_name("temperature",), None,);
+        assert_eq!(store.id_by_name("temperature"), None,);
+
+        assert!(!store.remove_series(id));
     }
 
     #[test]

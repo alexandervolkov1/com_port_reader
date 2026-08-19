@@ -53,6 +53,11 @@ enum SignalProcessingCommand<SignalId> {
     Clear,
 
     Shutdown,
+
+    RemoveFrom {
+        signal_id: SignalId,
+        response_sender: Sender<Vec<SignalId>>,
+    },
 }
 
 pub struct SignalProcessingHandle<SignalId> {
@@ -128,6 +133,24 @@ impl<SignalId> SignalProcessingHandle<SignalId> {
     pub fn clear(&self) -> Result<(), SignalProcessingServiceDisconnected> {
         self.command_sender
             .send(SignalProcessingCommand::Clear)
+            .map_err(|_| SignalProcessingServiceDisconnected)
+    }
+
+    pub fn remove_from(
+        &self,
+        signal_id: SignalId,
+    ) -> Result<Vec<SignalId>, SignalProcessingServiceDisconnected> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(SignalProcessingCommand::RemoveFrom {
+                signal_id,
+                response_sender,
+            })
+            .map_err(|_| SignalProcessingServiceDisconnected)?;
+
+        response_receiver
+            .recv()
             .map_err(|_| SignalProcessingServiceDisconnected)
     }
 }
@@ -215,6 +238,15 @@ fn run_signal_processing<SignalId>(
 
             SignalProcessingCommand::ResetFrom { signal_id } => {
                 graph.reset_from(signal_id);
+            }
+
+            SignalProcessingCommand::RemoveFrom {
+                signal_id,
+                response_sender,
+            } => {
+                let removed = graph.remove_from(signal_id);
+
+                let _ = response_sender.send(removed);
             }
 
             SignalProcessingCommand::Clear => {

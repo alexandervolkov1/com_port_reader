@@ -170,6 +170,45 @@ where
         self.outputs_by_input.clear();
     }
 
+    pub fn remove_from(&mut self, signal_id: SignalId) -> Vec<SignalId> {
+        let mut pending = VecDeque::from([signal_id]);
+
+        let mut removed = Vec::new();
+        let mut visited = HashSet::new();
+
+        if self.nodes.contains_key(&signal_id) {
+            visited.insert(signal_id);
+            removed.push(signal_id);
+        }
+
+        while let Some(input) = pending.pop_front() {
+            let Some(outputs) = self.outputs_by_input.get(&input).cloned() else {
+                continue;
+            };
+
+            for output in outputs {
+                if visited.insert(output) {
+                    removed.push(output);
+                    pending.push_back(output);
+                }
+            }
+        }
+
+        for output in &removed {
+            self.nodes.remove(output);
+            self.outputs_by_input.remove(output);
+        }
+
+        for outputs in self.outputs_by_input.values_mut() {
+            outputs.retain(|output| !visited.contains(output));
+        }
+
+        self.outputs_by_input
+            .retain(|_, outputs| !outputs.is_empty());
+
+        removed
+    }
+
     fn would_create_cycle(&self, input: SignalId, output: SignalId) -> bool {
         if input == output {
             return true;
@@ -567,5 +606,48 @@ mod tests {
         assert!(graph.is_empty());
         assert!(!graph.contains_output(2));
         assert!(graph.process(1, 0.0, 10.0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn removes_filter_and_all_dependent_filters() {
+        let mut graph = SignalProcessingGraph::new();
+
+        graph
+            .add_filter(1_u64, 2, SignalFilterDefinition::moving_average(3).unwrap())
+            .unwrap();
+
+        graph
+            .add_filter(2, 3, SignalFilterDefinition::median(3).unwrap())
+            .unwrap();
+
+        graph
+            .add_filter(1, 4, SignalFilterDefinition::exponential(1.0).unwrap())
+            .unwrap();
+
+        assert_eq!(graph.remove_from(2), vec![2, 3]);
+
+        assert!(graph.remove_from(4).contains(&4));
+
+        assert!(graph.remove_from(2).is_empty());
+    }
+
+    #[test]
+    fn removes_all_filters_derived_from_raw_signal() {
+        let mut graph = SignalProcessingGraph::new();
+
+        graph
+            .add_filter(1_u64, 2, SignalFilterDefinition::moving_average(3).unwrap())
+            .unwrap();
+
+        graph
+            .add_filter(1, 3, SignalFilterDefinition::median(3).unwrap())
+            .unwrap();
+
+        graph
+            .add_filter(2, 4, SignalFilterDefinition::exponential(1.0).unwrap())
+            .unwrap();
+
+        assert_eq!(graph.remove_from(1), vec![2, 3, 4]);
+        assert!(graph.remove_from(1).is_empty());
     }
 }

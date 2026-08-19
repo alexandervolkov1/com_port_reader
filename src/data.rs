@@ -15,4 +15,4 @@ pub use series::{
 pub use series_color::SeriesColor;
 pub use series_name::SeriesNameError;
 pub use series_sample::SeriesSample;
-pub use series_store::{AddSeriesError, AppendSeriesSamplesError, RenameSeriesError, SeriesStore};
+pub use series_store::{AddSeriesError, RenameSeriesError, SeriesStore};
