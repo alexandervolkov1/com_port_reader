@@ -9,10 +9,10 @@ pub use filter::{
 
 pub use graph::{
     ProcessedSignal, SignalProcessingError, SignalProcessingGraph,
-    SignalProcessingGraphDefinitionError,
+    SignalProcessingGraphDefinitionError, SignalProcessingGraphUpdateError,
 };
 
 pub use service::{
-    AddSignalFilterError, SignalProcessingEvent, SignalProcessingHandle, SignalProcessingInput,
-    SignalProcessingService, SignalProcessingServiceDisconnected,
+    AddSignalFilterError, ReplaceSignalFilterError, SignalProcessingEvent, SignalProcessingHandle,
+    SignalProcessingInput, SignalProcessingService, SignalProcessingServiceDisconnected,
 };

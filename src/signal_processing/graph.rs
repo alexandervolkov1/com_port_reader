@@ -65,7 +65,7 @@ where
         output: SignalId,
         definition: SignalFilterDefinition,
     ) -> Result<(), SignalProcessingGraphDefinitionError<SignalId>> {
-        if self.nodes.get(&output).is_some() {
+        if self.nodes.contains_key(&output) {
             return Err(SignalProcessingGraphDefinitionError::DuplicateOutput { output });
         }
 
@@ -81,6 +81,22 @@ where
         );
 
         self.outputs_by_input.entry(input).or_default().push(output);
+
+        Ok(())
+    }
+
+    pub fn replace_filter(
+        &mut self,
+        output: SignalId,
+        definition: SignalFilterDefinition,
+    ) -> Result<(), SignalProcessingGraphUpdateError<SignalId>> {
+        let Some(node) = self.nodes.get_mut(&output) else {
+            return Err(SignalProcessingGraphUpdateError::UnknownOutput { output });
+        };
+
+        node.processor = SignalProcessor::Filter(SignalFilter::new(definition));
+
+        self.reset_from(output);
 
         Ok(())
     }
@@ -285,6 +301,33 @@ impl<SignalId> Error for SignalProcessingGraphDefinitionError<SignalId> where
 {
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignalProcessingGraphUpdateError<SignalId> {
+    UnknownOutput { output: SignalId },
+}
+
+impl<SignalId> fmt::Display for SignalProcessingGraphUpdateError<SignalId>
+where
+    SignalId: fmt::Display,
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownOutput { output } => {
+                write!(
+                    formatter,
+                    "Signal processing output {output} \
+                     is not registered",
+                )
+            }
+        }
+    }
+}
+
+impl<SignalId> Error for SignalProcessingGraphUpdateError<SignalId> where
+    SignalId: fmt::Debug + fmt::Display
+{
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SignalProcessingError<SignalId> {
     output: SignalId,
@@ -330,7 +373,7 @@ where
 mod tests {
     use super::{
         ProcessedSignal, SignalProcessingError, SignalProcessingGraph,
-        SignalProcessingGraphDefinitionError,
+        SignalProcessingGraphDefinitionError, SignalProcessingGraphUpdateError,
     };
 
     use crate::signal_processing::{SignalFilterDefinition, SignalFilterError};
@@ -649,5 +692,92 @@ mod tests {
 
         assert_eq!(graph.remove_from(1), vec![2, 3, 4]);
         assert!(graph.remove_from(1).is_empty());
+    }
+
+    #[test]
+    fn replaces_filter_and_resets_its_state() {
+        let mut graph = SignalProcessingGraph::new();
+
+        graph
+            .add_filter(
+                1_u64,
+                2_u64,
+                SignalFilterDefinition::moving_average(2).unwrap(),
+            )
+            .unwrap();
+
+        graph.process(1, 0.0, 10.0).unwrap();
+
+        assert_eq!(
+            graph.process(1, 1.0, 20.0).unwrap(),
+            vec![ProcessedSignal {
+                signal_id: 2,
+                timestamp: 1.0,
+                value: 15.0,
+            }],
+        );
+
+        graph
+            .replace_filter(2, SignalFilterDefinition::moving_average(3).unwrap())
+            .unwrap();
+
+        assert_eq!(
+            graph.process(1, 2.0, 100.0).unwrap(),
+            vec![ProcessedSignal {
+                signal_id: 2,
+                timestamp: 2.0,
+                value: 100.0,
+            }],
+        );
+    }
+
+    #[test]
+    fn replacing_filter_resets_dependent_filters() {
+        let mut graph = SignalProcessingGraph::new();
+
+        graph
+            .add_filter(
+                1_u64,
+                2_u64,
+                SignalFilterDefinition::moving_average(2).unwrap(),
+            )
+            .unwrap();
+
+        graph
+            .add_filter(2, 3, SignalFilterDefinition::moving_average(2).unwrap())
+            .unwrap();
+
+        graph.process(1, 0.0, 10.0).unwrap();
+        graph.process(1, 1.0, 20.0).unwrap();
+
+        graph
+            .replace_filter(2, SignalFilterDefinition::median(3).unwrap())
+            .unwrap();
+
+        assert_eq!(
+            graph.process(1, 2.0, 100.0).unwrap(),
+            vec![
+                ProcessedSignal {
+                    signal_id: 2,
+                    timestamp: 2.0,
+                    value: 100.0,
+                },
+                ProcessedSignal {
+                    signal_id: 3,
+                    timestamp: 2.0,
+                    value: 100.0,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn rejects_replacing_unknown_filter() {
+        let mut graph = SignalProcessingGraph::<u64>::new();
+
+        assert_eq!(
+            graph.replace_filter(10, SignalFilterDefinition::median(3).unwrap(),),
+            Err(SignalProcessingGraphUpdateError::UnknownOutput { output: 10 },),
+        );
     }
 }

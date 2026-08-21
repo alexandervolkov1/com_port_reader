@@ -10,7 +10,7 @@ use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 
 use super::{
     ProcessedSignal, SignalFilterDefinition, SignalProcessingError, SignalProcessingGraph,
-    SignalProcessingGraphDefinitionError,
+    SignalProcessingGraphDefinitionError, SignalProcessingGraphUpdateError,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -42,6 +42,12 @@ enum SignalProcessingCommand<SignalId> {
         output: SignalId,
         definition: SignalFilterDefinition,
         response_sender: Sender<Result<(), SignalProcessingGraphDefinitionError<SignalId>>>,
+    },
+
+    ReplaceFilter {
+        output: SignalId,
+        definition: SignalFilterDefinition,
+        response_sender: Sender<Result<(), SignalProcessingGraphUpdateError<SignalId>>>,
     },
 
     Process(Vec<SignalProcessingInput<SignalId>>),
@@ -95,6 +101,28 @@ impl<SignalId> SignalProcessingHandle<SignalId> {
             .map_err(|_| AddSignalFilterError::Disconnected)?;
 
         result.map_err(AddSignalFilterError::Definition)
+    }
+
+    pub fn replace_filter(
+        &self,
+        output: SignalId,
+        definition: SignalFilterDefinition,
+    ) -> Result<(), ReplaceSignalFilterError<SignalId>> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(SignalProcessingCommand::ReplaceFilter {
+                output,
+                definition,
+                response_sender,
+            })
+            .map_err(|_| ReplaceSignalFilterError::Disconnected)?;
+
+        let result = response_receiver
+            .recv()
+            .map_err(|_| ReplaceSignalFilterError::Disconnected)?;
+
+        result.map_err(ReplaceSignalFilterError::Definition)
     }
 
     pub fn process(
@@ -232,6 +260,16 @@ fn run_signal_processing<SignalId>(
                 let _ = response_sender.send(result);
             }
 
+            SignalProcessingCommand::ReplaceFilter {
+                output,
+                definition,
+                response_sender,
+            } => {
+                let result = graph.replace_filter(output, definition);
+
+                let _ = response_sender.send(result);
+            }
+
             SignalProcessingCommand::Process(inputs) => {
                 process_inputs(&mut graph, inputs, &event_sender);
             }
@@ -319,6 +357,41 @@ where
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplaceSignalFilterError<SignalId> {
+    Definition(SignalProcessingGraphUpdateError<SignalId>),
+
+    Disconnected,
+}
+
+impl<SignalId> fmt::Display for ReplaceSignalFilterError<SignalId>
+where
+    SignalId: fmt::Display,
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Definition(error) => error.fmt(formatter),
+
+            Self::Disconnected => formatter.write_str(
+                "Signal processing service \
+                     is disconnected",
+            ),
+        }
+    }
+}
+
+impl<SignalId> Error for ReplaceSignalFilterError<SignalId>
+where
+    SignalId: fmt::Debug + fmt::Display + 'static,
+{
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Definition(error) => Some(error),
+            Self::Disconnected => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SignalProcessingServiceDisconnected;
 
 impl fmt::Display for SignalProcessingServiceDisconnected {
@@ -334,12 +407,13 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AddSignalFilterError, SignalProcessingEvent, SignalProcessingInput, SignalProcessingService,
+        AddSignalFilterError, ReplaceSignalFilterError, SignalProcessingEvent,
+        SignalProcessingInput, SignalProcessingService,
     };
 
     use crate::signal_processing::{
         ProcessedSignal, SignalFilterDefinition, SignalFilterError,
-        SignalProcessingGraphDefinitionError,
+        SignalProcessingGraphDefinitionError, SignalProcessingGraphUpdateError,
     };
 
     #[test]
@@ -511,5 +585,54 @@ mod tests {
         handle.process(1, 0.0, 10.0).unwrap();
 
         assert!(events.recv_timeout(Duration::from_millis(50),).is_err());
+    }
+
+    #[test]
+    fn replaces_filter_in_background_service() {
+        let service = SignalProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+        let events = service.event_receiver();
+
+        handle
+            .add_filter(1, 2, SignalFilterDefinition::moving_average(2).unwrap())
+            .unwrap();
+
+        handle.process(1, 0.0, 10.0).unwrap();
+
+        events.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        handle.process(1, 1.0, 20.0).unwrap();
+
+        events.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        handle
+            .replace_filter(2, SignalFilterDefinition::median(3).unwrap())
+            .unwrap();
+
+        handle.process(1, 2.0, 100.0).unwrap();
+
+        assert_eq!(
+            events.recv_timeout(Duration::from_secs(1),),
+            Ok(SignalProcessingEvent::Samples(vec![ProcessedSignal {
+                signal_id: 2,
+                timestamp: 2.0,
+                value: 100.0,
+            },])),
+        );
+    }
+
+    #[test]
+    fn rejects_replacing_unknown_service_filter() {
+        let service = SignalProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        assert_eq!(
+            handle.replace_filter(10, SignalFilterDefinition::median(3).unwrap(),),
+            Err(ReplaceSignalFilterError::Definition(
+                SignalProcessingGraphUpdateError::UnknownOutput { output: 10 },
+            ),),
+        );
     }
 }
