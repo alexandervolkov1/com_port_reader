@@ -1,7 +1,17 @@
 local SCRIPT_ID = "virtual_sine_demo"
 local PANEL_ID = "controls"
 
-local RAW_SERIES_NAME = "virtual_sine"
+local RAW_SERIES_NAME =
+    "virtual_sine"
+
+local EXPONENTIAL_SERIES_NAME =
+    "virtual_sine_exponential"
+
+local MOVING_AVERAGE_SERIES_NAME =
+    "virtual_sine_moving_average"
+
+local MEDIAN_SERIES_NAME =
+    "virtual_sine_median"
 
 local POLL_INTERVAL = 0.5
 
@@ -58,7 +68,8 @@ local script = {
                     min = 0.0,
                     max = 1000000.0,
                     step = 1.0,
-                    on_change = "set_noise_amplitude",
+                    on_change =
+                        "set_noise_amplitude",
                 },
 
                 {
@@ -94,8 +105,10 @@ local script = {
 
                 {
                     kind = "number",
-                    id = "exponential_time_constant",
-                    label = "EMA time constant, s",
+                    id =
+                        "exponential_time_constant",
+                    label =
+                        "EMA time constant, s",
                     initial =
                         exponential_time_constant,
                     min = 0.001,
@@ -108,7 +121,8 @@ local script = {
                 {
                     kind = "toggle",
                     id = "moving_average_enabled",
-                    label = "Moving-average filter",
+                    label =
+                        "Moving-average filter",
                     initial =
                         moving_average_enabled,
                     on_change =
@@ -118,7 +132,8 @@ local script = {
                 {
                     kind = "number",
                     id = "moving_average_window",
-                    label = "Moving-average window",
+                    label =
+                        "Moving-average window",
                     initial =
                         moving_average_window,
                     min = 1.0,
@@ -151,8 +166,8 @@ local script = {
 
                 {
                     kind = "button",
-                    id = "rebuild",
-                    label = "Rebuild series and filters",
+                    id = "restart",
+                    label = "Restart demo",
                     on_click = "run",
                 },
 
@@ -177,7 +192,8 @@ local function require_finite_number(
         or value == -math.huge
     then
         error(
-            name .. " must be a finite number"
+            name
+                .. " must be a finite number"
         )
     end
 end
@@ -190,7 +206,8 @@ local function require_non_negative(
 
     if value < 0.0 then
         error(
-            name .. " must not be negative"
+            name
+                .. " must not be negative"
         )
     end
 end
@@ -203,7 +220,8 @@ local function require_positive(
 
     if value <= 0.0 then
         error(
-            name .. " must be greater than zero"
+            name
+                .. " must be greater than zero"
         )
     end
 end
@@ -216,7 +234,8 @@ local function require_window(
 
     if value % 1.0 ~= 0.0 then
         error(
-            name .. " must be an integer"
+            name
+                .. " must be an integer"
         )
     end
 
@@ -263,12 +282,98 @@ local function write_generator_parameter(
     parameter,
     value
 )
-    if generator ~= nil then
-        generator:write(
-            parameter,
-            value
-        )
+    if generator == nil then
+        return
     end
+
+    generator:write(
+        parameter,
+        value
+    )
+end
+
+local function add_exponential_filter()
+    app.filter(
+        RAW_SERIES_NAME,
+        {
+            name =
+                EXPONENTIAL_SERIES_NAME,
+            kind = "exponential",
+            time_constant =
+                exponential_time_constant,
+            color = "#1976D2",
+        }
+    )
+end
+
+local function add_moving_average_filter()
+    app.filter(
+        RAW_SERIES_NAME,
+        {
+            name =
+                MOVING_AVERAGE_SERIES_NAME,
+            kind = "moving_average",
+            window =
+                moving_average_window,
+            color = "#388E3C",
+        }
+    )
+end
+
+local function add_median_filter()
+    app.filter(
+        RAW_SERIES_NAME,
+        {
+            name = MEDIAN_SERIES_NAME,
+            kind = "median",
+            window = median_window,
+            color = "#F57C00",
+        }
+    )
+end
+
+local function update_exponential_filter()
+    if not exponential_enabled then
+        return
+    end
+
+    app.set_filter(
+        EXPONENTIAL_SERIES_NAME,
+        {
+            kind = "exponential",
+            time_constant =
+                exponential_time_constant,
+        }
+    )
+end
+
+local function update_moving_average_filter()
+    if not moving_average_enabled then
+        return
+    end
+
+    app.set_filter(
+        MOVING_AVERAGE_SERIES_NAME,
+        {
+            kind = "moving_average",
+            window =
+                moving_average_window,
+        }
+    )
+end
+
+local function update_median_filter()
+    if not median_enabled then
+        return
+    end
+
+    app.set_filter(
+        MEDIAN_SERIES_NAME,
+        {
+            kind = "median",
+            window = median_window,
+        }
+    )
 end
 
 function script.set_amplitude(value)
@@ -308,7 +413,10 @@ function script.set_noise_amplitude(value)
 end
 
 function script.set_period(value)
-    require_positive("period", value)
+    require_positive(
+        "period",
+        value
+    )
 
     period = value
 
@@ -317,11 +425,16 @@ function script.set_period(value)
         period
     )
 
-    set_status("Period updated.")
+    set_status(
+        "Period updated."
+    )
 end
 
 function script.set_phase(value)
-    require_finite_number("phase", value)
+    require_finite_number(
+        "phase",
+        value
+    )
 
     phase = value
 
@@ -330,15 +443,35 @@ function script.set_phase(value)
         phase
     )
 
-    set_status("Phase updated.")
+    set_status(
+        "Phase updated."
+    )
 end
 
-function script.set_exponential_enabled(value)
+function script.set_exponential_enabled(
+    value
+)
+    if value == exponential_enabled then
+        return
+    end
+
     exponential_enabled = value
 
-    set_status(
-        "Press Rebuild to apply filter changes."
-    )
+    if exponential_enabled then
+        add_exponential_filter()
+
+        set_status(
+            "Exponential filter enabled."
+        )
+    else
+        app.delete(
+            EXPONENTIAL_SERIES_NAME
+        )
+
+        set_status(
+            "Exponential filter disabled."
+        )
+    end
 end
 
 function script.set_exponential_time_constant(
@@ -351,19 +484,37 @@ function script.set_exponential_time_constant(
 
     exponential_time_constant = value
 
+    update_exponential_filter()
+
     set_status(
-        "Press Rebuild to apply filter changes."
+        "Exponential filter updated."
     )
 end
 
 function script.set_moving_average_enabled(
     value
 )
+    if value == moving_average_enabled then
+        return
+    end
+
     moving_average_enabled = value
 
-    set_status(
-        "Press Rebuild to apply filter changes."
-    )
+    if moving_average_enabled then
+        add_moving_average_filter()
+
+        set_status(
+            "Moving-average filter enabled."
+        )
+    else
+        app.delete(
+            MOVING_AVERAGE_SERIES_NAME
+        )
+
+        set_status(
+            "Moving-average filter disabled."
+        )
+    end
 end
 
 function script.set_moving_average_window(
@@ -375,25 +526,45 @@ function script.set_moving_average_window(
             value
         )
 
+    update_moving_average_filter()
+
     set_status(
-        "Press Rebuild to apply filter changes."
+        "Moving-average filter updated."
     )
 end
 
 function script.set_median_enabled(value)
+    if value == median_enabled then
+        return
+    end
+
     median_enabled = value
 
-    set_status(
-        "Press Rebuild to apply filter changes."
-    )
+    if median_enabled then
+        add_median_filter()
+
+        set_status(
+            "Median filter enabled."
+        )
+    else
+        app.delete(
+            MEDIAN_SERIES_NAME
+        )
+
+        set_status(
+            "Median filter disabled."
+        )
+    end
 end
 
 function script.set_median_window(value)
     median_window =
         require_median_window(value)
 
+    update_median_filter()
+
     set_status(
-        "Press Rebuild to apply filter changes."
+        "Median filter updated."
     )
 end
 
@@ -437,42 +608,15 @@ end
 
 local function add_filters()
     if exponential_enabled then
-        app.filter(
-            RAW_SERIES_NAME,
-            {
-                name = "virtual_sine_exponential",
-                kind = "exponential",
-                time_constant =
-                    exponential_time_constant,
-                color = "#1976D2",
-            }
-        )
+        add_exponential_filter()
     end
 
     if moving_average_enabled then
-        app.filter(
-            RAW_SERIES_NAME,
-            {
-                name =
-                    "virtual_sine_moving_average",
-                kind = "moving_average",
-                window =
-                    moving_average_window,
-                color = "#388E3C",
-            }
-        )
+        add_moving_average_filter()
     end
 
     if median_enabled then
-        app.filter(
-            RAW_SERIES_NAME,
-            {
-                name = "virtual_sine_median",
-                kind = "median",
-                window = median_window,
-                color = "#F57C00",
-            }
-        )
+        add_median_filter()
     end
 end
 
@@ -492,7 +636,8 @@ function script.run()
     app.start()
 
     set_status(
-        "Demo running. Filter topology rebuilt."
+        "Demo running. Signal and filter "
+            .. "parameters can be changed live."
     )
 end
 
@@ -502,11 +647,18 @@ function script.stop()
 
     generator = nil
 
-    set_status("Demo stopped.")
+    set_status(
+        "Demo stopped."
+    )
 end
 
--- Initialize before registering the panel so that a
--- startup error does not leave a broken panel behind.
+-- Remove the panel created by the braid demo when this
+-- script is started manually after sine_braid_demo.lua.
+app.unregister_script("sine_braid")
+
+-- Initialize the emulator and series before publishing
+-- the panel. A startup error will therefore not leave a
+-- non-working panel behind.
 script.run()
 
 app.register_script(script)
@@ -514,5 +666,6 @@ app.register_script(script)
 panel_registered = true
 
 set_status(
-    "Demo running. Noise can be changed live."
+    "Demo running. Signal and filter "
+        .. "parameters can be changed live."
 )
