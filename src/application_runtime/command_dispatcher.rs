@@ -146,6 +146,12 @@ impl CommandDispatcher {
                 }
             }
 
+            UserCommand::SetFilter { name, definition } => {
+                if let Err(error) = self.primary_worker().set_filter(name, definition) {
+                    self.set_worker_error(error);
+                }
+            }
+
             UserCommand::Delete { name } => {
                 if let Err(error) = self.primary_worker().remove_series_by_name(name) {
                     self.set_worker_error(error);

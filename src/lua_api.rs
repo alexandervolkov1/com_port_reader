@@ -77,6 +77,8 @@ pub fn install(
 
     register_add_filter(lua, &app, command_sender.clone())?;
 
+    register_set_filter(lua, &app, command_sender.clone())?;
+
     register_metakon_controller(
         lua,
         &app,
@@ -292,7 +294,7 @@ fn register_add_filter(
             )
         })?;
 
-        validate_filter_option_keys(&options, &kind)?;
+        validate_filter_option_keys(&options, &kind, true)?;
 
         let definition = parse_filter_definition(&options, &kind)?;
 
@@ -314,29 +316,61 @@ fn register_add_filter(
     app.set("filter", function)
 }
 
-fn validate_filter_option_keys(options: &Table, kind: &str) -> mlua::Result<()> {
+fn register_set_filter(
+    lua: &Lua,
+    app: &Table,
+    command_sender: Sender<UserCommand>,
+) -> mlua::Result<()> {
+    let function = lua.create_function(move |_, (name, options): (String, Table)| {
+        let kind = options.get::<Option<String>>("kind")?.ok_or_else(|| {
+            mlua::Error::RuntimeError(
+                "Signal filter option 'kind' \
+                         is required"
+                    .to_owned(),
+            )
+        })?;
+
+        validate_filter_option_keys(&options, &kind, false)?;
+
+        let definition = parse_filter_definition(&options, &kind)?;
+
+        send_application_command(&command_sender, UserCommand::SetFilter { name, definition })
+    })?;
+
+    app.set("set_filter", function)
+}
+
+fn validate_filter_option_keys(
+    options: &Table,
+    kind: &str,
+    allow_series_options: bool,
+) -> mlua::Result<()> {
     for pair in options.pairs::<String, Value>() {
         let (key, _) = pair?;
 
-        let known = match kind {
-            "exponential" => matches!(key.as_str(), "name" | "kind" | "time_constant" | "color"),
+        let parameter_option = match kind {
+            "exponential" => {
+                matches!(key.as_str(), "kind" | "time_constant")
+            }
 
             "moving_average" | "median" => {
-                matches!(key.as_str(), "name" | "kind" | "window" | "color")
+                matches!(key.as_str(), "kind" | "window")
             }
 
             _ => {
                 return Err(mlua::Error::RuntimeError(format!(
                     "Unknown signal filter kind \
-                             '{kind}'",
+                         '{kind}'",
                 )));
             }
         };
 
-        if !known {
+        let series_option = matches!(key.as_str(), "name" | "color");
+
+        if !(parameter_option || allow_series_options && series_option) {
             return Err(mlua::Error::RuntimeError(format!(
                 "Unknown option '{key}' for \
-                         signal filter kind '{kind}'",
+                     signal filter kind '{kind}'",
             )));
         }
     }

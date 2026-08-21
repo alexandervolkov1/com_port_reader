@@ -5,12 +5,17 @@ use crate::{
     connection::ConnectionId,
     data::{NewFilteredSeries, NewSeries, SeriesColor},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
+    signal_processing::SignalFilterDefinition,
 };
 
 #[derive(Debug)]
 pub enum UserCommand {
     Add(NewSeries),
     AddFilter(NewFilteredSeries),
+    SetFilter {
+        name: String,
+        definition: SignalFilterDefinition,
+    },
     Delete {
         name: String,
     },

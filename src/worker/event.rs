@@ -4,6 +4,7 @@ use crate::{
     acquisition::AcquisitionError,
     connection::ConnectionId,
     data::{AddSeriesError, RenameSeriesError, SeriesColor, SeriesId},
+    signal_processing::SignalFilterDefinition,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -45,6 +46,11 @@ pub enum WorkerEvent {
     AcquisitionStopped,
     SeriesCleared,
     SeriesAdded(SeriesId),
+    SeriesFilterChanged {
+        id: SeriesId,
+        name: String,
+        definition: SignalFilterDefinition,
+    },
     SeriesAddFailed(AddSeriesError),
     AcquisitionStartFailed(AcquisitionError),
     AcquisitionFailed(AcquisitionError),
@@ -121,6 +127,18 @@ impl std::fmt::Display for WorkerEvent {
             Self::SeriesCleared => formatter.write_str("All series cleared."),
             Self::SeriesAdded(id) => {
                 write!(formatter, "Series {id} added.")
+            }
+
+            Self::SeriesFilterChanged {
+                id,
+                name,
+                definition,
+            } => {
+                write!(
+                    formatter,
+                    "Filter for series '{name}' ({id}) changed to \
+                     {definition}.",
+                )
             }
 
             Self::SeriesAddFailed(error) => {

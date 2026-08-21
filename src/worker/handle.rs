@@ -8,6 +8,7 @@ use crate::{
     data::{NewFilteredSeries, NewSeries, SeriesColor, SeriesId},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     serial_connection::SerialPortConfig,
+    signal_processing::SignalFilterDefinition,
 };
 
 use super::command::{ConnectionCommand, WorkerCommand};
@@ -44,6 +45,14 @@ impl WorkerHandle {
 
     pub fn add_filter(&self, filter: NewFilteredSeries) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::AddFilter(filter))
+    }
+
+    pub fn set_filter(
+        &self,
+        name: String,
+        definition: SignalFilterDefinition,
+    ) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::SetFilter { name, definition })
     }
 
     pub(super) fn shutdown(&self) -> Result<(), WorkerHandleError> {

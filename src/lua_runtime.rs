@@ -425,6 +425,44 @@ mod tests {
     }
 
     #[test]
+    fn exposes_signal_filter_update_command() {
+        let runtime = LuaRuntime::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        let (application_event_sender, _) = crossbeam_channel::unbounded();
+
+        runtime
+            .install_application_api(command_sender, application_event_sender)
+            .unwrap();
+
+        runtime
+            .execute(
+                r#"
+                    app.set_filter(
+                        "temperature_filtered",
+                        {
+                            kind = "median",
+                            window = 7,
+                        }
+                    )
+                "#,
+            )
+            .unwrap();
+
+        let UserCommand::SetFilter { name, definition } = command_receiver.try_recv().unwrap()
+        else {
+            panic!("expected SetFilter command");
+        };
+
+        assert_eq!(name, "temperature_filtered");
+
+        assert_eq!(definition, SignalFilterDefinition::median(7).unwrap(),);
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
     fn rejects_invalid_median_filter_window() {
         let runtime = LuaRuntime::new();
 

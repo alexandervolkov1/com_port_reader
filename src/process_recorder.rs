@@ -52,6 +52,11 @@ pub enum ProcessAction {
         color: Option<String>,
     },
 
+    SetFilter {
+        name: String,
+        definition: String,
+    },
+
     DeleteSeriesByName {
         name: String,
     },

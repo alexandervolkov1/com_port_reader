@@ -3,7 +3,10 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use crate::{connection::ConnectionId, instrument::InstrumentReadRequest};
+use crate::{
+    connection::ConnectionId, instrument::InstrumentReadRequest,
+    signal_processing::SignalFilterDefinition,
+};
 
 use super::{
     NewSeries, Series, SeriesColor, SeriesId, SeriesMetadata, SeriesNameError, SeriesPollingState,
@@ -242,6 +245,26 @@ impl SeriesStore {
                 .iter()
                 .find(|series| series.name == name)
                 .map(|series| series.id)
+        })
+    }
+
+    pub fn set_filter_definition(&self, id: SeriesId, definition: SignalFilterDefinition) -> bool {
+        self.with_mut(|series| {
+            let Some(series) = series.iter_mut().find(|series| series.id == id) else {
+                return false;
+            };
+
+            let SeriesSource::Filtered {
+                definition: stored_definition,
+                ..
+            } = &mut series.source
+            else {
+                return false;
+            };
+
+            *stored_definition = definition;
+
+            true
         })
     }
 
@@ -508,6 +531,7 @@ mod tests {
             metakon_5x3::{Metakon5x3, Metakon5x3Register},
             virtual_instrument::{VirtualInstrumentId, VirtualParameterId},
         },
+        signal_processing::SignalFilterDefinition,
     };
 
     fn add_unnamed(store: &SeriesStore) -> SeriesId {
@@ -1258,5 +1282,55 @@ mod tests {
         store.with(|series| {
             assert_eq!(series[0].samples, vec![Sample::new(1.0, 100.0)],);
         });
+    }
+
+    #[test]
+    fn changes_filtered_series_definition() {
+        let store = SeriesStore::new();
+
+        let input_id = add_named(&store, "temperature");
+
+        let initial_definition = SignalFilterDefinition::moving_average(3).unwrap();
+
+        let output_id = store
+            .add_series(NewSeries::named_filtered(
+                input_id,
+                initial_definition,
+                "temperature_filtered",
+            ))
+            .unwrap();
+
+        let new_definition = SignalFilterDefinition::median(5).unwrap();
+
+        assert!(store.set_filter_definition(output_id, new_definition,));
+
+        let metadata = store.metadata();
+
+        let filtered = metadata
+            .iter()
+            .find(|series| series.id == output_id)
+            .unwrap();
+
+        assert_eq!(
+            filtered.source,
+            SeriesSource::Filtered {
+                input: input_id,
+                definition: new_definition,
+            },
+        );
+    }
+
+    #[test]
+    fn rejects_filter_definition_for_raw_series() {
+        let store = SeriesStore::new();
+
+        let raw_id = add_named(&store, "temperature");
+
+        assert!(!store.set_filter_definition(raw_id, SignalFilterDefinition::median(3).unwrap(),));
+
+        assert!(!store.set_filter_definition(
+            SeriesId::new(999),
+            SignalFilterDefinition::median(3).unwrap(),
+        ));
     }
 }

@@ -408,6 +408,39 @@ impl Worker {
                         let _ = event_sender.send(event);
                     }
 
+                    Ok(WorkerCommand::SetFilter { name, definition }) => {
+                        let event = match series.id_by_name(&name) {
+                            None => WorkerEvent::SeriesNotFound(name),
+
+                            Some(output_id) => {
+                                match signal_processing.replace_filter(output_id, definition) {
+                                    Err(error) => WorkerEvent::SignalProcessingFailed(format!(
+                                        "Cannot change filter for \
+                                                 series '{name}': {error}",
+                                    )),
+
+                                    Ok(()) => {
+                                        if series.set_filter_definition(output_id, definition) {
+                                            WorkerEvent::SeriesFilterChanged {
+                                                id: output_id,
+                                                name,
+                                                definition,
+                                            }
+                                        } else {
+                                            WorkerEvent::SignalProcessingFailed(format!(
+                                                "Cannot change filter for \
+                                                     series '{name}': series is \
+                                                     not a filtered series",
+                                            ))
+                                        }
+                                    }
+                                }
+                            }
+                        };
+
+                        let _ = event_sender.send(event);
+                    }
+
                     Ok(WorkerCommand::SetVisibility { id, visible }) => {
                         series.set_visibility(id, visible);
                     }

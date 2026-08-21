@@ -636,6 +636,11 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             color: filter.color().map(|color| color.to_string()),
         }),
 
+        UserCommand::SetFilter { name, definition } => Some(ProcessAction::SetFilter {
+            name: name.clone(),
+            definition: definition.to_string(),
+        }),
+
         UserCommand::Delete { name } => {
             Some(ProcessAction::DeleteSeriesByName { name: name.clone() })
         }
@@ -708,6 +713,7 @@ mod tests {
     use crate::{
         connection::ConnectionId,
         data::{NewSeries, SamplingInterval, SeriesColor},
+        signal_processing::SignalFilterDefinition,
         user_command::UserCommand,
     };
 
@@ -759,5 +765,23 @@ mod tests {
         };
 
         assert_eq!(process_action_from_command(&command), None,);
+    }
+
+    #[test]
+    fn converts_filter_change_to_process_action() {
+        let definition = SignalFilterDefinition::median(7).unwrap();
+
+        let command = UserCommand::SetFilter {
+            name: "temperature_filtered".to_owned(),
+            definition,
+        };
+
+        assert_eq!(
+            process_action_from_command(&command),
+            Some(ProcessAction::SetFilter {
+                name: "temperature_filtered".to_owned(),
+                definition: definition.to_string(),
+            }),
+        );
     }
 }

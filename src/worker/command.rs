@@ -5,6 +5,7 @@ use crate::{
     data::{NewFilteredSeries, NewSeries, SeriesColor, SeriesId},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     serial_connection::SerialPortConfig,
+    signal_processing::SignalFilterDefinition,
 };
 
 pub enum WorkerCommand {
@@ -12,6 +13,10 @@ pub enum WorkerCommand {
     Stop,
     AddSeries(NewSeries),
     AddFilter(NewFilteredSeries),
+    SetFilter {
+        name: String,
+        definition: SignalFilterDefinition,
+    },
     SetVisibility {
         id: SeriesId,
         visible: bool,
