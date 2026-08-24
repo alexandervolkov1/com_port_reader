@@ -18,6 +18,7 @@ use crate::{
     connection::ConnectionId,
     data::{NewSeries, SeriesId, SeriesMetadata, SeriesSample, SeriesStore},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
+    process_control::ProcessControlHandle,
     process_recorder::ProcessRecorder,
     serial_connection::SerialConnectionError,
     signal_processing::{SignalProcessingHandle, SignalProcessingInput},
@@ -84,6 +85,7 @@ pub(crate) struct WorkerServices {
     series: SeriesStore,
     process_recorder: ProcessRecorder,
     signal_processing: SignalProcessingHandle<SeriesId>,
+    process_control: ProcessControlHandle<SeriesId>,
 }
 
 impl WorkerServices {
@@ -91,11 +93,13 @@ impl WorkerServices {
         series: SeriesStore,
         process_recorder: ProcessRecorder,
         signal_processing: SignalProcessingHandle<SeriesId>,
+        process_control: ProcessControlHandle<SeriesId>,
     ) -> Self {
         Self {
             series,
             process_recorder,
             signal_processing,
+            process_control,
         }
     }
 }
@@ -119,6 +123,7 @@ impl Worker {
             series,
             process_recorder,
             signal_processing,
+            process_control,
         } = services;
 
         let connection_id = commands.connection_id();
@@ -446,16 +451,25 @@ impl Worker {
                     }
 
                     Ok(WorkerCommand::ClearSeries) => {
-                        let event = match signal_processing.clear() {
-                            Ok(()) => {
-                                series.clear();
-                                WorkerEvent::SeriesCleared
-                            }
-
+                        let event = match process_control.clear() {
                             Err(error) => WorkerEvent::SignalProcessingFailed(format!(
-                                "Cannot clear signal-processing graph: \
-                                             {error}",
+                                "Cannot clear PID control loops: \
+                                         {error}",
                             )),
+
+                            Ok(()) => match signal_processing.clear() {
+                                Ok(()) => {
+                                    series.clear();
+
+                                    WorkerEvent::SeriesCleared
+                                }
+
+                                Err(error) => WorkerEvent::SignalProcessingFailed(format!(
+                                    "Cannot clear \
+                                                 signal-processing graph: \
+                                                 {error}",
+                                )),
+                            },
                         };
 
                         let _ = event_sender.send(event);

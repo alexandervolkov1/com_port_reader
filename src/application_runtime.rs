@@ -93,6 +93,8 @@ impl ApplicationRuntime {
 
         let signal_processing_handle = signal_processing.handle();
 
+        let process_control_handle = process_control.handle();
+
         let emulator_port = definition
             .emulator()
             .map(|emulator| emulator.port_name().to_owned());
@@ -132,6 +134,7 @@ impl ApplicationRuntime {
             series.clone(),
             process_recorder.clone(),
             signal_processing_handle.clone(),
+            process_control_handle.clone(),
             worker_config,
         );
 
@@ -156,6 +159,7 @@ impl ApplicationRuntime {
                 series.clone(),
                 process_recorder.clone(),
                 signal_processing_handle.clone(),
+                process_control_handle.clone(),
                 worker_config,
             );
 

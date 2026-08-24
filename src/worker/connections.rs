@@ -167,6 +167,7 @@ mod tests {
         acquisition::{AcquisitionError, AcquisitionSource},
         connection::ConnectionId,
         data::{NewSeries, Sample, SeriesId, SeriesMetadata, SeriesStore},
+        process_control::{ProcessControlHandle, ProcessControlService},
         process_recorder::ProcessRecorder,
         signal_processing::{SignalProcessingHandle, SignalProcessingService},
         utils::current_time_f64,
@@ -192,12 +193,18 @@ mod tests {
         series: SeriesStore,
         event_sender: Sender<ConnectionWorkerEvent>,
         signal_processing: SignalProcessingHandle<SeriesId>,
+        process_control: ProcessControlHandle<SeriesId>,
     ) -> Worker {
         let (command_sender, command_receiver) = bounded(32);
 
         let handle = WorkerHandle::new(connection_id, command_sender);
 
-        let services = WorkerServices::new(series, ProcessRecorder::default(), signal_processing);
+        let services = WorkerServices::new(
+            series,
+            ProcessRecorder::default(),
+            signal_processing,
+            process_control,
+        );
 
         Worker::spawn(
             handle,
@@ -227,6 +234,10 @@ mod tests {
 
         let signal_processing_handle = signal_processing.handle();
 
+        let process_control = ProcessControlService::<SeriesId>::spawn().unwrap();
+
+        let process_control_handle = process_control.handle();
+
         let primary_series_id = series
             .add_series(
                 NewSeries::named_serial_command("primary", "primary_series")
@@ -251,6 +262,7 @@ mod tests {
             series.clone(),
             event_sender.clone(),
             signal_processing_handle.clone(),
+            process_control_handle.clone(),
         );
 
         let secondary_worker = spawn_test_worker(
@@ -259,6 +271,7 @@ mod tests {
             series.clone(),
             event_sender,
             signal_processing_handle,
+            process_control_handle,
         );
 
         let mut workers = ConnectionWorkers::new(primary_worker);
