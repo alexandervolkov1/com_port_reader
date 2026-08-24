@@ -207,6 +207,14 @@ impl PidController {
         self.output_limits
     }
 
+    pub fn set_gains(&mut self, gains: PidGains) {
+        self.gains = gains;
+    }
+
+    pub fn set_output_limits(&mut self, output_limits: PidOutputLimits) {
+        self.output_limits = output_limits;
+    }
+
     pub const fn integral(&self) -> f64 {
         self.integral
     }
@@ -689,6 +697,93 @@ mod tests {
         assert_close(unwinding.value(), -50.0);
 
         assert!(!unwinding.saturated(),);
+    }
+
+    #[test]
+    fn changes_gains_without_resetting_integral_state() {
+        let initial_gains = PidGains::new(0.0, 1.0, 0.0).unwrap();
+
+        let limits = PidOutputLimits::new(-100.0, 100.0).unwrap();
+
+        let mut controller = PidController::with_output_limits(initial_gains, limits);
+
+        controller.update(0.0, 10.0, 8.0).unwrap();
+
+        let accumulated = controller.update(1.0, 10.0, 8.0).unwrap();
+
+        assert_close(accumulated.integral(), 2.0);
+
+        let new_gains = PidGains::new(2.0, 0.0, 0.0).unwrap();
+
+        controller.set_gains(new_gains);
+
+        let updated = controller.update(2.0, 10.0, 8.0).unwrap();
+
+        assert_eq!(controller.gains(), new_gains,);
+
+        assert_close(updated.proportional(), 4.0);
+
+        assert_close(updated.integral(), 2.0);
+
+        assert_close(updated.derivative(), 0.0);
+
+        assert_close(updated.value(), 6.0);
+    }
+
+    #[test]
+    fn changes_output_limits_without_resetting_controller() {
+        let gains = PidGains::new(2.0, 0.0, 0.0).unwrap();
+
+        let mut controller = PidController::new(gains);
+
+        let unrestricted = controller.update(0.0, 100.0, 0.0).unwrap();
+
+        assert_close(unrestricted.value(), 200.0);
+
+        assert!(!unrestricted.saturated(),);
+
+        let narrow_limits = PidOutputLimits::new(0.0, 100.0).unwrap();
+
+        controller.set_output_limits(narrow_limits);
+
+        let limited = controller.update(1.0, 100.0, 0.0).unwrap();
+
+        assert_eq!(controller.output_limits(), narrow_limits,);
+
+        assert_close(limited.value(), 100.0);
+
+        assert!(limited.saturated(),);
+
+        let wide_limits = PidOutputLimits::new(0.0, 300.0).unwrap();
+
+        controller.set_output_limits(wide_limits);
+
+        let unrestricted_again = controller.update(2.0, 100.0, 0.0).unwrap();
+
+        assert_close(unrestricted_again.value(), 200.0);
+
+        assert!(!unrestricted_again.saturated(),);
+    }
+
+    #[test]
+    fn reset_preserves_gains_and_output_limits() {
+        let gains = PidGains::new(2.0, 3.0, 4.0).unwrap();
+
+        let limits = PidOutputLimits::new(0.0, 100.0).unwrap();
+
+        let mut controller = PidController::with_output_limits(gains, limits);
+
+        controller.update(0.0, 10.0, 5.0).unwrap();
+
+        controller.update(1.0, 10.0, 4.0).unwrap();
+
+        controller.reset();
+
+        assert_eq!(controller.gains(), gains,);
+
+        assert_eq!(controller.output_limits(), limits,);
+
+        assert_close(controller.integral(), 0.0);
     }
 
     fn assert_close(actual: f64, expected: f64) {
