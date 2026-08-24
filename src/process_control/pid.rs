@@ -72,16 +72,87 @@ impl fmt::Display for PidGainsError {
 impl Error for PidGainsError {}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PidOutputLimits {
+    minimum: f64,
+    maximum: f64,
+}
+
+impl PidOutputLimits {
+    pub const FULL: Self = Self {
+        minimum: -f64::MAX,
+        maximum: f64::MAX,
+    };
+
+    pub fn new(minimum: f64, maximum: f64) -> Result<Self, PidOutputLimitsError> {
+        if !minimum.is_finite() {
+            return Err(PidOutputLimitsError::InvalidMinimum);
+        }
+
+        if !maximum.is_finite() {
+            return Err(PidOutputLimitsError::InvalidMaximum);
+        }
+
+        if minimum >= maximum {
+            return Err(PidOutputLimitsError::InvalidRange);
+        }
+
+        Ok(Self { minimum, maximum })
+    }
+
+    pub const fn minimum(self) -> f64 {
+        self.minimum
+    }
+
+    pub const fn maximum(self) -> f64 {
+        self.maximum
+    }
+
+    fn clamp(self, value: f64) -> f64 {
+        value.clamp(self.minimum, self.maximum)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PidOutputLimitsError {
+    InvalidMinimum,
+    InvalidMaximum,
+    InvalidRange,
+}
+
+impl fmt::Display for PidOutputLimitsError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidMinimum => formatter.write_str("PID output minimum must be finite"),
+
+            Self::InvalidMaximum => formatter.write_str("PID output maximum must be finite"),
+
+            Self::InvalidRange => formatter.write_str(
+                "PID output minimum must be less \
+                     than its maximum",
+            ),
+        }
+    }
+}
+
+impl Error for PidOutputLimitsError {}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PidOutput {
     value: f64,
+    unconstrained_value: f64,
     proportional: f64,
     integral: f64,
     derivative: f64,
+    saturated: bool,
 }
 
 impl PidOutput {
     pub const fn value(self) -> f64 {
         self.value
+    }
+
+    pub const fn unconstrained_value(self) -> f64 {
+        self.unconstrained_value
     }
 
     pub const fn proportional(self) -> f64 {
@@ -95,6 +166,10 @@ impl PidOutput {
     pub const fn derivative(self) -> f64 {
         self.derivative
     }
+
+    pub const fn saturated(self) -> bool {
+        self.saturated
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -103,17 +178,22 @@ struct PreviousSample {
     measurement: f64,
 }
 
-#[derive(Clone, Debug)]
 pub struct PidController {
     gains: PidGains,
+    output_limits: PidOutputLimits,
     integral: f64,
     previous_sample: Option<PreviousSample>,
 }
 
 impl PidController {
     pub const fn new(gains: PidGains) -> Self {
+        Self::with_output_limits(gains, PidOutputLimits::FULL)
+    }
+
+    pub const fn with_output_limits(gains: PidGains, output_limits: PidOutputLimits) -> Self {
         Self {
             gains,
+            output_limits,
             integral: 0.0,
             previous_sample: None,
         }
@@ -121,6 +201,10 @@ impl PidController {
 
     pub const fn gains(&self) -> PidGains {
         self.gains
+    }
+
+    pub const fn output_limits(&self) -> PidOutputLimits {
+        self.output_limits
     }
 
     pub const fn integral(&self) -> f64 {
@@ -153,7 +237,7 @@ impl PidController {
 
         let proportional = self.gains.proportional * error;
 
-        let (integral, derivative) = match self.previous_sample {
+        let (proposed_integral, integral_change, derivative) = match self.previous_sample {
             Some(previous) => {
                 if timestamp <= previous.timestamp {
                     return Err(PidControllerError::NonIncreasingTimestamp {
@@ -164,33 +248,77 @@ impl PidController {
 
                 let elapsed_seconds = timestamp - previous.timestamp;
 
-                let integral = self.integral + self.gains.integral * error * elapsed_seconds;
+                let integral_change = self.gains.integral * error * elapsed_seconds;
+
+                let proposed_integral = self.integral + integral_change;
 
                 let measurement_rate = (measurement - previous.measurement) / elapsed_seconds;
 
                 let derivative = -self.gains.derivative * measurement_rate;
 
-                (integral, derivative)
+                (proposed_integral, integral_change, derivative)
             }
 
-            None => (self.integral, 0.0),
+            None => (self.integral, 0.0, 0.0),
         };
 
-        let value = proportional + integral + derivative;
+        let current_value = proportional + self.integral + derivative;
+
+        let proposed_value = proportional + proposed_integral + derivative;
 
         if !proportional.is_finite()
-            || !integral.is_finite()
+            || !proposed_integral.is_finite()
+            || !integral_change.is_finite()
             || !derivative.is_finite()
-            || !value.is_finite()
+            || !current_value.is_finite()
+            || !proposed_value.is_finite()
         {
             return Err(PidControllerError::NonFiniteOutput);
         }
 
+        let minimum = self.output_limits.minimum();
+
+        let maximum = self.output_limits.maximum();
+
+        let mut integral = proposed_integral;
+
+        let mut integral_limited = false;
+
+        if proposed_value > maximum && integral_change > 0.0 {
+            integral = if current_value < maximum {
+                self.integral + maximum - current_value
+            } else {
+                self.integral
+            };
+
+            integral_limited = true;
+        } else if proposed_value < minimum && integral_change < 0.0 {
+            integral = if current_value > minimum {
+                self.integral + minimum - current_value
+            } else {
+                self.integral
+            };
+
+            integral_limited = true;
+        }
+
+        let unconstrained_value = proportional + integral + derivative;
+
+        if !integral.is_finite() || !unconstrained_value.is_finite() {
+            return Err(PidControllerError::NonFiniteOutput);
+        }
+
+        let value = self.output_limits.clamp(unconstrained_value);
+
+        let saturated = integral_limited || value != unconstrained_value;
+
         let output = PidOutput {
             value,
+            unconstrained_value,
             proportional,
             integral,
             derivative,
+            saturated,
         };
 
         self.integral = integral;
@@ -247,7 +375,10 @@ impl Error for PidControllerError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{PidController, PidControllerError, PidGains, PidGainsError};
+    use super::{
+        PidController, PidControllerError, PidGains, PidGainsError, PidOutputLimits,
+        PidOutputLimitsError,
+    };
 
     #[test]
     fn creates_pid_gains() {
@@ -439,6 +570,125 @@ mod tests {
         assert_close(restarted.integral(), 0.0);
 
         assert_close(restarted.derivative(), 0.0);
+    }
+
+    #[test]
+    fn validates_output_limits() {
+        let limits = PidOutputLimits::new(0.0, 100.0).unwrap();
+
+        assert_eq!(limits.minimum(), 0.0);
+        assert_eq!(limits.maximum(), 100.0);
+
+        assert_eq!(
+            PidOutputLimits::new(f64::NAN, 100.0,),
+            Err(PidOutputLimitsError::InvalidMinimum,),
+        );
+
+        assert_eq!(
+            PidOutputLimits::new(0.0, f64::INFINITY,),
+            Err(PidOutputLimitsError::InvalidMaximum,),
+        );
+
+        assert_eq!(
+            PidOutputLimits::new(100.0, 100.0,),
+            Err(PidOutputLimitsError::InvalidRange,),
+        );
+
+        assert_eq!(
+            PidOutputLimits::new(101.0, 100.0,),
+            Err(PidOutputLimitsError::InvalidRange,),
+        );
+    }
+
+    #[test]
+    fn clamps_output_to_configured_limits() {
+        let gains = PidGains::new(2.0, 0.0, 0.0).unwrap();
+
+        let limits = PidOutputLimits::new(0.0, 100.0).unwrap();
+
+        let mut controller = PidController::with_output_limits(gains, limits);
+
+        let high = controller.update(0.0, 100.0, 0.0).unwrap();
+
+        assert_close(high.unconstrained_value(), 200.0);
+
+        assert_close(high.value(), 100.0);
+
+        assert!(high.saturated());
+
+        let low = controller.update(1.0, 0.0, 10.0).unwrap();
+
+        assert_close(low.unconstrained_value(), -20.0);
+
+        assert_close(low.value(), 0.0);
+
+        assert!(low.saturated());
+    }
+
+    #[test]
+    fn prevents_integral_windup_at_upper_limit() {
+        let gains = PidGains::new(0.0, 10.0, 0.0).unwrap();
+
+        let limits = PidOutputLimits::new(0.0, 100.0).unwrap();
+
+        let mut controller = PidController::with_output_limits(gains, limits);
+
+        controller.update(0.0, 20.0, 0.0).unwrap();
+
+        let first_saturated = controller.update(1.0, 20.0, 0.0).unwrap();
+
+        assert_close(first_saturated.value(), 100.0);
+
+        assert_close(first_saturated.integral(), 100.0);
+
+        assert!(first_saturated.saturated(),);
+
+        let still_saturated = controller.update(2.0, 20.0, 0.0).unwrap();
+
+        assert_close(still_saturated.value(), 100.0);
+
+        assert_close(still_saturated.integral(), 100.0);
+
+        assert!(still_saturated.saturated(),);
+
+        let unwinding = controller.update(3.0, 0.0, 5.0).unwrap();
+
+        assert_close(unwinding.integral(), 50.0);
+
+        assert_close(unwinding.value(), 50.0);
+
+        assert!(!unwinding.saturated(),);
+    }
+
+    #[test]
+    fn prevents_integral_windup_at_lower_limit() {
+        let gains = PidGains::new(0.0, 10.0, 0.0).unwrap();
+
+        let limits = PidOutputLimits::new(-100.0, 0.0).unwrap();
+
+        let mut controller = PidController::with_output_limits(gains, limits);
+
+        controller.update(0.0, 0.0, 20.0).unwrap();
+
+        let saturated = controller.update(1.0, 0.0, 20.0).unwrap();
+
+        assert_close(saturated.integral(), -100.0);
+
+        assert_close(saturated.value(), -100.0);
+
+        assert!(saturated.saturated(),);
+
+        let still_saturated = controller.update(2.0, 0.0, 20.0).unwrap();
+
+        assert_close(still_saturated.integral(), -100.0);
+
+        let unwinding = controller.update(3.0, 0.0, -5.0).unwrap();
+
+        assert_close(unwinding.integral(), -50.0);
+
+        assert_close(unwinding.value(), -50.0);
+
+        assert!(!unwinding.saturated(),);
     }
 
     fn assert_close(actual: f64, expected: f64) {

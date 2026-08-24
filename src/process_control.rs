@@ -1,3 +1,6 @@
 mod pid;
 
-pub use pid::{PidController, PidControllerError, PidGains, PidGainsError, PidOutput};
+pub use pid::{
+    PidController, PidControllerError, PidGains, PidGainsError, PidOutput, PidOutputLimits,
+    PidOutputLimitsError,
+};
