@@ -8,6 +8,8 @@ use std::{
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 
+use crate::process_control::{ProcessControlHandle, ProcessControlInput};
+
 use super::{
     ProcessedSignal, SignalFilterDefinition, SignalProcessingError, SignalProcessingGraph,
     SignalProcessingGraphDefinitionError, SignalProcessingGraphUpdateError,
@@ -34,6 +36,7 @@ impl<SignalId> SignalProcessingInput<SignalId> {
 pub enum SignalProcessingEvent<SignalId> {
     Samples(Vec<ProcessedSignal<SignalId>>),
     Error(SignalProcessingError<SignalId>),
+    ProcessControlFailed(String),
 }
 
 enum SignalProcessingCommand<SignalId> {
@@ -194,6 +197,18 @@ where
     SignalId: Copy + Eq + Hash + Send + 'static,
 {
     pub fn spawn() -> io::Result<Self> {
+        Self::spawn_with_optional_process_control(None)
+    }
+
+    pub fn spawn_with_process_control(
+        process_control: ProcessControlHandle<SignalId>,
+    ) -> io::Result<Self> {
+        Self::spawn_with_optional_process_control(Some(process_control))
+    }
+
+    fn spawn_with_optional_process_control(
+        process_control: Option<ProcessControlHandle<SignalId>>,
+    ) -> io::Result<Self> {
         let (command_sender, command_receiver) = unbounded();
 
         let (event_sender, event_receiver) = unbounded();
@@ -201,12 +216,14 @@ where
         let thread = thread::Builder::new()
             .name("signal-processing".to_owned())
             .spawn(move || {
-                run_signal_processing(command_receiver, event_sender);
+                run_signal_processing(command_receiver, event_sender, process_control);
             })?;
 
         Ok(Self {
             handle: SignalProcessingHandle { command_sender },
+
             event_receiver,
+
             thread: Some(thread),
         })
     }
@@ -241,7 +258,10 @@ impl<SignalId> Drop for SignalProcessingService<SignalId> {
 
 fn run_signal_processing<SignalId>(
     command_receiver: Receiver<SignalProcessingCommand<SignalId>>,
+
     event_sender: Sender<SignalProcessingEvent<SignalId>>,
+
+    mut process_control: Option<ProcessControlHandle<SignalId>>,
 ) where
     SignalId: Copy + Eq + Hash,
 {
@@ -251,8 +271,11 @@ fn run_signal_processing<SignalId>(
         match command {
             SignalProcessingCommand::AddFilter {
                 input,
+
                 output,
+
                 definition,
+
                 response_sender,
             } => {
                 let result = graph.add_filter(input, output, definition);
@@ -262,7 +285,9 @@ fn run_signal_processing<SignalId>(
 
             SignalProcessingCommand::ReplaceFilter {
                 output,
+
                 definition,
+
                 response_sender,
             } => {
                 let result = graph.replace_filter(output, definition);
@@ -271,7 +296,7 @@ fn run_signal_processing<SignalId>(
             }
 
             SignalProcessingCommand::Process(inputs) => {
-                process_inputs(&mut graph, inputs, &event_sender);
+                process_inputs(&mut graph, inputs, &event_sender, &mut process_control);
             }
 
             SignalProcessingCommand::ResetFrom { signal_id } => {
@@ -280,6 +305,7 @@ fn run_signal_processing<SignalId>(
 
             SignalProcessingCommand::RemoveFrom {
                 signal_id,
+
                 response_sender,
             } => {
                 let removed = graph.remove_from(signal_id);
@@ -300,16 +326,42 @@ fn run_signal_processing<SignalId>(
 
 fn process_inputs<SignalId>(
     graph: &mut SignalProcessingGraph<SignalId>,
+
     inputs: Vec<SignalProcessingInput<SignalId>>,
+
     event_sender: &Sender<SignalProcessingEvent<SignalId>>,
+
+    process_control: &mut Option<ProcessControlHandle<SignalId>>,
 ) where
     SignalId: Copy + Eq + Hash,
 {
     let mut output_samples = Vec::new();
 
+    let mut control_inputs = Vec::new();
+
+    let observe_process_control = process_control.is_some();
+
     for input in inputs {
+        if observe_process_control {
+            control_inputs.push(ProcessControlInput::new(
+                input.signal_id,
+                input.timestamp,
+                input.value,
+            ));
+        }
+
         match graph.process(input.signal_id, input.timestamp, input.value) {
             Ok(mut processed) => {
+                if observe_process_control {
+                    for signal in &processed {
+                        control_inputs.push(ProcessControlInput::new(
+                            signal.signal_id,
+                            signal.timestamp,
+                            signal.value,
+                        ));
+                    }
+                }
+
                 output_samples.append(&mut processed);
             }
 
@@ -317,6 +369,16 @@ fn process_inputs<SignalId>(
                 let _ = event_sender.send(SignalProcessingEvent::Error(error));
             }
         }
+    }
+
+    if let Some(handle) = process_control.as_ref()
+        && let Err(error) = handle.process_batch(control_inputs)
+    {
+        *process_control = None;
+
+        let _ = event_sender.send(SignalProcessingEvent::ProcessControlFailed(
+            error.to_string(),
+        ));
     }
 
     if !output_samples.is_empty() {
@@ -411,10 +473,61 @@ mod tests {
         SignalProcessingInput, SignalProcessingService,
     };
 
-    use crate::signal_processing::{
-        ProcessedSignal, SignalFilterDefinition, SignalFilterError,
-        SignalProcessingGraphDefinitionError, SignalProcessingGraphUpdateError,
+    use crate::{
+        connection::ConnectionId,
+        instrument::{
+            ParameterAccess, ParameterRange, ParameterValueType,
+            virtual_instrument::{
+                VirtualInstrumentId, VirtualParameterDescriptor, VirtualParameterId,
+            },
+        },
+        process_control::{
+            ControlOutputTarget, PidGains, PidLoopDefinition, PidLoopEvent, PidOutputLimits,
+            ProcessControlService,
+        },
+        signal_processing::{
+            ProcessedSignal, SignalFilterDefinition, SignalFilterError,
+            SignalProcessingGraphDefinitionError, SignalProcessingGraphUpdateError,
+        },
     };
+
+    fn pid_definition(
+        name: &str,
+
+        input: u64,
+
+        parameter: u16,
+    ) -> PidLoopDefinition<u64, ControlOutputTarget> {
+        let descriptor = VirtualParameterDescriptor::new(
+            VirtualParameterId::new(parameter),
+            format!("power_{parameter}",),
+            "Power",
+            ParameterAccess::ReadWrite,
+            ParameterValueType::Number,
+        )
+        .with_range(ParameterRange::Number {
+            minimum: 0.0,
+
+            maximum: 100.0,
+        });
+
+        let target = ControlOutputTarget::virtual_instrument(
+            ConnectionId::PRIMARY,
+            VirtualInstrumentId::new(1),
+            &descriptor,
+        )
+        .unwrap();
+
+        PidLoopDefinition::new(
+            name,
+            input,
+            target,
+            100.0,
+            PidGains::new(2.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        )
+        .unwrap()
+    }
 
     #[test]
     fn processes_signal_in_background_thread() {
@@ -634,5 +747,182 @@ mod tests {
                 SignalProcessingGraphUpdateError::UnknownOutput { output: 10 },
             ),),
         );
+    }
+
+    #[test]
+    fn forwards_raw_measurements_to_process_control() {
+        let process_control = ProcessControlService::<u64>::spawn().unwrap();
+
+        let control_handle = process_control.handle();
+
+        let control_events = process_control.event_receiver();
+
+        control_handle
+            .add_loop(pid_definition("heater", 1, 1))
+            .unwrap();
+
+        let signal_processing =
+            SignalProcessingService::spawn_with_process_control(control_handle).unwrap();
+
+        signal_processing
+            .handle()
+            .process(1, 1_000.0, 80.0)
+            .unwrap();
+
+        let event = control_events.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        let PidLoopEvent::Output(output) = event else {
+            panic!(
+                "expected raw-series \
+                 PID output",
+            );
+        };
+
+        assert_eq!(output.loop_name, "heater",);
+
+        assert_eq!(output.input, 1,);
+
+        assert_eq!(output.output.value(), 40.0,);
+    }
+
+    #[test]
+    fn forwards_filtered_measurements_to_process_control() {
+        let process_control = ProcessControlService::<u64>::spawn().unwrap();
+
+        let control_handle = process_control.handle();
+
+        let control_events = process_control.event_receiver();
+
+        control_handle
+            .add_loop(pid_definition("filtered_heater", 2, 1))
+            .unwrap();
+
+        let signal_processing =
+            SignalProcessingService::spawn_with_process_control(control_handle).unwrap();
+
+        let signal_handle = signal_processing.handle();
+
+        signal_handle
+            .add_filter(1, 2, SignalFilterDefinition::moving_average(2).unwrap())
+            .unwrap();
+
+        signal_handle.process(1, 1_000.0, 80.0).unwrap();
+
+        let first = control_events.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        signal_handle.process(1, 1_001.0, 60.0).unwrap();
+
+        let second = control_events.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        let PidLoopEvent::Output(first) = first else {
+            panic!(
+                "expected first filtered \
+                 PID output",
+            );
+        };
+
+        let PidLoopEvent::Output(second) = second else {
+            panic!(
+                "expected second filtered \
+                 PID output",
+            );
+        };
+
+        assert_eq!(first.input, 2,);
+
+        assert_eq!(first.output.value(), 40.0,);
+
+        assert_eq!(second.input, 2,);
+
+        assert_eq!(second.output.value(), 60.0,);
+    }
+
+    #[test]
+    fn supports_raw_and_filtered_pid_loops_together() {
+        let process_control = ProcessControlService::<u64>::spawn().unwrap();
+
+        let control_handle = process_control.handle();
+
+        let control_events = process_control.event_receiver();
+
+        control_handle
+            .add_loop(pid_definition("raw_heater", 1, 1))
+            .unwrap();
+
+        control_handle
+            .add_loop(pid_definition("filtered_heater", 2, 2))
+            .unwrap();
+
+        let signal_processing =
+            SignalProcessingService::spawn_with_process_control(control_handle).unwrap();
+
+        let signal_handle = signal_processing.handle();
+
+        signal_handle
+            .add_filter(1, 2, SignalFilterDefinition::moving_average(2).unwrap())
+            .unwrap();
+
+        signal_handle.process(1, 1_000.0, 80.0).unwrap();
+
+        let first = control_events.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        let second = control_events.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        let PidLoopEvent::Output(first) = first else {
+            panic!(
+                "expected raw-series \
+                 PID output",
+            );
+        };
+
+        let PidLoopEvent::Output(second) = second else {
+            panic!(
+                "expected filtered-series \
+                 PID output",
+            );
+        };
+
+        assert_eq!(first.loop_name, "raw_heater",);
+
+        assert_eq!(first.input, 1,);
+
+        assert_eq!(second.loop_name, "filtered_heater",);
+
+        assert_eq!(second.input, 2,);
+    }
+
+    #[test]
+    fn reports_disconnected_process_control_once() {
+        let process_control = ProcessControlService::<u64>::spawn().unwrap();
+
+        let control_handle = process_control.handle();
+
+        drop(process_control);
+
+        let signal_processing =
+            SignalProcessingService::spawn_with_process_control(control_handle).unwrap();
+
+        let signal_handle = signal_processing.handle();
+
+        let events = signal_processing.event_receiver();
+
+        signal_handle.process(1, 1_000.0, 80.0).unwrap();
+
+        let event = events.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        assert!(matches!(
+            event,
+
+            SignalProcessingEvent::
+                ProcessControlFailed(
+                    error,
+                ) if error
+                    == "Process control service \
+                        is disconnected"
+        ),);
+
+        signal_handle.process(1, 1_001.0, 75.0).unwrap();
+
+        assert!(events.recv_timeout(Duration::from_millis(50,),).is_err(),);
     }
 }

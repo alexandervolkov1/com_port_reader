@@ -553,6 +553,13 @@ impl ApplicationRuntime {
                 SignalProcessingEvent::Error(error) => {
                     self.log.error(error.to_string());
                 }
+
+                SignalProcessingEvent::ProcessControlFailed(error) => {
+                    self.log.error(format!(
+                        "Process control \
+                                 failed: {error}",
+                    ));
+                }
             }
         }
     }
