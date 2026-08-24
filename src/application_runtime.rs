@@ -27,10 +27,12 @@ use crate::{
 mod acquisition_controller;
 mod command_dispatcher;
 mod device_emulator_service;
+mod process_control_dispatcher;
 
 pub(crate) use acquisition_controller::AcquisitionController;
 pub(crate) use command_dispatcher::CommandDispatcher;
 pub(crate) use device_emulator_service::DeviceEmulatorService;
+use process_control_dispatcher::ProcessControlDispatcher;
 
 const LUA_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(10);
 const LUA_INITIALIZATION_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -46,6 +48,7 @@ pub struct ApplicationRuntime {
     series: SeriesStore,
     acquisition: AcquisitionController,
     signal_processing: SignalProcessingService<SeriesId>,
+    _process_control_dispatcher: ProcessControlDispatcher,
     process_control: ProcessControlService<SeriesId>,
     dispatcher: CommandDispatcher,
     device_emulator: DeviceEmulatorService,
@@ -164,6 +167,14 @@ impl ApplicationRuntime {
 
         let connection_router = workers.router();
 
+        let process_control_dispatcher = ProcessControlDispatcher::spawn(
+            process_control.event_receiver(),
+            connection_router.clone(),
+            serial_connections.clone(),
+            process_recorder.clone(),
+            log.clone(),
+        )?;
+
         let acquisition = AcquisitionController::new(workers, log.clone());
 
         let dispatcher = CommandDispatcher::new(
@@ -190,6 +201,7 @@ impl ApplicationRuntime {
             series,
             acquisition,
             signal_processing,
+            process_control_dispatcher,
             process_control,
             dispatcher,
             device_emulator,
@@ -282,6 +294,7 @@ impl ApplicationRuntime {
         series: SeriesStore,
         acquisition: AcquisitionController,
         signal_processing: SignalProcessingService<SeriesId>,
+        process_control_dispatcher: ProcessControlDispatcher,
         process_control: ProcessControlService<SeriesId>,
         dispatcher: CommandDispatcher,
         device_emulator: DeviceEmulatorService,
@@ -297,6 +310,7 @@ impl ApplicationRuntime {
             series,
             acquisition,
             signal_processing,
+            _process_control_dispatcher: process_control_dispatcher,
             process_control,
             dispatcher,
             device_emulator,

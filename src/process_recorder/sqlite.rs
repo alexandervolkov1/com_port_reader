@@ -346,7 +346,10 @@ fn log_level_name(level: ProcessLogLevel) -> &'static str {
 fn action_origin_name(origin: ProcessActionOrigin) -> &'static str {
     match origin {
         ProcessActionOrigin::UserInterface => "user_interface",
+
         ProcessActionOrigin::Lua => "lua",
+
+        ProcessActionOrigin::ProcessControl => "process_control",
     }
 }
 
@@ -463,6 +466,14 @@ mod tests {
 
         assert_eq!(log_count, 1);
         assert_eq!(measurement, ("temperature".to_owned(), 123.5, 42.25));
+    }
+
+    #[test]
+    fn identifies_process_control_action_origin() {
+        assert_eq!(
+            action_origin_name(ProcessActionOrigin::ProcessControl,),
+            "process_control",
+        );
     }
 
     fn temporary_database_path() -> PathBuf {

@@ -27,6 +27,7 @@ pub enum ProcessLogLevel {
 pub enum ProcessActionOrigin {
     UserInterface,
     Lua,
+    ProcessControl,
 }
 
 #[derive(Clone, Debug, PartialEq)]
