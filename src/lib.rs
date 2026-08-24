@@ -17,6 +17,7 @@ mod lua_execution;
 pub mod lua_runtime;
 mod lua_virtual_instrument_model;
 mod lua_worker;
+pub mod process_control;
 mod process_recorder;
 pub mod protocol;
 pub mod serial_connection;
