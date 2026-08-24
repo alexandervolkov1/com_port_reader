@@ -16,6 +16,7 @@ use crate::{
     lua_application_definition::apply_lua_definition,
     lua_application_script::{LuaApplicationEvent, LuaControlInvocation},
     lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle, LuaWorkerHandleError},
+    process_control::ProcessControlService,
     process_recorder::{ProcessAction, ProcessActionOrigin, ProcessRecord, ProcessRecorder},
     serial_connection::SerialConnectionRegistry,
     signal_processing::{SignalProcessingEvent, SignalProcessingService},
@@ -45,6 +46,7 @@ pub struct ApplicationRuntime {
     series: SeriesStore,
     acquisition: AcquisitionController,
     signal_processing: SignalProcessingService<SeriesId>,
+    process_control: ProcessControlService<SeriesId>,
     dispatcher: CommandDispatcher,
     device_emulator: DeviceEmulatorService,
     lua_command_receiver: Receiver<UserCommand>,
@@ -84,7 +86,7 @@ impl ApplicationRuntime {
 
         let series = SeriesStore::new();
 
-        let signal_processing = SignalProcessingService::<SeriesId>::spawn()?;
+        let (signal_processing, process_control) = Self::spawn_processing_services()?;
 
         let signal_processing_handle = signal_processing.handle();
 
@@ -188,6 +190,7 @@ impl ApplicationRuntime {
             series,
             acquisition,
             signal_processing,
+            process_control,
             dispatcher,
             device_emulator,
             lua_command_receiver,
@@ -195,6 +198,18 @@ impl ApplicationRuntime {
         );
 
         Ok((runtime, lua_event_receiver))
+    }
+
+    fn spawn_processing_services() -> std::io::Result<(
+        SignalProcessingService<SeriesId>,
+        ProcessControlService<SeriesId>,
+    )> {
+        let process_control = ProcessControlService::<SeriesId>::spawn()?;
+
+        let signal_processing =
+            SignalProcessingService::spawn_with_process_control(process_control.handle())?;
+
+        Ok((signal_processing, process_control))
     }
 
     fn build_initialized(
@@ -267,6 +282,7 @@ impl ApplicationRuntime {
         series: SeriesStore,
         acquisition: AcquisitionController,
         signal_processing: SignalProcessingService<SeriesId>,
+        process_control: ProcessControlService<SeriesId>,
         dispatcher: CommandDispatcher,
         device_emulator: DeviceEmulatorService,
         lua_command_receiver: Receiver<UserCommand>,
@@ -281,6 +297,7 @@ impl ApplicationRuntime {
             series,
             acquisition,
             signal_processing,
+            process_control,
             dispatcher,
             device_emulator,
             lua_command_receiver,
@@ -311,6 +328,15 @@ impl ApplicationRuntime {
     }
 
     fn execute_from(&mut self, command: UserCommand, origin: ProcessActionOrigin) {
+        if matches!(&command, UserCommand::Clear)
+            && let Err(error) = self.process_control.handle().clear()
+        {
+            self.log.error(format!(
+                "Failed to clear PID \
+                     control loops: {error}",
+            ));
+        }
+
         if let Some(action) = process_action_from_command(&command) {
             self.process_recorder.record_action(origin, action);
         }
@@ -715,11 +741,20 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
 mod tests {
     use std::time::Duration;
 
-    use super::{ProcessAction, process_action_from_command};
+    use super::{ApplicationRuntime, ProcessAction, process_action_from_command};
 
     use crate::{
         connection::ConnectionId,
-        data::{NewSeries, SamplingInterval, SeriesColor},
+        data::{NewSeries, SamplingInterval, SeriesColor, SeriesId},
+        instrument::{
+            ParameterAccess, ParameterRange, ParameterValueType,
+            virtual_instrument::{
+                VirtualInstrumentId, VirtualParameterDescriptor, VirtualParameterId,
+            },
+        },
+        process_control::{
+            ControlOutputTarget, PidGains, PidLoopDefinition, PidLoopEvent, PidOutputLimits,
+        },
         signal_processing::SignalFilterDefinition,
         user_command::UserCommand,
     };
@@ -790,5 +825,68 @@ mod tests {
                 definition: definition.to_string(),
             }),
         );
+    }
+
+    #[test]
+    fn connects_signal_processing_to_pid_service() {
+        let (signal_processing, process_control) =
+            ApplicationRuntime::spawn_processing_services().unwrap();
+
+        let input = SeriesId::new(1);
+
+        let descriptor = VirtualParameterDescriptor::new(
+            VirtualParameterId::new(1),
+            "heater_power",
+            "Heater power",
+            ParameterAccess::ReadWrite,
+            ParameterValueType::Number,
+        )
+        .with_range(ParameterRange::Number {
+            minimum: 0.0,
+
+            maximum: 100.0,
+        });
+
+        let output = ControlOutputTarget::virtual_instrument(
+            ConnectionId::PRIMARY,
+            VirtualInstrumentId::new(1),
+            &descriptor,
+        )
+        .unwrap();
+
+        let definition = PidLoopDefinition::new(
+            "heater",
+            input,
+            output,
+            100.0,
+            PidGains::new(2.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        )
+        .unwrap();
+
+        let control_events = process_control.event_receiver();
+
+        process_control.handle().add_loop(definition).unwrap();
+
+        signal_processing
+            .handle()
+            .process(input, 1_000.0, 80.0)
+            .unwrap();
+
+        let event = control_events.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        let PidLoopEvent::Output(output) = event else {
+            panic!(
+                "expected PID output \
+                 from application processing \
+                 services",
+            );
+        };
+
+        assert_eq!(output.loop_name, "heater",);
+
+        assert_eq!(output.input, input,);
+
+        assert_eq!(output.output.value(), 40.0,);
     }
 }
