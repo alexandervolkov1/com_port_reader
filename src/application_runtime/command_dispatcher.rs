@@ -146,6 +146,12 @@ impl CommandDispatcher {
                 }
             }
 
+            UserCommand::AddPidLoop(pid_loop) => {
+                if let Err(error) = self.primary_worker().add_pid_loop(pid_loop) {
+                    self.set_worker_error(error);
+                }
+            }
+
             UserCommand::SetFilter { name, definition } => {
                 if let Err(error) = self.primary_worker().set_filter(name, definition) {
                     self.set_worker_error(error);

@@ -19,6 +19,7 @@ use crate::{
         },
     },
     lua_application_script::LuaApplicationEvent,
+    process_control::{ControlOutputTarget, NewPidLoop, PidGains, PidOutputLimits},
     signal_processing::SignalFilterDefinition,
     user_command::UserCommand,
 };
@@ -444,6 +445,85 @@ fn connection_id_from_options(
                  '{connection_name}'",
             ))
         })
+}
+
+fn add_pid_loop(
+    command_sender: &Sender<UserCommand>,
+    output_target: ControlOutputTarget,
+    options: &Table,
+) -> mlua::Result<()> {
+    validate_pid_options(options)?;
+
+    let name = options
+        .get::<Option<String>>("name")?
+        .ok_or_else(|| mlua::Error::RuntimeError("PID option 'name' is required".to_owned()))?;
+
+    let input_name = options
+        .get::<Option<String>>("input")?
+        .ok_or_else(|| mlua::Error::RuntimeError("PID option 'input' is required".to_owned()))?;
+
+    let setpoint = options
+        .get::<Option<f64>>("setpoint")?
+        .ok_or_else(|| mlua::Error::RuntimeError("PID option 'setpoint' is required".to_owned()))?;
+
+    let proportional = options
+        .get::<Option<f64>>("kp")?
+        .ok_or_else(|| mlua::Error::RuntimeError("PID option 'kp' is required".to_owned()))?;
+
+    let integral = options.get::<Option<f64>>("ki")?.unwrap_or(0.0);
+
+    let derivative = options.get::<Option<f64>>("kd")?.unwrap_or(0.0);
+
+    let output_minimum = options.get::<Option<f64>>("output_min")?.ok_or_else(|| {
+        mlua::Error::RuntimeError(
+            "PID option 'output_min' \
+                 is required"
+                .to_owned(),
+        )
+    })?;
+
+    let output_maximum = options.get::<Option<f64>>("output_max")?.ok_or_else(|| {
+        mlua::Error::RuntimeError(
+            "PID option 'output_max' \
+                 is required"
+                .to_owned(),
+        )
+    })?;
+
+    let gains = PidGains::new(proportional, integral, derivative)
+        .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+    let output_limits = PidOutputLimits::new(output_minimum, output_maximum)
+        .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+    let pid_loop = NewPidLoop::new(
+        name,
+        input_name,
+        output_target,
+        setpoint,
+        gains,
+        output_limits,
+    )
+    .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+    send_application_command(command_sender, UserCommand::AddPidLoop(pid_loop))
+}
+
+fn validate_pid_options(options: &Table) -> mlua::Result<()> {
+    for pair in options.pairs::<String, Value>() {
+        let (key, _) = pair?;
+
+        if !matches!(
+            key.as_str(),
+            "name" | "input" | "setpoint" | "kp" | "ki" | "kd" | "output_min" | "output_max"
+        ) {
+            return Err(mlua::Error::RuntimeError(format!(
+                "Unknown PID option '{key}'",
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 fn register_metakon_controller(
@@ -1214,6 +1294,22 @@ impl UserData for LuaVirtualInstrument {
                 Ok(instrument_value_to_lua(actual_value))
             },
         );
+
+        methods.add_method(
+            "pid",
+            |_, instrument, (parameter_key, options): (String, Table)| {
+                let parameter = instrument.parameter(&parameter_key)?;
+
+                let output_target = ControlOutputTarget::virtual_instrument(
+                    instrument.connection_id,
+                    instrument.descriptor.id(),
+                    parameter,
+                )
+                .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+                add_pid_loop(&instrument.command_sender, output_target, &options)
+            },
+        );
     }
 }
 
@@ -1259,6 +1355,25 @@ impl UserData for LuaMetakon5x3 {
                 let actual_value = controller.write_and_wait(write, scale)?;
 
                 Ok(instrument_value_to_lua(actual_value))
+            },
+        );
+
+        methods.add_method(
+            "pid",
+            |_, controller, (parameter_key, options): (String, Table)| {
+                let parameter = metakon_parameter_from_key(&parameter_key)?;
+
+                let scale = controller.parameter_scale(parameter);
+
+                let output_target = ControlOutputTarget::metakon_5x3(
+                    controller.connection_id,
+                    controller.instrument,
+                    parameter,
+                    scale,
+                )
+                .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+                add_pid_loop(&controller.command_sender, output_target, &options)
             },
         );
     }

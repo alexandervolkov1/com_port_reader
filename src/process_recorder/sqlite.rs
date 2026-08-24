@@ -361,6 +361,7 @@ fn action_type_name(action: &ProcessAction) -> &'static str {
         ProcessAction::StartEmulator => "start_emulator",
         ProcessAction::StopEmulator => "stop_emulator",
         ProcessAction::AddSeries { .. } => "add_series",
+        ProcessAction::AddPidLoop { .. } => "add_pid_loop",
         ProcessAction::AddFilteredSeries { .. } => "add_filtered_series",
         ProcessAction::SetFilter { .. } => "set_filter",
         ProcessAction::DeleteSeriesByName { .. } => "delete_series_by_name",
@@ -377,6 +378,7 @@ fn action_type_name(action: &ProcessAction) -> &'static str {
 fn action_connection_id(action: &ProcessAction) -> Option<String> {
     let connection_id = match action {
         ProcessAction::AddSeries { connection_id, .. }
+        | ProcessAction::AddPidLoop { connection_id, .. }
         | ProcessAction::SendSerial { connection_id, .. }
         | ProcessAction::ReadInstrument { connection_id, .. }
         | ProcessAction::WriteInstrument { connection_id, .. }

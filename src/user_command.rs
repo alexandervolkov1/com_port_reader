@@ -5,6 +5,7 @@ use crate::{
     connection::ConnectionId,
     data::{NewFilteredSeries, NewSeries, SeriesColor},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
+    process_control::{ControlOutputTarget, NewPidLoop},
     signal_processing::SignalFilterDefinition,
 };
 
@@ -12,6 +13,7 @@ use crate::{
 pub enum UserCommand {
     Add(NewSeries),
     AddFilter(NewFilteredSeries),
+    AddPidLoop(NewPidLoop<ControlOutputTarget>),
     SetFilter {
         name: String,
         definition: SignalFilterDefinition,

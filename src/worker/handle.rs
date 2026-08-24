@@ -173,7 +173,12 @@ mod tests {
 
     use super::WorkerHandle;
 
-    use crate::{connection::ConnectionId, worker::WorkerCommand};
+    use crate::{
+        connection::ConnectionId,
+        instrument::metakon_5x3::{Metakon5x3, Metakon5x3Register},
+        process_control::{ControlOutputTarget, NewPidLoop, PidGains, PidOutputLimits},
+        worker::WorkerCommand,
+    };
 
     #[test]
     fn stores_connection_id() {
@@ -198,5 +203,40 @@ mod tests {
             receiver.try_recv().unwrap(),
             WorkerCommand::RefreshSeriesSchedule,
         ));
+    }
+
+    #[test]
+    fn requests_pid_loop_registration() {
+        let (sender, receiver) = unbounded();
+
+        let handle = WorkerHandle::new(ConnectionId::PRIMARY, sender);
+
+        let target = ControlOutputTarget::metakon_5x3(
+            ConnectionId::PRIMARY,
+            Metakon5x3::new(3, 0),
+            Metakon5x3Register::OutputPower,
+            1.0,
+        )
+        .unwrap();
+
+        let pid_loop = NewPidLoop::new(
+            "heater",
+            "temperature",
+            target,
+            200.0,
+            PidGains::new(2.0, 0.1, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        )
+        .unwrap();
+
+        handle.add_pid_loop(pid_loop).unwrap();
+
+        let WorkerCommand::AddPidLoop(pid_loop) = receiver.try_recv().unwrap() else {
+            panic!("expected AddPidLoop command",);
+        };
+
+        assert_eq!(pid_loop.name(), "heater");
+
+        assert_eq!(pid_loop.input_name(), "temperature",);
     }
 }

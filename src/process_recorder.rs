@@ -53,6 +53,19 @@ pub enum ProcessAction {
         color: Option<String>,
     },
 
+    AddPidLoop {
+        connection_id: ConnectionId,
+        name: String,
+        input_name: String,
+        output_target: String,
+        setpoint: f64,
+        proportional_gain: f64,
+        integral_gain: f64,
+        derivative_gain: f64,
+        output_minimum: f64,
+        output_maximum: f64,
+    },
+
     SetFilter {
         name: String,
         definition: String,

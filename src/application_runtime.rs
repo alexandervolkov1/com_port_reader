@@ -687,6 +687,34 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             color: filter.color().map(|color| color.to_string()),
         }),
 
+        UserCommand::AddPidLoop(pid_loop) => {
+            let gains = pid_loop.gains();
+
+            let limits = pid_loop.output_limits();
+
+            Some(ProcessAction::AddPidLoop {
+                connection_id: pid_loop.output_target().connection_id(),
+
+                name: pid_loop.name().to_owned(),
+
+                input_name: pid_loop.input_name().to_owned(),
+
+                output_target: pid_loop.output_target().to_string(),
+
+                setpoint: pid_loop.setpoint(),
+
+                proportional_gain: gains.proportional(),
+
+                integral_gain: gains.integral(),
+
+                derivative_gain: gains.derivative(),
+
+                output_minimum: limits.minimum(),
+
+                output_maximum: limits.maximum(),
+            })
+        }
+
         UserCommand::SetFilter { name, definition } => Some(ProcessAction::SetFilter {
             name: name.clone(),
             definition: definition.to_string(),
