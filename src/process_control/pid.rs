@@ -178,6 +178,7 @@ struct PreviousSample {
     measurement: f64,
 }
 
+#[derive(Debug)]
 pub struct PidController {
     gains: PidGains,
     output_limits: PidOutputLimits,
