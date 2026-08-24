@@ -7,6 +7,7 @@ use crate::{
     connection::ConnectionId,
     data::{NewFilteredSeries, NewSeries, SeriesColor, SeriesId},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
+    process_control::{ControlOutputTarget, NewPidLoop},
     serial_connection::SerialPortConfig,
     signal_processing::SignalFilterDefinition,
 };
@@ -45,6 +46,13 @@ impl WorkerHandle {
 
     pub fn add_filter(&self, filter: NewFilteredSeries) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::AddFilter(filter))
+    }
+
+    pub fn add_pid_loop(
+        &self,
+        pid_loop: NewPidLoop<ControlOutputTarget>,
+    ) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::AddPidLoop(pid_loop))
     }
 
     pub fn set_filter(

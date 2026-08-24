@@ -18,7 +18,7 @@ use crate::{
     connection::ConnectionId,
     data::{NewSeries, SeriesId, SeriesMetadata, SeriesSample, SeriesStore},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
-    process_control::ProcessControlHandle,
+    process_control::{PidLoopDefinition, ProcessControlHandle},
     process_recorder::ProcessRecorder,
     serial_connection::SerialConnectionError,
     signal_processing::{SignalProcessingHandle, SignalProcessingInput},
@@ -406,6 +406,53 @@ impl Worker {
                                             }
                                         }
                                     }
+                                }
+                            }
+                        };
+
+                        let _ = event_sender.send(event);
+                    }
+
+                    Ok(WorkerCommand::AddPidLoop(pid_loop)) => {
+                        let (name, input_name, output_target, setpoint, gains, output_limits) =
+                            pid_loop.into_parts();
+
+                        let event = match series.id_by_name(&input_name) {
+                            None => WorkerEvent::PidLoopAddFailed {
+                                name,
+
+                                error: format!(
+                                    "input series \
+                                         '{input_name}' was not found",
+                                ),
+                            },
+
+                            Some(input_id) => {
+                                match PidLoopDefinition::new(
+                                    name.clone(),
+                                    input_id,
+                                    output_target,
+                                    setpoint,
+                                    gains,
+                                    output_limits,
+                                ) {
+                                    Err(error) => WorkerEvent::PidLoopAddFailed {
+                                        name,
+                                        error: error.to_string(),
+                                    },
+
+                                    Ok(definition) => match process_control.add_loop(definition) {
+                                        Ok(()) => WorkerEvent::PidLoopAdded {
+                                            name,
+                                            input_id,
+                                            input_name,
+                                        },
+
+                                        Err(error) => WorkerEvent::PidLoopAddFailed {
+                                            name,
+                                            error: error.to_string(),
+                                        },
+                                    },
                                 }
                             }
                         };

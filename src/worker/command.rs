@@ -4,6 +4,7 @@ use crate::{
     acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
     data::{NewFilteredSeries, NewSeries, SeriesColor, SeriesId},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
+    process_control::{ControlOutputTarget, NewPidLoop},
     serial_connection::SerialPortConfig,
     signal_processing::SignalFilterDefinition,
 };
@@ -13,6 +14,7 @@ pub enum WorkerCommand {
     Stop,
     AddSeries(NewSeries),
     AddFilter(NewFilteredSeries),
+    AddPidLoop(NewPidLoop<ControlOutputTarget>),
     SetFilter {
         name: String,
         definition: SignalFilterDefinition,

@@ -51,6 +51,16 @@ pub enum WorkerEvent {
         name: String,
         definition: SignalFilterDefinition,
     },
+    PidLoopAdded {
+        name: String,
+        input_id: SeriesId,
+        input_name: String,
+    },
+
+    PidLoopAddFailed {
+        name: String,
+        error: String,
+    },
     SeriesAddFailed(AddSeriesError),
     AcquisitionStartFailed(AcquisitionError),
     AcquisitionFailed(AcquisitionError),
@@ -138,6 +148,27 @@ impl std::fmt::Display for WorkerEvent {
                     formatter,
                     "Filter for series '{name}' ({id}) changed to \
                      {definition}.",
+                )
+            }
+
+            Self::PidLoopAdded {
+                name,
+                input_id,
+                input_name,
+            } => {
+                write!(
+                    formatter,
+                    "PID loop '{name}' added for \
+                     input series '{input_name}' \
+                     ({input_id}).",
+                )
+            }
+
+            Self::PidLoopAddFailed { name, error } => {
+                write!(
+                    formatter,
+                    "Failed to add PID loop \
+                     '{name}': {error}",
                 )
             }
 

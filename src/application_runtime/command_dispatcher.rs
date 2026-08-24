@@ -483,5 +483,6 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
             | WorkerEvent::InstrumentReadFailed { .. }
             | WorkerEvent::InstrumentWriteFailed { .. }
             | WorkerEvent::SeriesPollingSuspended { .. }
+            | WorkerEvent::PidLoopAddFailed { .. }
     )
 }
