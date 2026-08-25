@@ -173,15 +173,50 @@ impl CommandDispatcher {
             UserCommand::Rename {
                 current_name,
                 new_name,
-            } => {
-                if let Err(error) = self.primary_worker().rename_series(current_name, new_name) {
-                    self.set_worker_error(error);
+            } => match self.series.rename_series(&current_name, &new_name) {
+                Ok(id) => {
+                    self.log.info(format!(
+                        "Series {id} renamed to \
+                                 '{new_name}'.",
+                    ));
                 }
-            }
+
+                Err(error) => {
+                    self.log.error(format!(
+                        "Failed to rename series: \
+                                 {error}",
+                    ));
+                }
+            },
 
             UserCommand::SetSeriesColor { name, color } => {
-                if let Err(error) = self.primary_worker().set_series_color(name, color) {
-                    self.set_worker_error(error);
+                match self.series.set_color_by_name(&name, color) {
+                    Some(id) => match color {
+                        Some(color) => {
+                            self.log.info(format!(
+                                "Series '{name}' \
+                                         ({id}) color \
+                                         changed to \
+                                         {color}.",
+                            ));
+                        }
+
+                        None => {
+                            self.log.info(format!(
+                                "Series '{name}' \
+                                         ({id}) color \
+                                         reset to \
+                                         automatic.",
+                            ));
+                        }
+                    },
+
+                    None => {
+                        self.log.error(format!(
+                            "Series '{name}' \
+                                 not found.",
+                        ));
+                    }
                 }
             }
 
@@ -396,14 +431,21 @@ impl CommandDispatcher {
     }
 
     pub fn set_visibility(&self, id: SeriesId, visible: bool) {
-        if let Err(error) = self.primary_worker().set_visibility(id, visible) {
-            self.set_worker_error(error);
-        }
+        self.series.set_visibility(id, visible);
     }
 
     pub fn add_series(&self, new_series: NewSeries) {
-        if let Err(error) = self.primary_worker().add_series(new_series) {
-            self.set_worker_error(error);
+        match self.series.add_series(new_series) {
+            Ok(id) => {
+                self.log.info(format!("Series {id} added.",));
+            }
+
+            Err(error) => {
+                self.log.error(format!(
+                    "Failed to add series: \
+                         {error}",
+                ));
+            }
         }
     }
 
@@ -490,7 +532,6 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
             | WorkerEvent::AcquisitionStopFailed(_)
             | WorkerEvent::SignalProcessingFailed(_)
             | WorkerEvent::SeriesNotFound(_)
-            | WorkerEvent::SeriesRenameFailed(_)
             | WorkerEvent::SerialTextCommandFailed { .. }
             | WorkerEvent::InstrumentReadFailed { .. }
             | WorkerEvent::InstrumentWriteFailed { .. }

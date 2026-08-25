@@ -3,7 +3,7 @@ use crate::serial_connection::SerialConnectionError;
 use crate::{
     acquisition::AcquisitionError,
     connection::ConnectionId,
-    data::{AddSeriesError, RenameSeriesError, SeriesColor, SeriesId},
+    data::{AddSeriesError, SeriesId},
     signal_processing::SignalFilterDefinition,
 };
 
@@ -76,16 +76,6 @@ pub enum WorkerEvent {
     SignalProcessingFailed(String),
     SeriesRemoved(SeriesId),
     SeriesNotFound(String),
-    SeriesRenamed {
-        id: SeriesId,
-        name: String,
-    },
-    SeriesColorChanged {
-        id: SeriesId,
-        name: String,
-        color: Option<SeriesColor>,
-    },
-    SeriesRenameFailed(RenameSeriesError),
 
     SerialTextCommandSucceeded {
         port_name: String,
@@ -221,36 +211,6 @@ impl std::fmt::Display for WorkerEvent {
 
             Self::SeriesNotFound(name) => {
                 write!(formatter, "Series '{name}' not found.")
-            }
-
-            Self::SeriesRenamed { id, name } => {
-                write!(formatter, "Series {id} renamed to '{name}'.")
-            }
-
-            Self::SeriesRenameFailed(error) => {
-                write!(formatter, "Failed to rename series: {error}")
-            }
-
-            Self::SeriesColorChanged {
-                id,
-                name,
-                color: Some(color),
-            } => {
-                write!(
-                    formatter,
-                    "Series '{name}' ({id}) color changed to {color}.",
-                )
-            }
-
-            Self::SeriesColorChanged {
-                id,
-                name,
-                color: None,
-            } => {
-                write!(
-                    formatter,
-                    "Series '{name}' ({id}) color reset to automatic.",
-                )
             }
 
             Self::SerialTextCommandSucceeded {

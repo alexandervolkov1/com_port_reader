@@ -2,7 +2,7 @@ use crossbeam_channel::Sender;
 
 use crate::{
     acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
-    data::{NewFilteredSeries, NewSeries, SeriesColor, SeriesId},
+    data::NewFilteredSeries,
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     process_control::{ControlOutputTarget, NewPidLoop},
     serial_connection::SerialPortConfig,
@@ -12,7 +12,6 @@ use crate::{
 pub enum WorkerCommand {
     Start,
     Stop,
-    AddSeries(NewSeries),
     AddFilter(NewFilteredSeries),
     AddPidLoop(NewPidLoop<ControlOutputTarget>),
     SetPidSetpoint {
@@ -23,21 +22,9 @@ pub enum WorkerCommand {
         name: String,
         definition: SignalFilterDefinition,
     },
-    SetVisibility {
-        id: SeriesId,
-        visible: bool,
-    },
     ClearSeries,
     Shutdown,
     RemoveSeriesByName(String),
-    RenameSeries {
-        current_name: String,
-        new_name: String,
-    },
-    SetSeriesColor {
-        name: String,
-        color: Option<SeriesColor>,
-    },
     Connection(ConnectionCommand),
     RefreshSeriesSchedule,
 }

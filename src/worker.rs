@@ -353,16 +353,6 @@ impl Worker {
                         }
                     }
 
-                    Ok(WorkerCommand::AddSeries(new_series)) => {
-                        let event = match series.add_series(new_series) {
-                            Ok(id) => WorkerEvent::SeriesAdded(id),
-
-                            Err(error) => WorkerEvent::SeriesAddFailed(error),
-                        };
-
-                        let _ = event_sender.send(event);
-                    }
-
                     Ok(WorkerCommand::AddFilter(filter)) => {
                         let (input_name, output_name, definition, color) = filter.into_parts();
 
@@ -511,10 +501,6 @@ impl Worker {
                         let _ = event_sender.send(event);
                     }
 
-                    Ok(WorkerCommand::SetVisibility { id, visible }) => {
-                        series.set_visibility(id, visible);
-                    }
-
                     Ok(WorkerCommand::ClearSeries) => {
                         let event = match process_control.clear() {
                             Err(error) => WorkerEvent::SignalProcessingFailed(format!(
@@ -565,29 +551,6 @@ impl Worker {
                                                  branch for series '{name}': {error}",
                                 )),
                             },
-
-                            None => WorkerEvent::SeriesNotFound(name),
-                        };
-
-                        let _ = event_sender.send(event);
-                    }
-
-                    Ok(WorkerCommand::RenameSeries {
-                        current_name,
-                        new_name,
-                    }) => {
-                        let event = match series.rename_series(&current_name, &new_name) {
-                            Ok(id) => WorkerEvent::SeriesRenamed { id, name: new_name },
-
-                            Err(error) => WorkerEvent::SeriesRenameFailed(error),
-                        };
-
-                        let _ = event_sender.send(event);
-                    }
-
-                    Ok(WorkerCommand::SetSeriesColor { name, color }) => {
-                        let event = match series.set_color_by_name(&name, color) {
-                            Some(id) => WorkerEvent::SeriesColorChanged { id, name, color },
 
                             None => WorkerEvent::SeriesNotFound(name),
                         };

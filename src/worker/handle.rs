@@ -5,7 +5,7 @@ use crossbeam_channel::Sender;
 use crate::{
     acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
     connection::ConnectionId,
-    data::{NewFilteredSeries, NewSeries, SeriesColor, SeriesId},
+    data::NewFilteredSeries,
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     process_control::{ControlOutputTarget, NewPidLoop},
     serial_connection::SerialPortConfig,
@@ -40,10 +40,6 @@ impl WorkerHandle {
         self.send(WorkerCommand::Stop)
     }
 
-    pub fn add_series(&self, new_series: NewSeries) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::AddSeries(new_series))
-    }
-
     pub fn add_filter(&self, filter: NewFilteredSeries) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::AddFilter(filter))
     }
@@ -73,29 +69,6 @@ impl WorkerHandle {
 
     fn send(&self, command: WorkerCommand) -> Result<(), WorkerHandleError> {
         self.sender.send(command).map_err(|_| WorkerHandleError)
-    }
-
-    pub fn rename_series(
-        &self,
-        current_name: String,
-        new_name: String,
-    ) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::RenameSeries {
-            current_name,
-            new_name,
-        })
-    }
-
-    pub fn set_series_color(
-        &self,
-        name: String,
-        color: Option<SeriesColor>,
-    ) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::SetSeriesColor { name, color })
-    }
-
-    pub fn set_visibility(&self, id: SeriesId, visible: bool) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::SetVisibility { id, visible })
     }
 
     pub fn clear_series(&self) -> Result<(), WorkerHandleError> {
