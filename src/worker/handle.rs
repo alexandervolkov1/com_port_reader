@@ -5,11 +5,9 @@ use crossbeam_channel::Sender;
 use crate::{
     acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
     connection::ConnectionId,
-    data::NewFilteredSeries,
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     process_control::{ControlOutputTarget, NewPidLoop},
     serial_connection::SerialPortConfig,
-    signal_processing::SignalFilterDefinition,
 };
 
 use super::command::{ConnectionCommand, WorkerCommand};
@@ -40,10 +38,6 @@ impl WorkerHandle {
         self.send(WorkerCommand::Stop)
     }
 
-    pub fn add_filter(&self, filter: NewFilteredSeries) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::AddFilter(filter))
-    }
-
     pub fn add_pid_loop(
         &self,
         pid_loop: NewPidLoop<ControlOutputTarget>,
@@ -53,14 +47,6 @@ impl WorkerHandle {
 
     pub fn set_pid_setpoint(&self, name: String, setpoint: f64) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::SetPidSetpoint { name, setpoint })
-    }
-
-    pub fn set_filter(
-        &self,
-        name: String,
-        definition: SignalFilterDefinition,
-    ) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::SetFilter { name, definition })
     }
 
     pub(super) fn shutdown(&self) -> Result<(), WorkerHandleError> {

@@ -523,8 +523,8 @@ mod tests {
     use crate::{
         connection::ConnectionId,
         data::{
-            AddSeriesError, NewSeries, Sample, SamplingInterval, SeriesColor, SeriesId,
-            SeriesNameError, SeriesPollingState, SeriesSample, SeriesSource,
+            NewSeries, Sample, SamplingInterval, SeriesColor, SeriesId, SeriesNameError,
+            SeriesPollingState, SeriesSample, SeriesSource, series_store::AddSeriesError,
         },
         instrument::{
             InstrumentReadRequest,

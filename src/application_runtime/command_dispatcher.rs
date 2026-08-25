@@ -6,8 +6,9 @@ use crate::{
     app_log::LogHandle,
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
-    data::{NewSeries, SeriesId, SeriesStore},
+    data::{NewFilteredSeries, NewSeries, SeriesId, SeriesStore},
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
+    signal_processing::{SignalFilterDefinition, SignalProcessingHandle},
     user_command::UserCommand,
     worker::{
         ConnectionRouter, ConnectionWorkerEvent, WorkerEvent, WorkerHandle, WorkerHandleError,
@@ -23,6 +24,7 @@ pub(crate) struct CommandDispatcher {
     serial_connections: SerialConnectionRegistry,
     application_definition: ApplicationDefinition,
     series: SeriesStore,
+    signal_processing: SignalProcessingHandle<SeriesId>,
     event_receiver: Receiver<ConnectionWorkerEvent>,
     log: LogHandle,
 }
@@ -33,6 +35,7 @@ impl CommandDispatcher {
         serial_connections: SerialConnectionRegistry,
         application_definition: ApplicationDefinition,
         series: SeriesStore,
+        signal_processing: SignalProcessingHandle<SeriesId>,
         event_receiver: Receiver<ConnectionWorkerEvent>,
         log: LogHandle,
     ) -> Self {
@@ -41,6 +44,7 @@ impl CommandDispatcher {
             serial_connections,
             application_definition,
             series,
+            signal_processing,
             event_receiver,
             log,
         }
@@ -141,9 +145,7 @@ impl CommandDispatcher {
             }
 
             UserCommand::AddFilter(filter) => {
-                if let Err(error) = self.primary_worker().add_filter(filter) {
-                    self.set_worker_error(error);
-                }
+                self.add_filter(filter);
             }
 
             UserCommand::AddPidLoop(pid_loop) => {
@@ -159,9 +161,7 @@ impl CommandDispatcher {
             }
 
             UserCommand::SetFilter { name, definition } => {
-                if let Err(error) = self.primary_worker().set_filter(name, definition) {
-                    self.set_worker_error(error);
-                }
+                self.set_filter(name, definition);
             }
 
             UserCommand::Delete { name } => {
@@ -449,6 +449,93 @@ impl CommandDispatcher {
         }
     }
 
+    fn add_filter(&self, filter: NewFilteredSeries) {
+        let (input_name, output_name, definition, color) = filter.into_parts();
+
+        let Some(input_id) = self.series.id_by_name(&input_name) else {
+            self.log.error(format!(
+                "Signal processing failed: \
+                     cannot add filtered series \
+                     '{output_name}': input series \
+                     '{input_name}' was not found",
+            ));
+
+            return;
+        };
+
+        let mut new_series = NewSeries::named_filtered(input_id, definition, output_name.clone());
+
+        if let Some(color) = color {
+            new_series = new_series.with_color(color);
+        }
+
+        let output_id = match self.series.add_series(new_series) {
+            Ok(output_id) => output_id,
+
+            Err(error) => {
+                self.log.error(format!(
+                    "Failed to add series: \
+                             {error}",
+                ));
+
+                return;
+            }
+        };
+
+        if let Err(error) = self
+            .signal_processing
+            .add_filter(input_id, output_id, definition)
+        {
+            self.series.remove_series(output_id);
+
+            self.log.error(format!(
+                "Signal processing failed: \
+                     cannot add filtered series \
+                     '{output_name}' from \
+                     '{input_name}': {error}",
+            ));
+
+            return;
+        }
+
+        self.log.info(format!("Series {output_id} added.",));
+    }
+
+    fn set_filter(&self, name: String, definition: SignalFilterDefinition) {
+        let Some(output_id) = self.series.id_by_name(&name) else {
+            self.log.error(format!("Series '{name}' not found.",));
+
+            return;
+        };
+
+        if let Err(error) = self.signal_processing.replace_filter(output_id, definition) {
+            self.log.error(format!(
+                "Signal processing failed: \
+                     cannot change filter for \
+                     series '{name}': {error}",
+            ));
+
+            return;
+        }
+
+        if !self.series.set_filter_definition(output_id, definition) {
+            self.log.error(format!(
+                "Signal processing failed: \
+                     cannot change filter for \
+                     series '{name}': series is \
+                     not a filtered series",
+            ));
+
+            return;
+        }
+
+        self.log.info(format!(
+            "Filter for series '{name}' \
+                 ({output_id}) changed to \
+                 {definition}.",
+        ));
+    }
+
     fn retry_series(&self, name: String) {
         let Some((id, connection_id, was_suspended)) = self.series.resume_polling_by_name(&name)
         else {
@@ -526,8 +613,7 @@ impl CommandDispatcher {
 fn worker_event_is_error(event: &WorkerEvent) -> bool {
     matches!(
         event,
-        WorkerEvent::SeriesAddFailed(_)
-            | WorkerEvent::AcquisitionStartFailed(_)
+        WorkerEvent::AcquisitionStartFailed(_)
             | WorkerEvent::AcquisitionFailed(_)
             | WorkerEvent::AcquisitionStopFailed(_)
             | WorkerEvent::SignalProcessingFailed(_)

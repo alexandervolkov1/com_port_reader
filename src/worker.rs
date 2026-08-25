@@ -16,7 +16,7 @@ use crate::{
         VirtualInstrumentDescribeResult,
     },
     connection::ConnectionId,
-    data::{NewSeries, SeriesId, SeriesMetadata, SeriesSample, SeriesStore},
+    data::{SeriesId, SeriesMetadata, SeriesSample, SeriesStore},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     process_control::{PidLoopDefinition, ProcessControlHandle},
     process_recorder::ProcessRecorder,
@@ -353,56 +353,6 @@ impl Worker {
                         }
                     }
 
-                    Ok(WorkerCommand::AddFilter(filter)) => {
-                        let (input_name, output_name, definition, color) = filter.into_parts();
-
-                        let event = match series.id_by_name(&input_name) {
-                            None => WorkerEvent::SignalProcessingFailed(format!(
-                                "Cannot add filtered series \
-                                             '{output_name}': input series \
-                                             '{input_name}' was not found",
-                            )),
-
-                            Some(input_id) => {
-                                let mut new_series = NewSeries::named_filtered(
-                                    input_id,
-                                    definition,
-                                    output_name.clone(),
-                                );
-
-                                if let Some(color) = color {
-                                    new_series = new_series.with_color(color);
-                                }
-
-                                match series.add_series(new_series) {
-                                    Err(error) => WorkerEvent::SeriesAddFailed(error),
-
-                                    Ok(output_id) => {
-                                        match signal_processing
-                                            .add_filter(input_id, output_id, definition)
-                                        {
-                                            Ok(()) => WorkerEvent::SeriesAdded(output_id),
-
-                                            Err(error) => {
-                                                series.remove_series(output_id);
-
-                                                WorkerEvent::SignalProcessingFailed(format!(
-                                                    "Cannot add filtered \
-                                                                 series \
-                                                                 '{output_name}' from \
-                                                                 '{input_name}': \
-                                                                 {error}",
-                                                ))
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        };
-
-                        let _ = event_sender.send(event);
-                    }
-
                     Ok(WorkerCommand::AddPidLoop(pid_loop)) => {
                         let (name, input_name, output_target, setpoint, gains, output_limits) =
                             pid_loop.into_parts();
@@ -463,39 +413,6 @@ impl Worker {
                                 name,
                                 error: error.to_string(),
                             },
-                        };
-
-                        let _ = event_sender.send(event);
-                    }
-
-                    Ok(WorkerCommand::SetFilter { name, definition }) => {
-                        let event = match series.id_by_name(&name) {
-                            None => WorkerEvent::SeriesNotFound(name),
-
-                            Some(output_id) => {
-                                match signal_processing.replace_filter(output_id, definition) {
-                                    Err(error) => WorkerEvent::SignalProcessingFailed(format!(
-                                        "Cannot change filter for \
-                                                 series '{name}': {error}",
-                                    )),
-
-                                    Ok(()) => {
-                                        if series.set_filter_definition(output_id, definition) {
-                                            WorkerEvent::SeriesFilterChanged {
-                                                id: output_id,
-                                                name,
-                                                definition,
-                                            }
-                                        } else {
-                                            WorkerEvent::SignalProcessingFailed(format!(
-                                                "Cannot change filter for \
-                                                     series '{name}': series is \
-                                                     not a filtered series",
-                                            ))
-                                        }
-                                    }
-                                }
-                            }
                         };
 
                         let _ = event_sender.send(event);

@@ -1,11 +1,6 @@
 use crate::instrument::{InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest};
 use crate::serial_connection::SerialConnectionError;
-use crate::{
-    acquisition::AcquisitionError,
-    connection::ConnectionId,
-    data::{AddSeriesError, SeriesId},
-    signal_processing::SignalFilterDefinition,
-};
+use crate::{acquisition::AcquisitionError, connection::ConnectionId, data::SeriesId};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConnectionWorkerEvent {
@@ -45,12 +40,6 @@ pub enum WorkerEvent {
     AcquisitionStarted,
     AcquisitionStopped,
     SeriesCleared,
-    SeriesAdded(SeriesId),
-    SeriesFilterChanged {
-        id: SeriesId,
-        name: String,
-        definition: SignalFilterDefinition,
-    },
     PidLoopAdded {
         name: String,
         input_id: SeriesId,
@@ -69,7 +58,6 @@ pub enum WorkerEvent {
         name: String,
         error: String,
     },
-    SeriesAddFailed(AddSeriesError),
     AcquisitionStartFailed(AcquisitionError),
     AcquisitionFailed(AcquisitionError),
     AcquisitionStopFailed(AcquisitionError),
@@ -133,21 +121,6 @@ impl std::fmt::Display for WorkerEvent {
             Self::AcquisitionStopped => formatter.write_str("Acquisition stopped."),
 
             Self::SeriesCleared => formatter.write_str("All series cleared."),
-            Self::SeriesAdded(id) => {
-                write!(formatter, "Series {id} added.")
-            }
-
-            Self::SeriesFilterChanged {
-                id,
-                name,
-                definition,
-            } => {
-                write!(
-                    formatter,
-                    "Filter for series '{name}' ({id}) changed to \
-                     {definition}.",
-                )
-            }
 
             Self::PidLoopAdded {
                 name,
@@ -183,10 +156,6 @@ impl std::fmt::Display for WorkerEvent {
                     "Failed to change PID loop \
                      '{name}' setpoint: {error}",
                 )
-            }
-
-            Self::SeriesAddFailed(error) => {
-                write!(formatter, "Failed to add series: {error}")
             }
 
             Self::AcquisitionStartFailed(error) => {

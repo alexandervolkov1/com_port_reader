@@ -186,6 +186,7 @@ impl ApplicationRuntime {
             serial_connections,
             definition.clone(),
             series.clone(),
+            signal_processing_handle,
             event_receiver,
             log.clone(),
         );

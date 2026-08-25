@@ -2,26 +2,16 @@ use crossbeam_channel::Sender;
 
 use crate::{
     acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
-    data::NewFilteredSeries,
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     process_control::{ControlOutputTarget, NewPidLoop},
     serial_connection::SerialPortConfig,
-    signal_processing::SignalFilterDefinition,
 };
 
 pub enum WorkerCommand {
     Start,
     Stop,
-    AddFilter(NewFilteredSeries),
     AddPidLoop(NewPidLoop<ControlOutputTarget>),
-    SetPidSetpoint {
-        name: String,
-        setpoint: f64,
-    },
-    SetFilter {
-        name: String,
-        definition: SignalFilterDefinition,
-    },
+    SetPidSetpoint { name: String, setpoint: f64 },
     ClearSeries,
     Shutdown,
     RemoveSeriesByName(String),
