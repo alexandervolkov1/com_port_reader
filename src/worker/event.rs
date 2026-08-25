@@ -40,24 +40,6 @@ pub enum WorkerEvent {
     AcquisitionStarted,
     AcquisitionStopped,
     SeriesCleared,
-    PidLoopAdded {
-        name: String,
-        input_id: SeriesId,
-        input_name: String,
-    },
-    PidLoopSetpointChanged {
-        name: String,
-        setpoint: f64,
-    },
-
-    PidLoopSetpointChangeFailed {
-        name: String,
-        error: String,
-    },
-    PidLoopAddFailed {
-        name: String,
-        error: String,
-    },
     AcquisitionStartFailed(AcquisitionError),
     AcquisitionFailed(AcquisitionError),
     AcquisitionStopFailed(AcquisitionError),
@@ -121,42 +103,6 @@ impl std::fmt::Display for WorkerEvent {
             Self::AcquisitionStopped => formatter.write_str("Acquisition stopped."),
 
             Self::SeriesCleared => formatter.write_str("All series cleared."),
-
-            Self::PidLoopAdded {
-                name,
-                input_id,
-                input_name,
-            } => {
-                write!(
-                    formatter,
-                    "PID loop '{name}' added for \
-                     input series '{input_name}' \
-                     ({input_id}).",
-                )
-            }
-
-            Self::PidLoopAddFailed { name, error } => {
-                write!(
-                    formatter,
-                    "Failed to add PID loop \
-                     '{name}': {error}",
-                )
-            }
-
-            Self::PidLoopSetpointChanged { name, setpoint } => {
-                write!(
-                    formatter,
-                    "PID loop '{name}' setpoint changed to {setpoint}.",
-                )
-            }
-
-            Self::PidLoopSetpointChangeFailed { name, error } => {
-                write!(
-                    formatter,
-                    "Failed to change PID loop \
-                     '{name}' setpoint: {error}",
-                )
-            }
 
             Self::AcquisitionStartFailed(error) => {
                 write!(formatter, "Failed to start acquisition: {error}")

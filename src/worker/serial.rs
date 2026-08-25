@@ -3,7 +3,6 @@ use crossbeam_channel::{Sender, bounded};
 use crate::{
     acquisition::{CombinedSource, SerialCommandSource},
     data::{SeriesId, SeriesStore},
-    process_control::ProcessControlHandle,
     process_recorder::ProcessRecorder,
     serial_connection::SerialConfigStore,
     signal_processing::SignalProcessingHandle,
@@ -19,7 +18,6 @@ pub fn spawn_serial_connection_worker(
     series: SeriesStore,
     process_recorder: ProcessRecorder,
     signal_processing: SignalProcessingHandle<SeriesId>,
-    process_control: ProcessControlHandle<SeriesId>,
     worker_config: WorkerConfig,
 ) -> Worker {
     let connection_id = config_store.connection_id();
@@ -30,8 +28,7 @@ pub fn spawn_serial_connection_worker(
 
     let source = CombinedSource::new(vec![Box::new(SerialCommandSource::new(config_store))]);
 
-    let services =
-        WorkerServices::new(series, process_recorder, signal_processing, process_control);
+    let services = WorkerServices::new(series, process_recorder, signal_processing);
 
     Worker::spawn(
         handle,

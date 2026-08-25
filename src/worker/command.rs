@@ -3,15 +3,12 @@ use crossbeam_channel::Sender;
 use crate::{
     acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
-    process_control::{ControlOutputTarget, NewPidLoop},
     serial_connection::SerialPortConfig,
 };
 
 pub enum WorkerCommand {
     Start,
     Stop,
-    AddPidLoop(NewPidLoop<ControlOutputTarget>),
-    SetPidSetpoint { name: String, setpoint: f64 },
     ClearSeries,
     Shutdown,
     RemoveSeriesByName(String),

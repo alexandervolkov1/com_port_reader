@@ -18,7 +18,6 @@ use crate::{
     connection::ConnectionId,
     data::{SeriesId, SeriesMetadata, SeriesSample, SeriesStore},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
-    process_control::{PidLoopDefinition, ProcessControlHandle},
     process_recorder::ProcessRecorder,
     serial_connection::SerialConnectionError,
     signal_processing::{SignalProcessingHandle, SignalProcessingInput},
@@ -85,7 +84,6 @@ pub(crate) struct WorkerServices {
     series: SeriesStore,
     process_recorder: ProcessRecorder,
     signal_processing: SignalProcessingHandle<SeriesId>,
-    process_control: ProcessControlHandle<SeriesId>,
 }
 
 impl WorkerServices {
@@ -93,13 +91,11 @@ impl WorkerServices {
         series: SeriesStore,
         process_recorder: ProcessRecorder,
         signal_processing: SignalProcessingHandle<SeriesId>,
-        process_control: ProcessControlHandle<SeriesId>,
     ) -> Self {
         Self {
             series,
             process_recorder,
             signal_processing,
-            process_control,
         }
     }
 }
@@ -123,7 +119,6 @@ impl Worker {
             series,
             process_recorder,
             signal_processing,
-            process_control,
         } = services;
 
         let connection_id = commands.connection_id();
@@ -353,91 +348,19 @@ impl Worker {
                         }
                     }
 
-                    Ok(WorkerCommand::AddPidLoop(pid_loop)) => {
-                        let (name, input_name, output_target, setpoint, gains, output_limits) =
-                            pid_loop.into_parts();
-
-                        let event = match series.id_by_name(&input_name) {
-                            None => WorkerEvent::PidLoopAddFailed {
-                                name,
-
-                                error: format!(
-                                    "input series \
-                                         '{input_name}' was not found",
-                                ),
-                            },
-
-                            Some(input_id) => {
-                                match PidLoopDefinition::new(
-                                    name.clone(),
-                                    input_id,
-                                    output_target,
-                                    setpoint,
-                                    gains,
-                                    output_limits,
-                                ) {
-                                    Err(error) => WorkerEvent::PidLoopAddFailed {
-                                        name,
-                                        error: error.to_string(),
-                                    },
-
-                                    Ok(definition) => match process_control.add_loop(definition) {
-                                        Ok(()) => WorkerEvent::PidLoopAdded {
-                                            name,
-                                            input_id,
-                                            input_name,
-                                        },
-
-                                        Err(error) => WorkerEvent::PidLoopAddFailed {
-                                            name,
-                                            error: error.to_string(),
-                                        },
-                                    },
-                                }
-                            }
-                        };
-
-                        let _ = event_sender.send(event);
-                    }
-
-                    Ok(WorkerCommand::SetPidSetpoint { name, setpoint }) => {
-                        let event = match process_control.set_setpoint(&name, setpoint) {
-                            Ok(true) => WorkerEvent::PidLoopSetpointChanged { name, setpoint },
-
-                            Ok(false) => WorkerEvent::PidLoopSetpointChangeFailed {
-                                name,
-                                error: "PID loop was not found".to_owned(),
-                            },
-
-                            Err(error) => WorkerEvent::PidLoopSetpointChangeFailed {
-                                name,
-                                error: error.to_string(),
-                            },
-                        };
-
-                        let _ = event_sender.send(event);
-                    }
-
                     Ok(WorkerCommand::ClearSeries) => {
-                        let event = match process_control.clear() {
+                        let event = match signal_processing.clear() {
+                            Ok(()) => {
+                                series.clear();
+
+                                WorkerEvent::SeriesCleared
+                            }
+
                             Err(error) => WorkerEvent::SignalProcessingFailed(format!(
-                                "Cannot clear PID control loops: \
-                                         {error}",
+                                "Cannot clear \
+                                             signal-processing \
+                                             graph: {error}",
                             )),
-
-                            Ok(()) => match signal_processing.clear() {
-                                Ok(()) => {
-                                    series.clear();
-
-                                    WorkerEvent::SeriesCleared
-                                }
-
-                                Err(error) => WorkerEvent::SignalProcessingFailed(format!(
-                                    "Cannot clear \
-                                                 signal-processing graph: \
-                                                 {error}",
-                                )),
-                            },
                         };
 
                         let _ = event_sender.send(event);

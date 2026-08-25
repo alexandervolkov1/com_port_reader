@@ -7,6 +7,7 @@ use crate::{
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
     data::{NewFilteredSeries, NewSeries, SeriesId, SeriesStore},
+    process_control::{ControlOutputTarget, NewPidLoop, PidLoopDefinition, ProcessControlHandle},
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
     signal_processing::{SignalFilterDefinition, SignalProcessingHandle},
     user_command::UserCommand,
@@ -25,6 +26,7 @@ pub(crate) struct CommandDispatcher {
     application_definition: ApplicationDefinition,
     series: SeriesStore,
     signal_processing: SignalProcessingHandle<SeriesId>,
+    process_control: ProcessControlHandle<SeriesId>,
     event_receiver: Receiver<ConnectionWorkerEvent>,
     log: LogHandle,
 }
@@ -36,6 +38,7 @@ impl CommandDispatcher {
         application_definition: ApplicationDefinition,
         series: SeriesStore,
         signal_processing: SignalProcessingHandle<SeriesId>,
+        process_control: ProcessControlHandle<SeriesId>,
         event_receiver: Receiver<ConnectionWorkerEvent>,
         log: LogHandle,
     ) -> Self {
@@ -45,6 +48,7 @@ impl CommandDispatcher {
             application_definition,
             series,
             signal_processing,
+            process_control,
             event_receiver,
             log,
         }
@@ -149,15 +153,11 @@ impl CommandDispatcher {
             }
 
             UserCommand::AddPidLoop(pid_loop) => {
-                if let Err(error) = self.primary_worker().add_pid_loop(pid_loop) {
-                    self.set_worker_error(error);
-                }
+                self.add_pid_loop(pid_loop);
             }
 
             UserCommand::SetPidSetpoint { name, setpoint } => {
-                if let Err(error) = self.primary_worker().set_pid_setpoint(name, setpoint) {
-                    self.set_worker_error(error);
-                }
+                self.set_pid_setpoint(name, setpoint);
             }
 
             UserCommand::SetFilter { name, definition } => {
@@ -430,6 +430,89 @@ impl CommandDispatcher {
         }
     }
 
+    fn add_pid_loop(&self, pid_loop: NewPidLoop<ControlOutputTarget>) {
+        let (name, input_name, output_target, setpoint, gains, output_limits) =
+            pid_loop.into_parts();
+
+        let Some(input_id) = self.series.id_by_name(&input_name) else {
+            self.log.error(format!(
+                "Failed to add PID loop \
+                     '{name}': input series \
+                     '{input_name}' was not \
+                     found",
+            ));
+
+            return;
+        };
+
+        let definition = match PidLoopDefinition::new(
+            name.clone(),
+            input_id,
+            output_target,
+            setpoint,
+            gains,
+            output_limits,
+        ) {
+            Ok(definition) => definition,
+
+            Err(error) => {
+                self.log.error(format!(
+                    "Failed to add PID \
+                             loop '{name}': \
+                             {error}",
+                ));
+
+                return;
+            }
+        };
+
+        match self.process_control.add_loop(definition) {
+            Ok(()) => {
+                self.log.info(format!(
+                    "PID loop '{name}' \
+                         added for input series \
+                         '{input_name}' \
+                         ({input_id}).",
+                ));
+            }
+
+            Err(error) => {
+                self.log.error(format!(
+                    "Failed to add PID loop \
+                         '{name}': {error}",
+                ));
+            }
+        }
+    }
+
+    fn set_pid_setpoint(&self, name: String, setpoint: f64) {
+        match self.process_control.set_setpoint(&name, setpoint) {
+            Ok(true) => {
+                self.log.info(format!(
+                    "PID loop '{name}' \
+                         setpoint changed to \
+                         {setpoint}.",
+                ));
+            }
+
+            Ok(false) => {
+                self.log.error(format!(
+                    "Failed to change PID \
+                         loop '{name}' setpoint: \
+                         PID loop was not found",
+                ));
+            }
+
+            Err(error) => {
+                self.log.error(format!(
+                    "Failed to change PID \
+                         loop '{name}' setpoint: \
+                         {error}",
+                ));
+            }
+        }
+    }
+
     pub fn set_visibility(&self, id: SeriesId, visible: bool) {
         self.series.set_visibility(id, visible);
     }
@@ -622,7 +705,5 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
             | WorkerEvent::InstrumentReadFailed { .. }
             | WorkerEvent::InstrumentWriteFailed { .. }
             | WorkerEvent::SeriesPollingSuspended { .. }
-            | WorkerEvent::PidLoopAddFailed { .. }
-            | WorkerEvent::PidLoopSetpointChangeFailed { .. }
     )
 }

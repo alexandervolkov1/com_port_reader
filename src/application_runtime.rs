@@ -134,7 +134,6 @@ impl ApplicationRuntime {
             series.clone(),
             process_recorder.clone(),
             signal_processing_handle.clone(),
-            process_control_handle.clone(),
             worker_config,
         );
 
@@ -159,7 +158,6 @@ impl ApplicationRuntime {
                 series.clone(),
                 process_recorder.clone(),
                 signal_processing_handle.clone(),
-                process_control_handle.clone(),
                 worker_config,
             );
 
@@ -187,6 +185,7 @@ impl ApplicationRuntime {
             definition.clone(),
             series.clone(),
             signal_processing_handle,
+            process_control_handle,
             event_receiver,
             log.clone(),
         );
