@@ -152,6 +152,12 @@ impl CommandDispatcher {
                 }
             }
 
+            UserCommand::SetPidSetpoint { name, setpoint } => {
+                if let Err(error) = self.primary_worker().set_pid_setpoint(name, setpoint) {
+                    self.set_worker_error(error);
+                }
+            }
+
             UserCommand::SetFilter { name, definition } => {
                 if let Err(error) = self.primary_worker().set_filter(name, definition) {
                     self.set_worker_error(error);
@@ -490,5 +496,6 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
             | WorkerEvent::InstrumentWriteFailed { .. }
             | WorkerEvent::SeriesPollingSuspended { .. }
             | WorkerEvent::PidLoopAddFailed { .. }
+            | WorkerEvent::PidLoopSetpointChangeFailed { .. }
     )
 }

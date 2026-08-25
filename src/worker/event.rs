@@ -56,7 +56,15 @@ pub enum WorkerEvent {
         input_id: SeriesId,
         input_name: String,
     },
+    PidLoopSetpointChanged {
+        name: String,
+        setpoint: f64,
+    },
 
+    PidLoopSetpointChangeFailed {
+        name: String,
+        error: String,
+    },
     PidLoopAddFailed {
         name: String,
         error: String,
@@ -169,6 +177,21 @@ impl std::fmt::Display for WorkerEvent {
                     formatter,
                     "Failed to add PID loop \
                      '{name}': {error}",
+                )
+            }
+
+            Self::PidLoopSetpointChanged { name, setpoint } => {
+                write!(
+                    formatter,
+                    "PID loop '{name}' setpoint changed to {setpoint}.",
+                )
+            }
+
+            Self::PidLoopSetpointChangeFailed { name, error } => {
+                write!(
+                    formatter,
+                    "Failed to change PID loop \
+                     '{name}' setpoint: {error}",
                 )
             }
 

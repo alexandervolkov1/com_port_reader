@@ -66,6 +66,11 @@ pub enum ProcessAction {
         output_maximum: f64,
     },
 
+    SetPidSetpoint {
+        name: String,
+        setpoint: f64,
+    },
+
     SetFilter {
         name: String,
         definition: String,

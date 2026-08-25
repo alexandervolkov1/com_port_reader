@@ -15,6 +15,10 @@ pub enum WorkerCommand {
     AddSeries(NewSeries),
     AddFilter(NewFilteredSeries),
     AddPidLoop(NewPidLoop<ControlOutputTarget>),
+    SetPidSetpoint {
+        name: String,
+        setpoint: f64,
+    },
     SetFilter {
         name: String,
         definition: SignalFilterDefinition,

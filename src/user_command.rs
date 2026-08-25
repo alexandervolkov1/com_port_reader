@@ -14,6 +14,10 @@ pub enum UserCommand {
     Add(NewSeries),
     AddFilter(NewFilteredSeries),
     AddPidLoop(NewPidLoop<ControlOutputTarget>),
+    SetPidSetpoint {
+        name: String,
+        setpoint: f64,
+    },
     SetFilter {
         name: String,
         definition: SignalFilterDefinition,

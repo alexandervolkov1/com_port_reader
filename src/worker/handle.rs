@@ -55,6 +55,10 @@ impl WorkerHandle {
         self.send(WorkerCommand::AddPidLoop(pid_loop))
     }
 
+    pub fn set_pid_setpoint(&self, name: String, setpoint: f64) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::SetPidSetpoint { name, setpoint })
+    }
+
     pub fn set_filter(
         &self,
         name: String,

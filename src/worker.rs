@@ -460,6 +460,24 @@ impl Worker {
                         let _ = event_sender.send(event);
                     }
 
+                    Ok(WorkerCommand::SetPidSetpoint { name, setpoint }) => {
+                        let event = match process_control.set_setpoint(&name, setpoint) {
+                            Ok(true) => WorkerEvent::PidLoopSetpointChanged { name, setpoint },
+
+                            Ok(false) => WorkerEvent::PidLoopSetpointChangeFailed {
+                                name,
+                                error: "PID loop was not found".to_owned(),
+                            },
+
+                            Err(error) => WorkerEvent::PidLoopSetpointChangeFailed {
+                                name,
+                                error: error.to_string(),
+                            },
+                        };
+
+                        let _ = event_sender.send(event);
+                    }
+
                     Ok(WorkerCommand::SetFilter { name, definition }) => {
                         let event = match series.id_by_name(&name) {
                             None => WorkerEvent::SeriesNotFound(name),

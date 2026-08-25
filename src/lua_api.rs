@@ -80,6 +80,8 @@ pub fn install(
 
     register_set_filter(lua, &app, command_sender.clone())?;
 
+    register_set_pid_setpoint(lua, &app, command_sender.clone())?;
+
     register_metakon_controller(
         lua,
         &app,
@@ -339,6 +341,27 @@ fn register_set_filter(
     })?;
 
     app.set("set_filter", function)
+}
+
+fn register_set_pid_setpoint(
+    lua: &Lua,
+    app: &Table,
+    command_sender: Sender<UserCommand>,
+) -> mlua::Result<()> {
+    let function = lua.create_function(move |_, (name, setpoint): (String, f64)| {
+        if !setpoint.is_finite() {
+            return Err(mlua::Error::RuntimeError(
+                "PID setpoint must be finite".to_owned(),
+            ));
+        }
+
+        send_application_command(
+            &command_sender,
+            UserCommand::SetPidSetpoint { name, setpoint },
+        )
+    })?;
+
+    app.set("set_pid_setpoint", function)
 }
 
 fn validate_filter_option_keys(
