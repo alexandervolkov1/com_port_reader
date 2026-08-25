@@ -141,6 +141,23 @@ impl WorkerHandle {
             ConnectionCommand::WriteInstrument {
                 port_name,
                 request,
+                emit_event: true,
+                response_sender,
+            },
+        ))
+    }
+
+    pub(crate) fn write_instrument_quiet(
+        &self,
+        port_name: String,
+        request: InstrumentWriteRequest,
+        response_sender: Sender<InstrumentWriteResult>,
+    ) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::Connection(
+            ConnectionCommand::WriteInstrument {
+                port_name,
+                request,
+                emit_event: false,
                 response_sender,
             },
         ))

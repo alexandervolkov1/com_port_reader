@@ -8,8 +8,8 @@ use std::{
 use rusqlite::{Connection, params};
 
 use super::{
-    ProcessAction, ProcessActionOrigin, ProcessLogLevel, ProcessMeasurement, ProcessRecord,
-    ProcessRecordWriter, ProcessRecorderError,
+    ProcessAction, ProcessActionOrigin, ProcessControlOutput, ProcessLogLevel, ProcessMeasurement,
+    ProcessRecord, ProcessRecordWriter, ProcessRecorderError,
 };
 
 pub(crate) struct SqliteProcessRecordWriter {
@@ -89,11 +89,35 @@ impl SqliteProcessRecordWriter {
                     value         REAL NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS control_outputs (
+                    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp            REAL NOT NULL,
+                    loop_name            TEXT NOT NULL,
+                    controller_kind      TEXT NOT NULL,
+                    input_series_id      TEXT NOT NULL,
+                    connection_id        TEXT NOT NULL,
+                    setpoint             REAL,
+                    measurement          REAL NOT NULL,
+                    requested_output     REAL NOT NULL,
+                    actual_output        REAL,
+                    unconstrained_output REAL,
+                    proportional         REAL,
+                    integral             REAL,
+                    derivative           REAL,
+                    saturated            INTEGER
+                );
+
                 CREATE INDEX IF NOT EXISTS measurements_timestamp_index
                     ON measurements(timestamp);
 
                 CREATE INDEX IF NOT EXISTS measurements_series_index
                     ON measurements(series_id, timestamp);
+
+                CREATE INDEX IF NOT EXISTS control_outputs_timestamp_index
+                    ON control_outputs(timestamp);
+
+                CREATE INDEX IF NOT EXISTS control_outputs_loop_index
+                    ON control_outputs(loop_name, timestamp);
 
                 CREATE INDEX IF NOT EXISTS logs_timestamp_index
                     ON logs(timestamp);
@@ -268,6 +292,56 @@ impl SqliteProcessRecordWriter {
 
         Ok(())
     }
+
+    fn write_control_output(
+        &self,
+        output: ProcessControlOutput,
+    ) -> Result<(), ProcessRecorderError> {
+        self.connection
+            .execute(
+                "
+                INSERT INTO control_outputs (
+                    timestamp,
+                    loop_name,
+                    controller_kind,
+                    input_series_id,
+                    connection_id,
+                    setpoint,
+                    measurement,
+                    requested_output,
+                    actual_output,
+                    unconstrained_output,
+                    proportional,
+                    integral,
+                    derivative,
+                    saturated
+                )
+                VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7,
+                    ?8, ?9, ?10, ?11, ?12, ?13, ?14
+                )
+                ",
+                params![
+                    output.timestamp,
+                    output.loop_name,
+                    output.controller_kind,
+                    output.input_series_id.to_string(),
+                    output.connection_id.value().to_string(),
+                    output.setpoint,
+                    output.measurement,
+                    output.requested_output,
+                    output.actual_output,
+                    output.unconstrained_output,
+                    output.proportional,
+                    output.integral,
+                    output.derivative,
+                    output.saturated,
+                ],
+            )
+            .map_err(|error| recorder_error("Failed to write control output", error))?;
+
+        Ok(())
+    }
 }
 
 impl ProcessRecordWriter for SqliteProcessRecordWriter {
@@ -290,6 +364,8 @@ impl ProcessRecordWriter for SqliteProcessRecordWriter {
                 origin,
                 action,
             } => self.write_action(timestamp, origin, action),
+
+            ProcessRecord::ControlOutput { output } => self.write_control_output(output),
 
             ProcessRecord::Measurements { measurements } => self.write_measurements(measurements),
         }
@@ -348,8 +424,6 @@ fn action_origin_name(origin: ProcessActionOrigin) -> &'static str {
         ProcessActionOrigin::UserInterface => "user_interface",
 
         ProcessActionOrigin::Lua => "lua",
-
-        ProcessActionOrigin::ProcessControl => "process_control",
     }
 }
 
@@ -420,7 +494,7 @@ mod tests {
     use crate::{connection::ConnectionId, data::SeriesId};
 
     #[test]
-    fn stores_logs_and_measurements() {
+    fn stores_logs_measurements_and_control_outputs() {
         let path = temporary_database_path();
 
         let mut writer = SqliteProcessRecordWriter::create(&path).unwrap();
@@ -445,6 +519,40 @@ mod tests {
             })
             .unwrap();
 
+        writer
+            .write(ProcessRecord::ControlOutput {
+                output: ProcessControlOutput {
+                    timestamp: 124.0,
+
+                    loop_name: "heater".to_owned(),
+
+                    controller_kind: "pid".to_owned(),
+
+                    input_series_id: SeriesId::new(1),
+
+                    connection_id: ConnectionId::PRIMARY,
+
+                    setpoint: Some(100.0),
+
+                    measurement: 80.0,
+
+                    requested_output: 40.0,
+
+                    actual_output: Some(40.0),
+
+                    unconstrained_output: Some(40.0),
+
+                    proportional: Some(40.0),
+
+                    integral: Some(0.0),
+
+                    derivative: Some(0.0),
+
+                    saturated: Some(false),
+                },
+            })
+            .unwrap();
+
         drop(writer);
 
         let connection = Connection::open(&path).unwrap();
@@ -464,19 +572,48 @@ mod tests {
             )
             .unwrap();
 
+        let control_output: (String, String, f64, f64, Option<f64>, Option<bool>) = connection
+            .query_row(
+                "
+                    SELECT
+                        loop_name,
+                        controller_kind,
+                        measurement,
+                        requested_output,
+                        actual_output,
+                        saturated
+                    FROM control_outputs
+                    ",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+
         drop(connection);
 
         let _ = fs::remove_file(&path);
 
         assert_eq!(log_count, 1);
         assert_eq!(measurement, ("temperature".to_owned(), 123.5, 42.25));
-    }
-
-    #[test]
-    fn identifies_process_control_action_origin() {
         assert_eq!(
-            action_origin_name(ProcessActionOrigin::ProcessControl,),
-            "process_control",
+            control_output,
+            (
+                "heater".to_owned(),
+                "pid".to_owned(),
+                80.0,
+                40.0,
+                Some(40.0),
+                Some(false),
+            ),
         );
     }
 

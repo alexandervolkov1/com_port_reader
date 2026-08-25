@@ -27,7 +27,6 @@ pub enum ProcessLogLevel {
 pub enum ProcessActionOrigin {
     UserInterface,
     Lua,
-    ProcessControl,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -125,23 +124,41 @@ pub struct ProcessMeasurement {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct ProcessControlOutput {
+    pub timestamp: f64,
+    pub loop_name: String,
+    pub controller_kind: String,
+    pub input_series_id: SeriesId,
+    pub connection_id: ConnectionId,
+    pub setpoint: Option<f64>,
+    pub measurement: f64,
+    pub requested_output: f64,
+    pub actual_output: Option<f64>,
+    pub unconstrained_output: Option<f64>,
+    pub proportional: Option<f64>,
+    pub integral: Option<f64>,
+    pub derivative: Option<f64>,
+    pub saturated: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum ProcessRecord {
     Log {
         timestamp: SystemTime,
         level: ProcessLogLevel,
         message: String,
     },
-
     ConfigurationLoaded {
         timestamp: SystemTime,
         startup_path: PathBuf,
         source: Option<String>,
     },
-
     Measurements {
         measurements: Vec<ProcessMeasurement>,
     },
-
+    ControlOutput {
+        output: ProcessControlOutput,
+    },
     ActionRequested {
         timestamp: SystemTime,
         origin: ProcessActionOrigin,
@@ -342,6 +359,10 @@ impl ProcessRecorder {
             .collect();
 
         self.record(ProcessRecord::Measurements { measurements });
+    }
+
+    pub fn record_control_output(&self, output: ProcessControlOutput) {
+        self.record(ProcessRecord::ControlOutput { output });
     }
 
     pub fn take_error(&self) -> Option<String> {

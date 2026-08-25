@@ -866,6 +866,7 @@ fn handle_connection_command(
         ConnectionCommand::WriteInstrument {
             port_name,
             request,
+            emit_event,
             response_sender,
         } => {
             let result = write_instrument_to_source(source, request);
@@ -881,21 +882,24 @@ fn handle_connection_command(
                 );
             }
 
-            let event = match &result {
-                Ok(actual_value) => WorkerEvent::InstrumentWriteSucceeded {
-                    port_name,
-                    request,
-                    actual_value: *actual_value,
-                },
+            if emit_event {
+                let event = match &result {
+                    Ok(actual_value) => WorkerEvent::InstrumentWriteSucceeded {
+                        port_name,
+                        request,
+                        actual_value: *actual_value,
+                    },
 
-                Err(error) => WorkerEvent::InstrumentWriteFailed {
-                    port_name,
-                    request,
-                    error: error.clone(),
-                },
-            };
+                    Err(error) => WorkerEvent::InstrumentWriteFailed {
+                        port_name,
+                        request,
+                        error: error.clone(),
+                    },
+                };
 
-            let _ = event_sender.send(event);
+                let _ = event_sender.send(event);
+            }
+
             let _ = response_sender.send(result);
         }
 

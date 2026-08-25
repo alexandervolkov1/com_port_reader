@@ -57,6 +57,7 @@ pub enum ConnectionCommand {
     WriteInstrument {
         port_name: String,
         request: InstrumentWriteRequest,
+        emit_event: bool,
         response_sender: Sender<InstrumentWriteResult>,
     },
 

@@ -6,12 +6,13 @@ use std::{
 use crossbeam_channel::{Receiver, Sender, bounded};
 
 use crate::{
+    acquisition::InstrumentWriteResult,
     app_log::LogHandle,
     connection::ConnectionId,
     data::SeriesId,
     instrument::InstrumentWriteRequest,
     process_control::PidLoopEvent,
-    process_recorder::{ProcessAction, ProcessActionOrigin, ProcessRecorder},
+    process_recorder::{ProcessControlOutput, ProcessRecorder},
     serial_connection::SerialConnectionRegistry,
     worker::ConnectionRouter,
 };
@@ -83,23 +84,128 @@ fn run(
                 match event {
                     PidLoopEvent::Output(output) => {
                         let loop_name =
-                            output.loop_name.clone();
+                            output.loop_name;
 
-                        let result = dispatch_write(
-                            &loop_name,
-                            output.connection_id,
-                            output.request,
-                            &connection_router,
-                            &serial_connections,
-                            &process_recorder,
-                        );
+                        let input_series_id =
+                            output.input;
 
-                        if let Err(error) = result {
-                            log.error(format!(
-                                "PID loop '{loop_name}' \
-                                 output failed: {error}",
-                            ));
-                        }
+                        let timestamp =
+                            output.timestamp;
+
+                        let setpoint =
+                            output.setpoint;
+
+                        let measurement =
+                            output.measurement;
+
+                        let pid_output =
+                            output.output;
+
+                        let connection_id =
+                            output.connection_id;
+
+                        let request =
+                            output.request;
+
+                        let actual_output =
+                            match dispatch_write(
+                                connection_id,
+                                request,
+                                &connection_router,
+                                &serial_connections,
+                            ) {
+                                Ok(response_receiver) => {
+                                    match response_receiver.recv() {
+                                        Ok(Ok(actual_value)) => {
+                                            Some(
+                                                actual_value.as_f64(),
+                                            )
+                                        }
+
+                                        Ok(Err(error)) => {
+                                            log.error(
+                                                format!(
+                                                    "PID loop \
+                                                     '{loop_name}' \
+                                                     output failed: \
+                                                     {error}",
+                                                ),
+                                            );
+
+                                            None
+                                        }
+
+                                        Err(_) => {
+                                            log.error(
+                                                format!(
+                                                    "PID loop \
+                                                     '{loop_name}' \
+                                                     output failed: \
+                                                     instrument write \
+                                                     response channel \
+                                                     is disconnected",
+                                                ),
+                                            );
+
+                                            None
+                                        }
+                                    }
+                                }
+
+                                Err(error) => {
+                                    log.error(
+                                        format!(
+                                            "PID loop \
+                                             '{loop_name}' \
+                                             output failed: \
+                                             {error}",
+                                        ),
+                                    );
+
+                                    None
+                                }
+                            };
+
+                        process_recorder
+                            .record_control_output(
+                                ProcessControlOutput {
+                                    timestamp,
+                                    loop_name,
+                                    controller_kind:
+                                        "pid".to_owned(),
+                                    input_series_id,
+                                    connection_id,
+                                    setpoint:
+                                        Some(setpoint),
+                                    measurement,
+                                    requested_output:
+                                        pid_output.value(),
+                                    actual_output,
+                                    unconstrained_output:
+                                        Some(
+                                            pid_output
+                                                .unconstrained_value(),
+                                        ),
+                                    proportional:
+                                        Some(
+                                            pid_output
+                                                .proportional(),
+                                        ),
+                                    integral:
+                                        Some(
+                                            pid_output.integral(),
+                                        ),
+                                    derivative:
+                                        Some(
+                                            pid_output
+                                                .derivative(),
+                                        ),
+                                    saturated:
+                                        Some(
+                                            pid_output.saturated(),
+                                        ),
+                                },
+                            );
                     }
 
                     PidLoopEvent::Error(error) => {
@@ -115,61 +221,52 @@ fn run(
 }
 
 fn dispatch_write(
-    loop_name: &str,
     connection_id: ConnectionId,
     request: InstrumentWriteRequest,
     connection_router: &ConnectionRouter,
     serial_connections: &SerialConnectionRegistry,
-    process_recorder: &ProcessRecorder,
-) -> Result<(), String> {
+) -> Result<Receiver<InstrumentWriteResult>, String> {
     let worker = connection_router.handle(connection_id).ok_or_else(|| {
         format!(
-            "connection {connection_id} does not \
-                 have a registered worker",
+            "connection {connection_id} \
+                     does not have a \
+                     registered worker",
         )
     })?;
 
     let serial_config_store = serial_connections.store(connection_id).ok_or_else(|| {
         format!(
-            "connection {connection_id} does not \
-                 have a serial configuration store",
+            "connection {connection_id} \
+                     does not have a serial \
+                     configuration store",
         )
     })?;
 
     let serial_config = serial_config_store.snapshot().ok_or_else(|| {
         format!(
-            "connection {connection_id} does not \
-                 have a selected COM port",
+            "connection {connection_id} \
+                     does not have a selected \
+                     COM port",
         )
     })?;
 
-    let recorded_request = format!("PID loop '{loop_name}': {request}",);
-
-    let (response_sender, _response_receiver) = bounded(1);
+    let (response_sender, response_receiver) = bounded(1);
 
     worker
-        .write_instrument(
+        .write_instrument_quiet(
             serial_config.port_name().to_owned(),
             request,
             response_sender,
         )
         .map_err(|error| {
             format!(
-                "cannot enqueue instrument write \
-                 for connection {connection_id}: \
-                 {error}",
+                "cannot enqueue instrument \
+                 write for connection \
+                 {connection_id}: {error}",
             )
         })?;
 
-    process_recorder.record_action(
-        ProcessActionOrigin::ProcessControl,
-        ProcessAction::WriteInstrument {
-            connection_id,
-            request: recorded_request,
-        },
-    );
-
-    Ok(())
+    Ok(response_receiver)
 }
 
 #[cfg(test)]
@@ -186,7 +283,6 @@ mod tests {
             InstrumentValue, InstrumentWriteRequest,
             virtual_instrument::{VirtualInstrumentId, VirtualParameterId},
         },
-        process_recorder::ProcessRecorder,
         serial_connection::{SerialConnectionRegistry, SerialPortConfig},
         worker::{ConnectionCommand, ConnectionRouter, WorkerCommand, WorkerHandle},
     };
@@ -230,13 +326,11 @@ mod tests {
 
         let request = write_request();
 
-        dispatch_write(
-            "heater",
+        let _response_receiver = dispatch_write(
             connection_id,
             request,
             &connection_router,
             &serial_connections,
-            &ProcessRecorder::default(),
         )
         .unwrap();
 
@@ -245,6 +339,7 @@ mod tests {
         let WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
             port_name,
             request: received_request,
+            emit_event,
             ..
         }) = command
         else {
@@ -254,17 +349,17 @@ mod tests {
         assert_eq!(port_name, "COM9");
 
         assert_eq!(received_request, request,);
+
+        assert!(!emit_event);
     }
 
     #[test]
     fn rejects_connection_without_registered_worker() {
         let error = dispatch_write(
-            "heater",
             ConnectionId::PRIMARY,
             write_request(),
             &ConnectionRouter::default(),
             &SerialConnectionRegistry::new(),
-            &ProcessRecorder::default(),
         )
         .unwrap_err();
 
@@ -288,12 +383,10 @@ mod tests {
         connection_router.insert(WorkerHandle::new(connection_id, command_sender));
 
         let error = dispatch_write(
-            "heater",
             connection_id,
             write_request(),
             &connection_router,
             &serial_connections,
-            &ProcessRecorder::default(),
         )
         .unwrap_err();
 

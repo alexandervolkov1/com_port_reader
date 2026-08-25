@@ -158,6 +158,8 @@ where
 
             let target = *control_loop.definition().output_target();
 
+            let setpoint = control_loop.definition().setpoint();
+
             let output = match control_loop.update(timestamp, measurement) {
                 Ok(output) => output,
 
@@ -186,15 +188,12 @@ where
 
             events.push(PidLoopEvent::Output(PidLoopOutput {
                 loop_name,
-
                 input: signal_id,
-
                 timestamp,
-
+                setpoint,
+                measurement,
                 output,
-
                 connection_id: target.connection_id(),
-
                 request,
             }));
         }
@@ -275,22 +274,18 @@ fn validate_output_limits(
 #[derive(Debug)]
 pub enum PidLoopEvent<SignalId> {
     Output(PidLoopOutput<SignalId>),
-
     Error(PidLoopExecutionError),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PidLoopOutput<SignalId> {
     pub loop_name: String,
-
     pub input: SignalId,
-
     pub timestamp: f64,
-
+    pub setpoint: f64,
+    pub measurement: f64,
     pub output: PidOutput,
-
     pub connection_id: ConnectionId,
-
     pub request: InstrumentWriteRequest,
 }
 
@@ -300,17 +295,13 @@ pub enum PidLoopRegistryError {
 
     OutputAlreadyControlled {
         existing_loop: String,
-
         target: ControlOutputTarget,
     },
 
     OutputLimitsOutsideRange {
         minimum: f64,
-
         maximum: f64,
-
         target_minimum: f64,
-
         target_maximum: f64,
     },
 }
@@ -690,6 +681,10 @@ mod tests {
         assert_eq!(output.input, 5,);
 
         assert_eq!(output.timestamp, 1_000.0,);
+
+        assert_eq!(output.setpoint, 100.0,);
+
+        assert_eq!(output.measurement, 80.0,);
 
         assert_eq!(output.output.value(), 40.0,);
 
