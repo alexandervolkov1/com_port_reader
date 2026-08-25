@@ -7,15 +7,14 @@ use std::{
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 
 use super::{
-    ControlOutputTarget, PidLoopDefinition, PidLoopEvent, PidLoopRegistry, PidLoopRegistryError,
+    ControlOutputTarget, PidLoopDefinition, PidLoopDefinitionError, PidLoopEvent, PidLoopRegistry,
+    PidLoopRegistryError,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ProcessControlInput<SignalId> {
     pub signal_id: SignalId,
-
     pub timestamp: f64,
-
     pub value: f64,
 }
 
@@ -23,9 +22,7 @@ impl<SignalId> ProcessControlInput<SignalId> {
     pub const fn new(signal_id: SignalId, timestamp: f64, value: f64) -> Self {
         Self {
             signal_id,
-
             timestamp,
-
             value,
         }
     }
@@ -34,30 +31,26 @@ impl<SignalId> ProcessControlInput<SignalId> {
 enum ProcessControlCommand<SignalId> {
     AddLoop {
         definition: PidLoopDefinition<SignalId, ControlOutputTarget>,
-
         response_sender: Sender<Result<(), PidLoopRegistryError>>,
     },
-
+    SetSetpoint {
+        name: String,
+        setpoint: f64,
+        response_sender: Sender<Result<bool, PidLoopDefinitionError>>,
+    },
     RemoveLoop {
         name: String,
-
         response_sender: Sender<bool>,
     },
-
     Process(Vec<ProcessControlInput<SignalId>>),
-
     ResetFrom {
         signal_id: SignalId,
     },
-
     RemoveFrom {
         signal_id: SignalId,
-
         response_sender: Sender<Vec<String>>,
     },
-
     Clear,
-
     Shutdown,
 }
 
@@ -93,6 +86,28 @@ impl<SignalId> ProcessControlHandle<SignalId> {
             .map_err(|_| AddPidLoopError::Disconnected)?;
 
         result.map_err(AddPidLoopError::Definition)
+    }
+
+    pub fn set_setpoint(
+        &self,
+        name: impl Into<String>,
+        setpoint: f64,
+    ) -> Result<bool, SetPidLoopSetpointError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessControlCommand::SetSetpoint {
+                name: name.into(),
+                setpoint,
+                response_sender,
+            })
+            .map_err(|_| SetPidLoopSetpointError::Disconnected)?;
+
+        let result = response_receiver
+            .recv()
+            .map_err(|_| SetPidLoopSetpointError::Disconnected)?;
+
+        result.map_err(SetPidLoopSetpointError::Definition)
     }
 
     pub fn remove_loop(
@@ -249,6 +264,16 @@ fn run_process_control<SignalId>(
                 let _ = response_sender.send(result);
             }
 
+            ProcessControlCommand::SetSetpoint {
+                name,
+                setpoint,
+                response_sender,
+            } => {
+                let result = registry.set_setpoint(&name, setpoint);
+
+                let _ = response_sender.send(result);
+            }
+
             ProcessControlCommand::RemoveLoop {
                 name,
 
@@ -337,6 +362,36 @@ impl Error for AddPidLoopError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetPidLoopSetpointError {
+    Definition(PidLoopDefinitionError),
+
+    Disconnected,
+}
+
+impl fmt::Display for SetPidLoopSetpointError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Definition(error) => error.fmt(formatter),
+
+            Self::Disconnected => formatter.write_str(
+                "Process control service \
+                 is disconnected",
+            ),
+        }
+    }
+}
+
+impl Error for SetPidLoopSetpointError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Definition(error) => Some(error),
+
+            Self::Disconnected => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProcessControlServiceDisconnected;
 
 impl fmt::Display for ProcessControlServiceDisconnected {
@@ -364,14 +419,14 @@ mod tests {
             },
         },
         process_control::{
-            ControlOutputTarget, PidGains, PidLoopDefinition, PidLoopEvent, PidLoopExecutionError,
-            PidLoopRegistryError, PidOutputLimits,
+            ControlOutputTarget, PidGains, PidLoopDefinition, PidLoopDefinitionError, PidLoopEvent,
+            PidLoopExecutionError, PidLoopRegistryError, PidOutputLimits,
         },
     };
 
     use super::{
         AddPidLoopError, ProcessControlInput, ProcessControlService,
-        ProcessControlServiceDisconnected,
+        ProcessControlServiceDisconnected, SetPidLoopSetpointError,
     };
 
     const EVENT_TIMEOUT: Duration = Duration::from_secs(1);
@@ -494,6 +549,52 @@ mod tests {
         assert_eq!(first.output.value(), 40.0,);
 
         assert_eq!(second.output.value(), 50.0,);
+    }
+
+    #[test]
+    fn changes_pid_loop_setpoint() {
+        let service = ProcessControlService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        let events = service.event_receiver();
+
+        handle.add_loop(definition("heater", 5, 4)).unwrap();
+
+        assert_eq!(handle.set_setpoint("heater", 90.0), Ok(true),);
+
+        handle.process(5, 1_000.0, 80.0).unwrap();
+
+        let event = events.recv_timeout(EVENT_TIMEOUT).unwrap();
+
+        let PidLoopEvent::Output(output) = event else {
+            panic!("expected PID output event");
+        };
+
+        assert_eq!(output.output.value(), 20.0,);
+    }
+
+    #[test]
+    fn reports_missing_loop_when_setting_setpoint() {
+        let service = ProcessControlService::<u64>::spawn().unwrap();
+
+        assert_eq!(service.handle().set_setpoint("missing", 90.0), Ok(false),);
+    }
+
+    #[test]
+    fn rejects_invalid_pid_setpoint() {
+        let service = ProcessControlService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        handle.add_loop(definition("heater", 1, 1)).unwrap();
+
+        assert_eq!(
+            handle.set_setpoint("heater", f64::NAN),
+            Err(SetPidLoopSetpointError::Definition(
+                PidLoopDefinitionError::NonFiniteSetpoint,
+            )),
+        );
     }
 
     #[test]

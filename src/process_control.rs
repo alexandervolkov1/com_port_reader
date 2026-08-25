@@ -19,5 +19,5 @@ pub use registry::{
 };
 pub use service::{
     AddPidLoopError, ProcessControlHandle, ProcessControlInput, ProcessControlService,
-    ProcessControlServiceDisconnected,
+    ProcessControlServiceDisconnected, SetPidLoopSetpointError,
 };

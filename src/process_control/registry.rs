@@ -7,7 +7,7 @@ use crate::{
 
 use super::{
     ControlOutputConversionError, ControlOutputParameter, ControlOutputTarget, PidControllerError,
-    PidLoop, PidLoopDefinition, PidOutput, PidOutputLimits,
+    PidLoop, PidLoopDefinition, PidLoopDefinitionError, PidOutput, PidOutputLimits,
 };
 
 pub struct PidLoopRegistry<SignalId> {
@@ -63,6 +63,24 @@ where
         self.loops
             .iter()
             .any(|control_loop| control_loop.definition().name() == name)
+    }
+
+    pub fn set_setpoint(
+        &mut self,
+        name: &str,
+        setpoint: f64,
+    ) -> Result<bool, PidLoopDefinitionError> {
+        let Some(control_loop) = self
+            .loops
+            .iter_mut()
+            .find(|control_loop| control_loop.definition().name() == name)
+        else {
+            return Ok(false);
+        };
+
+        control_loop.set_setpoint(setpoint)?;
+
+        Ok(true)
     }
 
     pub fn len(&self) -> usize {
@@ -406,7 +424,10 @@ mod tests {
                 VirtualInstrumentId, VirtualParameterDescriptor, VirtualParameterId,
             },
         },
-        process_control::{ControlOutputTarget, PidGains, PidLoopDefinition, PidOutputLimits},
+        process_control::{
+            ControlOutputTarget, PidGains, PidLoopDefinition, PidLoopDefinitionError,
+            PidOutputLimits,
+        },
     };
 
     use super::{PidLoopEvent, PidLoopExecutionError, PidLoopRegistry, PidLoopRegistryError};
@@ -473,6 +494,56 @@ mod tests {
         assert!(registry.contains("heater"),);
 
         assert!(!registry.is_empty(),);
+    }
+
+    #[test]
+    fn changes_registered_loop_setpoint() {
+        let mut registry = PidLoopRegistry::new();
+
+        registry
+            .add(definition("heater", 1, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        assert_eq!(registry.set_setpoint("heater", 90.0), Ok(true),);
+
+        let events = registry.process(1, 1_000.0, 80.0);
+
+        let [PidLoopEvent::Output(output)] = events.as_slice() else {
+            panic!("expected one PID output event");
+        };
+
+        assert_eq!(output.output.value(), 20.0,);
+    }
+
+    #[test]
+    fn reports_missing_loop_when_setting_setpoint() {
+        let mut registry = PidLoopRegistry::<u64>::new();
+
+        assert_eq!(registry.set_setpoint("missing", 90.0), Ok(false),);
+    }
+
+    #[test]
+    fn rejects_invalid_setpoint_without_changing_existing_value() {
+        let mut registry = PidLoopRegistry::new();
+
+        registry
+            .add(definition("heater", 1, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        assert_eq!(
+            registry.set_setpoint("heater", f64::NAN),
+            Err(PidLoopDefinitionError::NonFiniteSetpoint),
+        );
+
+        let events = registry.process(1, 1_000.0, 80.0);
+
+        let [PidLoopEvent::Output(output)] = events.as_slice() else {
+            panic!("expected one PID output event");
+        };
+
+        // Old setpoint = 100 remains active:
+        // (100 - 80) * 2 = 40.
+        assert_eq!(output.output.value(), 40.0,);
     }
 
     #[test]
