@@ -18,7 +18,7 @@ use crate::{
     lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle, LuaWorkerHandleError},
     process_recorder::{ProcessAction, ProcessActionOrigin, ProcessRecord, ProcessRecorder},
     serial_connection::SerialConnectionRegistry,
-    signal_processing::{SignalProcessingEvent, SignalProcessingService},
+    signal_processing::{ProcessingEvent, ProcessingService},
     user_command::UserCommand,
     worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
 };
@@ -46,7 +46,7 @@ pub struct ApplicationRuntime {
     process_recorder: ProcessRecorder,
     series: SeriesStore,
     acquisition: AcquisitionController,
-    signal_processing: SignalProcessingService<SeriesId>,
+    processing: ProcessingService<SeriesId>,
     _process_control_dispatcher: ProcessControlDispatcher,
     dispatcher: CommandDispatcher,
     device_emulator: DeviceEmulatorService,
@@ -87,9 +87,9 @@ impl ApplicationRuntime {
 
         let series = SeriesStore::new();
 
-        let signal_processing = SignalProcessingService::<SeriesId>::spawn()?;
+        let processing = ProcessingService::<SeriesId>::spawn()?;
 
-        let signal_processing_handle = signal_processing.handle();
+        let processing_handle = processing.handle();
 
         let emulator_port = definition
             .emulator()
@@ -129,7 +129,7 @@ impl ApplicationRuntime {
             event_sender.clone(),
             series.clone(),
             process_recorder.clone(),
-            signal_processing_handle.clone(),
+            processing_handle.clone(),
             worker_config,
         );
 
@@ -153,7 +153,7 @@ impl ApplicationRuntime {
                 event_sender.clone(),
                 series.clone(),
                 process_recorder.clone(),
-                signal_processing_handle.clone(),
+                processing_handle.clone(),
                 worker_config,
             );
 
@@ -166,7 +166,7 @@ impl ApplicationRuntime {
         let connection_router = workers.router();
 
         let process_control_dispatcher = ProcessControlDispatcher::spawn(
-            signal_processing.control_event_receiver(),
+            processing.control_event_receiver(),
             connection_router.clone(),
             serial_connections.clone(),
             process_recorder.clone(),
@@ -180,7 +180,7 @@ impl ApplicationRuntime {
             serial_connections,
             definition.clone(),
             series.clone(),
-            signal_processing_handle,
+            processing_handle,
             event_receiver,
             log.clone(),
         );
@@ -199,7 +199,7 @@ impl ApplicationRuntime {
             process_recorder,
             series,
             acquisition,
-            signal_processing,
+            processing,
             process_control_dispatcher,
             dispatcher,
             device_emulator,
@@ -279,7 +279,7 @@ impl ApplicationRuntime {
         process_recorder: ProcessRecorder,
         series: SeriesStore,
         acquisition: AcquisitionController,
-        signal_processing: SignalProcessingService<SeriesId>,
+        processing: ProcessingService<SeriesId>,
         process_control_dispatcher: ProcessControlDispatcher,
         dispatcher: CommandDispatcher,
         device_emulator: DeviceEmulatorService,
@@ -294,7 +294,7 @@ impl ApplicationRuntime {
             process_recorder,
             series,
             acquisition,
-            signal_processing,
+            processing,
             _process_control_dispatcher: process_control_dispatcher,
             dispatcher,
             device_emulator,
@@ -312,7 +312,7 @@ impl ApplicationRuntime {
 
         self.dispatcher.poll_events();
 
-        self.poll_signal_processing();
+        self.poll_processing();
 
         let commands = self.lua_command_receiver.try_iter().collect::<Vec<_>>();
 
@@ -558,14 +558,14 @@ impl ApplicationRuntime {
         self.lua_application_event_receiver.try_iter().collect()
     }
 
-    fn poll_signal_processing(&self) {
-        for event in self.signal_processing.take_events() {
+    fn poll_processing(&self) {
+        for event in self.processing.take_events() {
             match event {
-                SignalProcessingEvent::Samples(samples) => {
+                ProcessingEvent::Samples(samples) => {
                     self.store_processed_samples(samples);
                 }
 
-                SignalProcessingEvent::Error(error) => {
+                ProcessingEvent::Error(error) => {
                     self.log.error(error.to_string());
                 }
             }
@@ -844,8 +844,7 @@ mod tests {
 
     #[test]
     fn processing_service_runs_pid_for_raw_signal() {
-        let processing =
-            crate::signal_processing::SignalProcessingService::<SeriesId>::spawn().unwrap();
+        let processing = crate::signal_processing::ProcessingService::<SeriesId>::spawn().unwrap();
 
         let handle = processing.handle();
 

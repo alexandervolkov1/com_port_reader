@@ -155,7 +155,7 @@ mod tests {
         connection::ConnectionId,
         data::{NewSeries, Sample, SeriesId, SeriesMetadata, SeriesStore},
         process_recorder::ProcessRecorder,
-        signal_processing::{SignalProcessingHandle, SignalProcessingService},
+        signal_processing::{ProcessingHandle, ProcessingService},
         utils::current_time_f64,
         worker::{ConnectionWorkerEvent, Worker, WorkerConfig, WorkerHandle, WorkerServices},
     };
@@ -178,13 +178,13 @@ mod tests {
         value: f64,
         series: SeriesStore,
         event_sender: Sender<ConnectionWorkerEvent>,
-        signal_processing: SignalProcessingHandle<SeriesId>,
+        processing: ProcessingHandle<SeriesId>,
     ) -> Worker {
         let (command_sender, command_receiver) = bounded(32);
 
         let handle = WorkerHandle::new(connection_id, command_sender);
 
-        let services = WorkerServices::new(series, ProcessRecorder::default(), signal_processing);
+        let services = WorkerServices::new(series, ProcessRecorder::default(), processing);
 
         Worker::spawn(
             handle,
@@ -210,9 +210,9 @@ mod tests {
     fn polls_connections_on_independent_workers() {
         let series = SeriesStore::new();
 
-        let signal_processing = SignalProcessingService::<SeriesId>::spawn().unwrap();
+        let processing = ProcessingService::<SeriesId>::spawn().unwrap();
 
-        let signal_processing_handle = signal_processing.handle();
+        let processing_handle = processing.handle();
 
         let primary_series_id = series
             .add_series(
@@ -237,7 +237,7 @@ mod tests {
             10.0,
             series.clone(),
             event_sender.clone(),
-            signal_processing_handle.clone(),
+            processing_handle.clone(),
         );
 
         let secondary_worker = spawn_test_worker(
@@ -245,7 +245,7 @@ mod tests {
             20.0,
             series.clone(),
             event_sender,
-            signal_processing_handle,
+            processing_handle,
         );
 
         let mut workers = ConnectionWorkers::new(primary_worker);

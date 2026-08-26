@@ -9,7 +9,7 @@ use crate::{
     data::{NewFilteredSeries, NewSeries, SeriesId, SeriesStore},
     process_control::{ControlOutputTarget, NewPidLoop, PidLoopDefinition},
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
-    signal_processing::{SignalFilterDefinition, SignalProcessingHandle},
+    signal_processing::{ProcessingHandle, SignalFilterDefinition},
     user_command::UserCommand,
     worker::{
         ConnectionRouter, ConnectionWorkerEvent, WorkerEvent, WorkerHandle, WorkerHandleError,
@@ -25,7 +25,7 @@ pub(crate) struct CommandDispatcher {
     serial_connections: SerialConnectionRegistry,
     application_definition: ApplicationDefinition,
     series: SeriesStore,
-    signal_processing: SignalProcessingHandle<SeriesId>,
+    processing: ProcessingHandle<SeriesId>,
     event_receiver: Receiver<ConnectionWorkerEvent>,
     log: LogHandle,
 }
@@ -36,7 +36,7 @@ impl CommandDispatcher {
         serial_connections: SerialConnectionRegistry,
         application_definition: ApplicationDefinition,
         series: SeriesStore,
-        signal_processing: SignalProcessingHandle<SeriesId>,
+        processing: ProcessingHandle<SeriesId>,
         event_receiver: Receiver<ConnectionWorkerEvent>,
         log: LogHandle,
     ) -> Self {
@@ -45,7 +45,7 @@ impl CommandDispatcher {
             serial_connections,
             application_definition,
             series,
-            signal_processing,
+            processing,
             event_receiver,
             log,
         }
@@ -455,7 +455,7 @@ impl CommandDispatcher {
             }
         };
 
-        match self.signal_processing.add_pid_loop(definition) {
+        match self.processing.add_pid_loop(definition) {
             Ok(()) => {
                 self.log.info(format!(
                     "PID loop '{name}' \
@@ -475,7 +475,7 @@ impl CommandDispatcher {
     }
 
     fn set_pid_setpoint(&self, name: String, setpoint: f64) {
-        match self.signal_processing.set_pid_setpoint(&name, setpoint) {
+        match self.processing.set_pid_setpoint(&name, setpoint) {
             Ok(true) => {
                 self.log.info(format!(
                     "PID loop '{name}' \
@@ -554,10 +554,7 @@ impl CommandDispatcher {
             }
         };
 
-        if let Err(error) = self
-            .signal_processing
-            .add_filter(input_id, output_id, definition)
-        {
+        if let Err(error) = self.processing.add_filter(input_id, output_id, definition) {
             self.series.remove_series(output_id);
 
             self.log.error(format!(
@@ -580,7 +577,7 @@ impl CommandDispatcher {
             return;
         };
 
-        if let Err(error) = self.signal_processing.replace_filter(output_id, definition) {
+        if let Err(error) = self.processing.replace_filter(output_id, definition) {
             self.log.error(format!(
                 "Signal processing failed: \
                      cannot change filter for \
@@ -688,12 +685,12 @@ impl CommandDispatcher {
             return;
         };
 
-        let dependent_ids = match self.signal_processing.remove_from(id) {
+        let dependent_ids = match self.processing.remove_from(id) {
             Ok(dependent_ids) => dependent_ids,
 
             Err(error) => {
                 self.log.error(format!(
-                    "Signal processing failed: \
+                    "Processing failed: \
                              cannot remove \
                              signal-processing branch \
                              for series '{name}': \
@@ -731,7 +728,7 @@ impl CommandDispatcher {
     }
 
     fn clear_series(&self) {
-        match self.signal_processing.clear() {
+        match self.processing.clear() {
             Ok(()) => {
                 self.series.clear();
 
@@ -740,7 +737,7 @@ impl CommandDispatcher {
 
             Err(error) => {
                 self.log.error(format!(
-                    "Signal processing failed: \
+                    "Processing failed: \
                          cannot clear \
                          processing state: \
                          {error}",
@@ -756,7 +753,7 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
         WorkerEvent::AcquisitionStartFailed(_)
             | WorkerEvent::AcquisitionFailed(_)
             | WorkerEvent::AcquisitionStopFailed(_)
-            | WorkerEvent::SignalProcessingFailed(_)
+            | WorkerEvent::ProcessingFailed(_)
             | WorkerEvent::SerialTextCommandFailed { .. }
             | WorkerEvent::InstrumentReadFailed { .. }
             | WorkerEvent::InstrumentWriteFailed { .. }

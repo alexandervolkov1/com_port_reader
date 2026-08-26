@@ -20,7 +20,7 @@ use crate::{
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     process_recorder::ProcessRecorder,
     serial_connection::SerialConnectionError,
-    signal_processing::{SignalProcessingHandle, SignalProcessingInput},
+    signal_processing::{ProcessingHandle, ProcessingInput},
 };
 
 mod command;
@@ -83,19 +83,19 @@ struct SeriesSchedule {
 pub(crate) struct WorkerServices {
     series: SeriesStore,
     process_recorder: ProcessRecorder,
-    signal_processing: SignalProcessingHandle<SeriesId>,
+    processing: ProcessingHandle<SeriesId>,
 }
 
 impl WorkerServices {
     pub(crate) fn new(
         series: SeriesStore,
         process_recorder: ProcessRecorder,
-        signal_processing: SignalProcessingHandle<SeriesId>,
+        processing: ProcessingHandle<SeriesId>,
     ) -> Self {
         Self {
             series,
             process_recorder,
-            signal_processing,
+            processing,
         }
     }
 }
@@ -118,7 +118,7 @@ impl Worker {
         let WorkerServices {
             series,
             process_recorder,
-            signal_processing,
+            processing,
         } = services;
 
         let connection_id = commands.connection_id();
@@ -144,7 +144,7 @@ impl Worker {
 
             let mut pending_command: Option<WorkerCommand> = None;
 
-            let mut signal_processing_available = true;
+            let mut processing_available = true;
 
             loop {
                 let now = Instant::now();
@@ -193,11 +193,11 @@ impl Worker {
                                 &series_metadata,
                             );
 
-                            if signal_processing_available {
+                            if processing_available {
                                 let processing_inputs = sample_batch
                                     .iter()
                                     .map(|series_sample| {
-                                        SignalProcessingInput::new(
+                                        ProcessingInput::new(
                                             series_sample.series_id,
                                             series_sample.sample.timestamp,
                                             series_sample.sample.value,
@@ -205,14 +205,11 @@ impl Worker {
                                     })
                                     .collect();
 
-                                if let Err(error) =
-                                    signal_processing.process_batch(processing_inputs)
-                                {
-                                    signal_processing_available = false;
+                                if let Err(error) = processing.process_batch(processing_inputs) {
+                                    processing_available = false;
 
-                                    let _ = event_sender.send(WorkerEvent::SignalProcessingFailed(
-                                        error.to_string(),
-                                    ));
+                                    let _ = event_sender
+                                        .send(WorkerEvent::ProcessingFailed(error.to_string()));
                                 }
                             }
 

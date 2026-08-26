@@ -42,7 +42,7 @@ pub enum WorkerEvent {
     AcquisitionStartFailed(AcquisitionError),
     AcquisitionFailed(AcquisitionError),
     AcquisitionStopFailed(AcquisitionError),
-    SignalProcessingFailed(String),
+    ProcessingFailed(String),
 
     SerialTextCommandSucceeded {
         port_name: String,
@@ -111,8 +111,8 @@ impl std::fmt::Display for WorkerEvent {
                 write!(formatter, "Failed to stop acquisition: {error}")
             }
 
-            Self::SignalProcessingFailed(error) => {
-                write!(formatter, "Signal processing failed: {error}",)
+            Self::ProcessingFailed(error) => {
+                write!(formatter, "Processing failed: {error}",)
             }
 
             Self::SerialTextCommandSucceeded {

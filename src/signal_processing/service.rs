@@ -19,13 +19,13 @@ use super::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SignalProcessingInput<SignalId> {
+pub struct ProcessingInput<SignalId> {
     pub signal_id: SignalId,
     pub timestamp: f64,
     pub value: f64,
 }
 
-impl<SignalId> SignalProcessingInput<SignalId> {
+impl<SignalId> ProcessingInput<SignalId> {
     pub const fn new(signal_id: SignalId, timestamp: f64, value: f64) -> Self {
         Self {
             signal_id,
@@ -36,12 +36,12 @@ impl<SignalId> SignalProcessingInput<SignalId> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum SignalProcessingEvent<SignalId> {
+pub enum ProcessingEvent<SignalId> {
     Samples(Vec<ProcessedSignal<SignalId>>),
     Error(SignalProcessingError<SignalId>),
 }
 
-enum SignalProcessingCommand<SignalId> {
+enum ProcessingCommand<SignalId> {
     AddFilter {
         input: SignalId,
         output: SignalId,
@@ -66,7 +66,7 @@ enum SignalProcessingCommand<SignalId> {
         response_sender: Sender<Result<bool, PidLoopDefinitionError>>,
     },
 
-    Process(Vec<SignalProcessingInput<SignalId>>),
+    Process(Vec<ProcessingInput<SignalId>>),
 
     ResetFrom {
         signal_id: SignalId,
@@ -82,11 +82,11 @@ enum SignalProcessingCommand<SignalId> {
     },
 }
 
-pub struct SignalProcessingHandle<SignalId> {
-    command_sender: Sender<SignalProcessingCommand<SignalId>>,
+pub struct ProcessingHandle<SignalId> {
+    command_sender: Sender<ProcessingCommand<SignalId>>,
 }
 
-impl<SignalId> Clone for SignalProcessingHandle<SignalId> {
+impl<SignalId> Clone for ProcessingHandle<SignalId> {
     fn clone(&self) -> Self {
         Self {
             command_sender: self.command_sender.clone(),
@@ -94,7 +94,7 @@ impl<SignalId> Clone for SignalProcessingHandle<SignalId> {
     }
 }
 
-impl<SignalId> SignalProcessingHandle<SignalId> {
+impl<SignalId> ProcessingHandle<SignalId> {
     pub fn add_filter(
         &self,
         input: SignalId,
@@ -104,7 +104,7 @@ impl<SignalId> SignalProcessingHandle<SignalId> {
         let (response_sender, response_receiver) = bounded(1);
 
         self.command_sender
-            .send(SignalProcessingCommand::AddFilter {
+            .send(ProcessingCommand::AddFilter {
                 input,
                 output,
                 definition,
@@ -127,7 +127,7 @@ impl<SignalId> SignalProcessingHandle<SignalId> {
         let (response_sender, response_receiver) = bounded(1);
 
         self.command_sender
-            .send(SignalProcessingCommand::ReplaceFilter {
+            .send(ProcessingCommand::ReplaceFilter {
                 output,
                 definition,
                 response_sender,
@@ -148,7 +148,7 @@ impl<SignalId> SignalProcessingHandle<SignalId> {
         let (response_sender, response_receiver) = bounded(1);
 
         self.command_sender
-            .send(SignalProcessingCommand::AddPidLoop {
+            .send(ProcessingCommand::AddPidLoop {
                 definition,
                 response_sender,
             })
@@ -169,7 +169,7 @@ impl<SignalId> SignalProcessingHandle<SignalId> {
         let (response_sender, response_receiver) = bounded(1);
 
         self.command_sender
-            .send(SignalProcessingCommand::SetPidSetpoint {
+            .send(ProcessingCommand::SetPidSetpoint {
                 name: name.into(),
                 setpoint,
                 response_sender,
@@ -188,67 +188,62 @@ impl<SignalId> SignalProcessingHandle<SignalId> {
         signal_id: SignalId,
         timestamp: f64,
         value: f64,
-    ) -> Result<(), SignalProcessingServiceDisconnected> {
-        self.process_batch(vec![SignalProcessingInput::new(
-            signal_id, timestamp, value,
-        )])
+    ) -> Result<(), ProcessingServiceDisconnected> {
+        self.process_batch(vec![ProcessingInput::new(signal_id, timestamp, value)])
     }
 
     pub fn process_batch(
         &self,
-        inputs: Vec<SignalProcessingInput<SignalId>>,
-    ) -> Result<(), SignalProcessingServiceDisconnected> {
+        inputs: Vec<ProcessingInput<SignalId>>,
+    ) -> Result<(), ProcessingServiceDisconnected> {
         if inputs.is_empty() {
             return Ok(());
         }
 
         self.command_sender
-            .send(SignalProcessingCommand::Process(inputs))
-            .map_err(|_| SignalProcessingServiceDisconnected)
+            .send(ProcessingCommand::Process(inputs))
+            .map_err(|_| ProcessingServiceDisconnected)
     }
 
-    pub fn reset_from(
-        &self,
-        signal_id: SignalId,
-    ) -> Result<(), SignalProcessingServiceDisconnected> {
+    pub fn reset_from(&self, signal_id: SignalId) -> Result<(), ProcessingServiceDisconnected> {
         self.command_sender
-            .send(SignalProcessingCommand::ResetFrom { signal_id })
-            .map_err(|_| SignalProcessingServiceDisconnected)
+            .send(ProcessingCommand::ResetFrom { signal_id })
+            .map_err(|_| ProcessingServiceDisconnected)
     }
 
-    pub fn clear(&self) -> Result<(), SignalProcessingServiceDisconnected> {
+    pub fn clear(&self) -> Result<(), ProcessingServiceDisconnected> {
         self.command_sender
-            .send(SignalProcessingCommand::Clear)
-            .map_err(|_| SignalProcessingServiceDisconnected)
+            .send(ProcessingCommand::Clear)
+            .map_err(|_| ProcessingServiceDisconnected)
     }
 
     pub fn remove_from(
         &self,
         signal_id: SignalId,
-    ) -> Result<Vec<SignalId>, SignalProcessingServiceDisconnected> {
+    ) -> Result<Vec<SignalId>, ProcessingServiceDisconnected> {
         let (response_sender, response_receiver) = bounded(1);
 
         self.command_sender
-            .send(SignalProcessingCommand::RemoveFrom {
+            .send(ProcessingCommand::RemoveFrom {
                 signal_id,
                 response_sender,
             })
-            .map_err(|_| SignalProcessingServiceDisconnected)?;
+            .map_err(|_| ProcessingServiceDisconnected)?;
 
         response_receiver
             .recv()
-            .map_err(|_| SignalProcessingServiceDisconnected)
+            .map_err(|_| ProcessingServiceDisconnected)
     }
 }
 
-pub struct SignalProcessingService<SignalId> {
-    handle: SignalProcessingHandle<SignalId>,
-    event_receiver: Receiver<SignalProcessingEvent<SignalId>>,
+pub struct ProcessingService<SignalId> {
+    handle: ProcessingHandle<SignalId>,
+    event_receiver: Receiver<ProcessingEvent<SignalId>>,
     control_event_receiver: Receiver<PidLoopEvent<SignalId>>,
     thread: Option<JoinHandle<()>>,
 }
 
-impl<SignalId> SignalProcessingService<SignalId>
+impl<SignalId> ProcessingService<SignalId>
 where
     SignalId: Copy + Eq + Hash + Send + 'static,
 {
@@ -260,13 +255,13 @@ where
         let (control_event_sender, control_event_receiver) = unbounded();
 
         let thread = thread::Builder::new()
-            .name("signal-processing".to_owned())
+            .name("processing".to_owned())
             .spawn(move || {
-                run_signal_processing(command_receiver, event_sender, control_event_sender);
+                run_processing(command_receiver, event_sender, control_event_sender);
             })?;
 
         Ok(Self {
-            handle: SignalProcessingHandle { command_sender },
+            handle: ProcessingHandle { command_sender },
 
             event_receiver,
 
@@ -277,12 +272,12 @@ where
     }
 }
 
-impl<SignalId> SignalProcessingService<SignalId> {
-    pub fn handle(&self) -> SignalProcessingHandle<SignalId> {
+impl<SignalId> ProcessingService<SignalId> {
+    pub fn handle(&self) -> ProcessingHandle<SignalId> {
         self.handle.clone()
     }
 
-    pub fn event_receiver(&self) -> Receiver<SignalProcessingEvent<SignalId>> {
+    pub fn event_receiver(&self) -> Receiver<ProcessingEvent<SignalId>> {
         self.event_receiver.clone()
     }
 
@@ -290,17 +285,14 @@ impl<SignalId> SignalProcessingService<SignalId> {
         self.control_event_receiver.clone()
     }
 
-    pub fn take_events(&self) -> Vec<SignalProcessingEvent<SignalId>> {
+    pub fn take_events(&self) -> Vec<ProcessingEvent<SignalId>> {
         self.event_receiver.try_iter().collect()
     }
 }
 
-impl<SignalId> Drop for SignalProcessingService<SignalId> {
+impl<SignalId> Drop for ProcessingService<SignalId> {
     fn drop(&mut self) {
-        let _ = self
-            .handle
-            .command_sender
-            .send(SignalProcessingCommand::Shutdown);
+        let _ = self.handle.command_sender.send(ProcessingCommand::Shutdown);
 
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -308,9 +300,9 @@ impl<SignalId> Drop for SignalProcessingService<SignalId> {
     }
 }
 
-fn run_signal_processing<SignalId>(
-    command_receiver: Receiver<SignalProcessingCommand<SignalId>>,
-    event_sender: Sender<SignalProcessingEvent<SignalId>>,
+fn run_processing<SignalId>(
+    command_receiver: Receiver<ProcessingCommand<SignalId>>,
+    event_sender: Sender<ProcessingEvent<SignalId>>,
     control_event_sender: Sender<PidLoopEvent<SignalId>>,
 ) where
     SignalId: Copy + Eq + Hash,
@@ -321,7 +313,7 @@ fn run_signal_processing<SignalId>(
 
     while let Ok(command) = command_receiver.recv() {
         match command {
-            SignalProcessingCommand::AddFilter {
+            ProcessingCommand::AddFilter {
                 input,
                 output,
                 definition,
@@ -332,7 +324,7 @@ fn run_signal_processing<SignalId>(
                 let _ = response_sender.send(result);
             }
 
-            SignalProcessingCommand::ReplaceFilter {
+            ProcessingCommand::ReplaceFilter {
                 output,
                 definition,
                 response_sender,
@@ -342,7 +334,7 @@ fn run_signal_processing<SignalId>(
                 let _ = response_sender.send(result);
             }
 
-            SignalProcessingCommand::AddPidLoop {
+            ProcessingCommand::AddPidLoop {
                 definition,
                 response_sender,
             } => {
@@ -351,7 +343,7 @@ fn run_signal_processing<SignalId>(
                 let _ = response_sender.send(result);
             }
 
-            SignalProcessingCommand::SetPidSetpoint {
+            ProcessingCommand::SetPidSetpoint {
                 name,
                 setpoint,
                 response_sender,
@@ -361,7 +353,7 @@ fn run_signal_processing<SignalId>(
                 let _ = response_sender.send(result);
             }
 
-            SignalProcessingCommand::Process(inputs) => {
+            ProcessingCommand::Process(inputs) => {
                 process_inputs(
                     &mut graph,
                     &mut registry,
@@ -371,13 +363,13 @@ fn run_signal_processing<SignalId>(
                 );
             }
 
-            SignalProcessingCommand::ResetFrom { signal_id } => {
+            ProcessingCommand::ResetFrom { signal_id } => {
                 graph.reset_from(signal_id);
 
                 registry.reset_from(signal_id);
             }
 
-            SignalProcessingCommand::RemoveFrom {
+            ProcessingCommand::RemoveFrom {
                 signal_id,
                 response_sender,
             } => {
@@ -396,12 +388,12 @@ fn run_signal_processing<SignalId>(
                 let _ = response_sender.send(removed);
             }
 
-            SignalProcessingCommand::Clear => {
+            ProcessingCommand::Clear => {
                 registry.clear();
                 graph.clear();
             }
 
-            SignalProcessingCommand::Shutdown => {
+            ProcessingCommand::Shutdown => {
                 break;
             }
         }
@@ -413,9 +405,9 @@ fn process_inputs<SignalId>(
 
     registry: &mut PidLoopRegistry<SignalId>,
 
-    inputs: Vec<SignalProcessingInput<SignalId>>,
+    inputs: Vec<ProcessingInput<SignalId>>,
 
-    event_sender: &Sender<SignalProcessingEvent<SignalId>>,
+    event_sender: &Sender<ProcessingEvent<SignalId>>,
 
     control_event_sender: &Sender<PidLoopEvent<SignalId>>,
 ) where
@@ -442,13 +434,13 @@ fn process_inputs<SignalId>(
             }
 
             Err(error) => {
-                let _ = event_sender.send(SignalProcessingEvent::Error(error));
+                let _ = event_sender.send(ProcessingEvent::Error(error));
             }
         }
     }
 
     if !output_samples.is_empty() {
-        let _ = event_sender.send(SignalProcessingEvent::Samples(output_samples));
+        let _ = event_sender.send(ProcessingEvent::Samples(output_samples));
     }
 }
 
@@ -477,7 +469,7 @@ where
         match self {
             Self::Definition(error) => error.fmt(formatter),
 
-            Self::Disconnected => formatter.write_str("Signal processing service is disconnected"),
+            Self::Disconnected => formatter.write_str("Processing service is disconnected"),
         }
     }
 }
@@ -507,7 +499,7 @@ impl fmt::Display for AddPidLoopError {
             Self::Definition(error) => error.fmt(formatter),
 
             Self::Disconnected => formatter.write_str(
-                "Signal processing \
+                "Processing \
                      service is disconnected",
             ),
         }
@@ -537,7 +529,7 @@ impl fmt::Display for SetPidLoopSetpointError {
             Self::Definition(error) => error.fmt(formatter),
 
             Self::Disconnected => formatter.write_str(
-                "Signal processing \
+                "Processing \
                      service is disconnected",
             ),
         }
@@ -590,24 +582,23 @@ where
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SignalProcessingServiceDisconnected;
+pub struct ProcessingServiceDisconnected;
 
-impl fmt::Display for SignalProcessingServiceDisconnected {
+impl fmt::Display for ProcessingServiceDisconnected {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("Signal processing service is disconnected")
+        formatter.write_str("Processing service is disconnected")
     }
 }
 
-impl Error for SignalProcessingServiceDisconnected {}
+impl Error for ProcessingServiceDisconnected {}
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use super::{
-        AddPidLoopError, AddSignalFilterError, ReplaceSignalFilterError, SetPidLoopSetpointError,
-        SignalProcessingEvent, SignalProcessingInput, SignalProcessingService,
-        SignalProcessingServiceDisconnected,
+        AddPidLoopError, AddSignalFilterError, ProcessingEvent, ProcessingInput, ProcessingService,
+        ProcessingServiceDisconnected, ReplaceSignalFilterError, SetPidLoopSetpointError,
     };
 
     use crate::{
@@ -681,7 +672,7 @@ mod tests {
 
     #[test]
     fn processes_signal_in_background_thread() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -695,7 +686,7 @@ mod tests {
 
         assert_eq!(
             events.recv_timeout(EVENT_TIMEOUT),
-            Ok(SignalProcessingEvent::Samples(vec![ProcessedSignal {
+            Ok(ProcessingEvent::Samples(vec![ProcessedSignal {
                 signal_id: 2,
                 timestamp: 0.0,
                 value: 10.0,
@@ -706,7 +697,7 @@ mod tests {
 
         assert_eq!(
             events.recv_timeout(EVENT_TIMEOUT),
-            Ok(SignalProcessingEvent::Samples(vec![ProcessedSignal {
+            Ok(ProcessingEvent::Samples(vec![ProcessedSignal {
                 signal_id: 2,
                 timestamp: 1.0,
                 value: 15.0,
@@ -716,7 +707,7 @@ mod tests {
 
     #[test]
     fn processes_input_batch() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -728,14 +719,14 @@ mod tests {
 
         handle
             .process_batch(vec![
-                SignalProcessingInput::new(1, 0.0, 10.0),
-                SignalProcessingInput::new(1, 1.0, 20.0),
+                ProcessingInput::new(1, 0.0, 10.0),
+                ProcessingInput::new(1, 1.0, 20.0),
             ])
             .unwrap();
 
         assert_eq!(
             events.recv_timeout(EVENT_TIMEOUT),
-            Ok(SignalProcessingEvent::Samples(vec![
+            Ok(ProcessingEvent::Samples(vec![
                 ProcessedSignal {
                     signal_id: 2,
                     timestamp: 0.0,
@@ -752,7 +743,7 @@ mod tests {
 
     #[test]
     fn reports_filter_error_as_event() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -770,7 +761,7 @@ mod tests {
 
         let event = events.recv_timeout(EVENT_TIMEOUT).unwrap();
 
-        let SignalProcessingEvent::Error(error) = event else {
+        let ProcessingEvent::Error(error) = event else {
             panic!("expected processing error event");
         };
 
@@ -787,7 +778,7 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_filter_output() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -805,7 +796,7 @@ mod tests {
 
     #[test]
     fn reset_from_resets_filter_and_pid_state() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -827,7 +818,7 @@ mod tests {
 
         assert_eq!(
             events.recv_timeout(EVENT_TIMEOUT),
-            Ok(SignalProcessingEvent::Samples(vec![ProcessedSignal {
+            Ok(ProcessingEvent::Samples(vec![ProcessedSignal {
                 signal_id: 2,
                 timestamp: 10.0,
                 value: 80.0,
@@ -840,7 +831,7 @@ mod tests {
 
         assert_eq!(
             events.recv_timeout(EVENT_TIMEOUT),
-            Ok(SignalProcessingEvent::Samples(vec![ProcessedSignal {
+            Ok(ProcessingEvent::Samples(vec![ProcessedSignal {
                 signal_id: 2,
                 timestamp: 11.0,
                 value: 70.0,
@@ -861,7 +852,7 @@ mod tests {
 
         assert_eq!(
             events.recv_timeout(EVENT_TIMEOUT),
-            Ok(SignalProcessingEvent::Samples(vec![ProcessedSignal {
+            Ok(ProcessingEvent::Samples(vec![ProcessedSignal {
                 signal_id: 2,
                 timestamp: 0.0,
                 value: 90.0,
@@ -871,7 +862,7 @@ mod tests {
 
     #[test]
     fn clear_removes_registered_processing_state() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -896,7 +887,7 @@ mod tests {
 
     #[test]
     fn replaces_filter_in_background_service() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -922,7 +913,7 @@ mod tests {
 
         assert_eq!(
             events.recv_timeout(EVENT_TIMEOUT),
-            Ok(SignalProcessingEvent::Samples(vec![ProcessedSignal {
+            Ok(ProcessingEvent::Samples(vec![ProcessedSignal {
                 signal_id: 2,
                 timestamp: 2.0,
                 value: 100.0,
@@ -932,7 +923,7 @@ mod tests {
 
     #[test]
     fn rejects_replacing_unknown_service_filter() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -946,7 +937,7 @@ mod tests {
 
     #[test]
     fn runs_pid_for_raw_measurement() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -969,7 +960,7 @@ mod tests {
 
     #[test]
     fn runs_pid_for_filtered_measurement() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -1010,7 +1001,7 @@ mod tests {
 
     #[test]
     fn supports_raw_and_filtered_pid_loops_together() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -1049,7 +1040,7 @@ mod tests {
 
     #[test]
     fn changes_pid_setpoint() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -1070,7 +1061,7 @@ mod tests {
 
     #[test]
     fn reports_missing_pid_when_setting_setpoint() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         assert_eq!(
             service.handle().set_pid_setpoint("missing", 90.0,),
@@ -1080,7 +1071,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_pid_setpoint() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -1094,7 +1085,7 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_pid_name() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -1108,7 +1099,7 @@ mod tests {
 
     #[test]
     fn remove_from_removes_raw_and_dependent_pid_loops() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -1143,7 +1134,7 @@ mod tests {
 
     #[test]
     fn remove_from_does_not_remove_unrelated_pid_loop() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
 
@@ -1178,7 +1169,7 @@ mod tests {
 
     #[test]
     fn accepts_empty_batch() {
-        let service = SignalProcessingService::<u64>::spawn().unwrap();
+        let service = ProcessingService::<u64>::spawn().unwrap();
 
         assert_eq!(service.handle().process_batch(Vec::new()), Ok(()),);
     }
@@ -1186,14 +1177,14 @@ mod tests {
     #[test]
     fn cloned_handle_reports_stopped_service() {
         let handle = {
-            let service = SignalProcessingService::<u64>::spawn().unwrap();
+            let service = ProcessingService::<u64>::spawn().unwrap();
 
             service.handle()
         };
 
         assert_eq!(
             handle.process(1, 1_000.0, 80.0,),
-            Err(SignalProcessingServiceDisconnected),
+            Err(ProcessingServiceDisconnected),
         );
 
         assert_eq!(
@@ -1206,22 +1197,22 @@ mod tests {
     fn describes_service_errors() {
         assert_eq!(
             AddSignalFilterError::<u64>::Disconnected.to_string(),
-            "Signal processing service is disconnected",
+            "Processing service is disconnected",
         );
 
         assert_eq!(
             AddPidLoopError::Disconnected.to_string(),
-            "Signal processing service is disconnected",
+            "Processing service is disconnected",
         );
 
         assert_eq!(
             SetPidLoopSetpointError::Disconnected.to_string(),
-            "Signal processing service is disconnected",
+            "Processing service is disconnected",
         );
 
         assert_eq!(
-            SignalProcessingServiceDisconnected.to_string(),
-            "Signal processing service is disconnected",
+            ProcessingServiceDisconnected.to_string(),
+            "Processing service is disconnected",
         );
     }
 }

@@ -5,7 +5,7 @@ use crate::{
     data::{SeriesId, SeriesStore},
     process_recorder::ProcessRecorder,
     serial_connection::SerialConfigStore,
-    signal_processing::SignalProcessingHandle,
+    signal_processing::ProcessingHandle,
 };
 
 use super::{ConnectionWorkerEvent, Worker, WorkerConfig, WorkerHandle, WorkerServices};
@@ -17,7 +17,7 @@ pub fn spawn_serial_connection_worker(
     event_sender: Sender<ConnectionWorkerEvent>,
     series: SeriesStore,
     process_recorder: ProcessRecorder,
-    signal_processing: SignalProcessingHandle<SeriesId>,
+    processing: ProcessingHandle<SeriesId>,
     worker_config: WorkerConfig,
 ) -> Worker {
     let connection_id = config_store.connection_id();
@@ -28,7 +28,7 @@ pub fn spawn_serial_connection_worker(
 
     let source = CombinedSource::new(vec![Box::new(SerialCommandSource::new(config_store))]);
 
-    let services = WorkerServices::new(series, process_recorder, signal_processing);
+    let services = WorkerServices::new(series, process_recorder, processing);
 
     Worker::spawn(
         handle,
