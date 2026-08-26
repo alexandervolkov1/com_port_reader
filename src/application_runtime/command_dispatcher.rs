@@ -7,7 +7,7 @@ use crate::{
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
     data::{NewFilteredSeries, NewSeries, SeriesId, SeriesStore},
-    process_control::{ControlOutputTarget, NewPidLoop, PidLoopDefinition, ProcessControlHandle},
+    process_control::{ControlOutputTarget, NewPidLoop, PidLoopDefinition},
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
     signal_processing::{SignalFilterDefinition, SignalProcessingHandle},
     user_command::UserCommand,
@@ -20,29 +20,12 @@ use super::{
     acquisition_controller::AcquisitionController, device_emulator_service::DeviceEmulatorService,
 };
 
-pub(crate) struct ProcessingHandles {
-    signal_processing: SignalProcessingHandle<SeriesId>,
-    process_control: ProcessControlHandle<SeriesId>,
-}
-
-impl ProcessingHandles {
-    pub(crate) fn new(
-        signal_processing: SignalProcessingHandle<SeriesId>,
-        process_control: ProcessControlHandle<SeriesId>,
-    ) -> Self {
-        Self {
-            signal_processing,
-            process_control,
-        }
-    }
-}
-
 pub(crate) struct CommandDispatcher {
     connections: ConnectionRouter,
     serial_connections: SerialConnectionRegistry,
     application_definition: ApplicationDefinition,
     series: SeriesStore,
-    processing: ProcessingHandles,
+    signal_processing: SignalProcessingHandle<SeriesId>,
     event_receiver: Receiver<ConnectionWorkerEvent>,
     log: LogHandle,
 }
@@ -53,7 +36,7 @@ impl CommandDispatcher {
         serial_connections: SerialConnectionRegistry,
         application_definition: ApplicationDefinition,
         series: SeriesStore,
-        processing: ProcessingHandles,
+        signal_processing: SignalProcessingHandle<SeriesId>,
         event_receiver: Receiver<ConnectionWorkerEvent>,
         log: LogHandle,
     ) -> Self {
@@ -62,7 +45,7 @@ impl CommandDispatcher {
             serial_connections,
             application_definition,
             series,
-            processing,
+            signal_processing,
             event_receiver,
             log,
         }
@@ -472,7 +455,7 @@ impl CommandDispatcher {
             }
         };
 
-        match self.processing.process_control.add_loop(definition) {
+        match self.signal_processing.add_pid_loop(definition) {
             Ok(()) => {
                 self.log.info(format!(
                     "PID loop '{name}' \
@@ -492,11 +475,7 @@ impl CommandDispatcher {
     }
 
     fn set_pid_setpoint(&self, name: String, setpoint: f64) {
-        match self
-            .processing
-            .process_control
-            .set_setpoint(&name, setpoint)
-        {
+        match self.signal_processing.set_pid_setpoint(&name, setpoint) {
             Ok(true) => {
                 self.log.info(format!(
                     "PID loop '{name}' \
@@ -576,7 +555,6 @@ impl CommandDispatcher {
         };
 
         if let Err(error) = self
-            .processing
             .signal_processing
             .add_filter(input_id, output_id, definition)
         {
@@ -602,11 +580,7 @@ impl CommandDispatcher {
             return;
         };
 
-        if let Err(error) = self
-            .processing
-            .signal_processing
-            .replace_filter(output_id, definition)
-        {
+        if let Err(error) = self.signal_processing.replace_filter(output_id, definition) {
             self.log.error(format!(
                 "Signal processing failed: \
                      cannot change filter for \
@@ -714,7 +688,7 @@ impl CommandDispatcher {
             return;
         };
 
-        let dependent_ids = match self.processing.signal_processing.remove_from(id) {
+        let dependent_ids = match self.signal_processing.remove_from(id) {
             Ok(dependent_ids) => dependent_ids,
 
             Err(error) => {
@@ -729,38 +703,6 @@ impl CommandDispatcher {
                 return;
             }
         };
-
-        let mut control_cleanup_failed = false;
-
-        if let Err(error) = self.processing.process_control.remove_from(id) {
-            self.log.error(format!(
-                "Failed to remove control \
-                     loops for series '{name}' \
-                     ({id}): {error}",
-            ));
-
-            control_cleanup_failed = true;
-        }
-
-        if !control_cleanup_failed {
-            for dependent_id in dependent_ids
-                .iter()
-                .copied()
-                .filter(|dependent_id| *dependent_id != id)
-            {
-                if let Err(error) = self.processing.process_control.remove_from(dependent_id) {
-                    self.log.error(format!(
-                        "Failed to remove \
-                             control loops for \
-                             dependent series \
-                             {dependent_id}: \
-                             {error}",
-                    ));
-
-                    break;
-                }
-            }
-        }
 
         for dependent_id in dependent_ids
             .iter()
@@ -789,14 +731,7 @@ impl CommandDispatcher {
     }
 
     fn clear_series(&self) {
-        if let Err(error) = self.processing.process_control.clear() {
-            self.log.error(format!(
-                "Failed to clear control \
-                     loops: {error}",
-            ));
-        }
-
-        match self.processing.signal_processing.clear() {
+        match self.signal_processing.clear() {
             Ok(()) => {
                 self.series.clear();
 
@@ -807,7 +742,7 @@ impl CommandDispatcher {
                 self.log.error(format!(
                     "Signal processing failed: \
                          cannot clear \
-                         signal-processing graph: \
+                         processing state: \
                          {error}",
                 ));
             }

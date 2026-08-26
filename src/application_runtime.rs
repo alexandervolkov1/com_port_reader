@@ -16,7 +16,6 @@ use crate::{
     lua_application_definition::apply_lua_definition,
     lua_application_script::{LuaApplicationEvent, LuaControlInvocation},
     lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle, LuaWorkerHandleError},
-    process_control::ProcessControlService,
     process_recorder::{ProcessAction, ProcessActionOrigin, ProcessRecord, ProcessRecorder},
     serial_connection::SerialConnectionRegistry,
     signal_processing::{SignalProcessingEvent, SignalProcessingService},
@@ -30,7 +29,7 @@ mod device_emulator_service;
 mod process_control_dispatcher;
 
 pub(crate) use acquisition_controller::AcquisitionController;
-pub(crate) use command_dispatcher::{CommandDispatcher, ProcessingHandles};
+pub(crate) use command_dispatcher::CommandDispatcher;
 pub(crate) use device_emulator_service::DeviceEmulatorService;
 use process_control_dispatcher::ProcessControlDispatcher;
 
@@ -49,7 +48,6 @@ pub struct ApplicationRuntime {
     acquisition: AcquisitionController,
     signal_processing: SignalProcessingService<SeriesId>,
     _process_control_dispatcher: ProcessControlDispatcher,
-    _process_control: ProcessControlService<SeriesId>,
     dispatcher: CommandDispatcher,
     device_emulator: DeviceEmulatorService,
     lua_command_receiver: Receiver<UserCommand>,
@@ -89,11 +87,9 @@ impl ApplicationRuntime {
 
         let series = SeriesStore::new();
 
-        let (signal_processing, process_control) = Self::spawn_processing_services()?;
+        let signal_processing = SignalProcessingService::<SeriesId>::spawn()?;
 
         let signal_processing_handle = signal_processing.handle();
-
-        let process_control_handle = process_control.handle();
 
         let emulator_port = definition
             .emulator()
@@ -170,7 +166,7 @@ impl ApplicationRuntime {
         let connection_router = workers.router();
 
         let process_control_dispatcher = ProcessControlDispatcher::spawn(
-            process_control.event_receiver(),
+            signal_processing.control_event_receiver(),
             connection_router.clone(),
             serial_connections.clone(),
             process_recorder.clone(),
@@ -179,14 +175,12 @@ impl ApplicationRuntime {
 
         let acquisition = AcquisitionController::new(workers, log.clone());
 
-        let processing = ProcessingHandles::new(signal_processing_handle, process_control_handle);
-
         let dispatcher = CommandDispatcher::new(
             connection_router,
             serial_connections,
             definition.clone(),
             series.clone(),
-            processing,
+            signal_processing_handle,
             event_receiver,
             log.clone(),
         );
@@ -207,7 +201,6 @@ impl ApplicationRuntime {
             acquisition,
             signal_processing,
             process_control_dispatcher,
-            process_control,
             dispatcher,
             device_emulator,
             lua_command_receiver,
@@ -215,18 +208,6 @@ impl ApplicationRuntime {
         );
 
         Ok((runtime, lua_event_receiver))
-    }
-
-    fn spawn_processing_services() -> std::io::Result<(
-        SignalProcessingService<SeriesId>,
-        ProcessControlService<SeriesId>,
-    )> {
-        let process_control = ProcessControlService::<SeriesId>::spawn()?;
-
-        let signal_processing =
-            SignalProcessingService::spawn_with_process_control(process_control.handle())?;
-
-        Ok((signal_processing, process_control))
     }
 
     fn build_initialized(
@@ -300,7 +281,6 @@ impl ApplicationRuntime {
         acquisition: AcquisitionController,
         signal_processing: SignalProcessingService<SeriesId>,
         process_control_dispatcher: ProcessControlDispatcher,
-        process_control: ProcessControlService<SeriesId>,
         dispatcher: CommandDispatcher,
         device_emulator: DeviceEmulatorService,
         lua_command_receiver: Receiver<UserCommand>,
@@ -316,7 +296,6 @@ impl ApplicationRuntime {
             acquisition,
             signal_processing,
             _process_control_dispatcher: process_control_dispatcher,
-            _process_control: process_control,
             dispatcher,
             device_emulator,
             lua_command_receiver,
@@ -589,13 +568,6 @@ impl ApplicationRuntime {
                 SignalProcessingEvent::Error(error) => {
                     self.log.error(error.to_string());
                 }
-
-                SignalProcessingEvent::ProcessControlFailed(error) => {
-                    self.log.error(format!(
-                        "Process control \
-                                 failed: {error}",
-                    ));
-                }
             }
         }
     }
@@ -784,7 +756,7 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
 mod tests {
     use std::time::Duration;
 
-    use super::{ApplicationRuntime, ProcessAction, process_action_from_command};
+    use super::{ProcessAction, process_action_from_command};
 
     use crate::{
         connection::ConnectionId,
@@ -871,9 +843,13 @@ mod tests {
     }
 
     #[test]
-    fn connects_signal_processing_to_pid_service() {
-        let (signal_processing, process_control) =
-            ApplicationRuntime::spawn_processing_services().unwrap();
+    fn processing_service_runs_pid_for_raw_signal() {
+        let processing =
+            crate::signal_processing::SignalProcessingService::<SeriesId>::spawn().unwrap();
+
+        let handle = processing.handle();
+
+        let control_events = processing.control_event_receiver();
 
         let input = SeriesId::new(1);
 
@@ -886,7 +862,6 @@ mod tests {
         )
         .with_range(ParameterRange::Number {
             minimum: 0.0,
-
             maximum: 100.0,
         });
 
@@ -907,29 +882,18 @@ mod tests {
         )
         .unwrap();
 
-        let control_events = process_control.event_receiver();
+        handle.add_pid_loop(definition).unwrap();
 
-        process_control.handle().add_loop(definition).unwrap();
-
-        signal_processing
-            .handle()
-            .process(input, 1_000.0, 80.0)
-            .unwrap();
+        handle.process(input, 1_000.0, 80.0).unwrap();
 
         let event = control_events.recv_timeout(Duration::from_secs(1)).unwrap();
 
         let PidLoopEvent::Output(output) = event else {
-            panic!(
-                "expected PID output \
-                 from application processing \
-                 services",
-            );
+            panic!("expected PID output from processing service");
         };
 
-        assert_eq!(output.loop_name, "heater",);
-
-        assert_eq!(output.input, input,);
-
-        assert_eq!(output.output.value(), 40.0,);
+        assert_eq!(output.loop_name, "heater");
+        assert_eq!(output.input, input);
+        assert_eq!(output.output.value(), 40.0);
     }
 }
