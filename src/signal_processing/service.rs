@@ -562,7 +562,7 @@ where
             Self::Definition(error) => error.fmt(formatter),
 
             Self::Disconnected => formatter.write_str(
-                "Signal processing service \
+                "Processing service \
                      is disconnected",
             ),
         }
@@ -1212,6 +1212,11 @@ mod tests {
 
         assert_eq!(
             ProcessingServiceDisconnected.to_string(),
+            "Processing service is disconnected",
+        );
+
+        assert_eq!(
+            ReplaceSignalFilterError::<u64>::Disconnected.to_string(),
             "Processing service is disconnected",
         );
     }

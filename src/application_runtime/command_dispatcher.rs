@@ -691,10 +691,10 @@ impl CommandDispatcher {
             Err(error) => {
                 self.log.error(format!(
                     "Processing failed: \
-                             cannot remove \
-                             signal-processing branch \
-                             for series '{name}': \
-                             {error}",
+                         cannot remove \
+                         processing branch \
+                         for series '{name}': \
+                         {error}",
                 ));
 
                 return;
