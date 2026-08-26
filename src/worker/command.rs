@@ -9,9 +9,7 @@ use crate::{
 pub enum WorkerCommand {
     Start,
     Stop,
-    ClearSeries,
     Shutdown,
-    RemoveSeriesByName(String),
     Connection(ConnectionCommand),
     RefreshSeriesSchedule,
 }

@@ -39,13 +39,10 @@ impl std::fmt::Display for ConnectionWorkerEvent {
 pub enum WorkerEvent {
     AcquisitionStarted,
     AcquisitionStopped,
-    SeriesCleared,
     AcquisitionStartFailed(AcquisitionError),
     AcquisitionFailed(AcquisitionError),
     AcquisitionStopFailed(AcquisitionError),
     SignalProcessingFailed(String),
-    SeriesRemoved(SeriesId),
-    SeriesNotFound(String),
 
     SerialTextCommandSucceeded {
         port_name: String,
@@ -102,8 +99,6 @@ impl std::fmt::Display for WorkerEvent {
 
             Self::AcquisitionStopped => formatter.write_str("Acquisition stopped."),
 
-            Self::SeriesCleared => formatter.write_str("All series cleared."),
-
             Self::AcquisitionStartFailed(error) => {
                 write!(formatter, "Failed to start acquisition: {error}")
             }
@@ -118,14 +113,6 @@ impl std::fmt::Display for WorkerEvent {
 
             Self::SignalProcessingFailed(error) => {
                 write!(formatter, "Signal processing failed: {error}",)
-            }
-
-            Self::SeriesRemoved(id) => {
-                write!(formatter, "Series {id} removed.")
-            }
-
-            Self::SeriesNotFound(name) => {
-                write!(formatter, "Series '{name}' not found.")
             }
 
             Self::SerialTextCommandSucceeded {

@@ -21,10 +21,6 @@ impl AcquisitionController {
         self.report_worker_error("stop acquisition", self.workers.stop());
     }
 
-    pub fn clear(&self) {
-        self.report_worker_error("clear series", self.workers.clear_series());
-    }
-
     pub fn is_running(&self) -> bool {
         self.workers.is_running()
     }

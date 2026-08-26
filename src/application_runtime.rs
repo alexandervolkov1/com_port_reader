@@ -30,7 +30,7 @@ mod device_emulator_service;
 mod process_control_dispatcher;
 
 pub(crate) use acquisition_controller::AcquisitionController;
-pub(crate) use command_dispatcher::CommandDispatcher;
+pub(crate) use command_dispatcher::{CommandDispatcher, ProcessingHandles};
 pub(crate) use device_emulator_service::DeviceEmulatorService;
 use process_control_dispatcher::ProcessControlDispatcher;
 
@@ -49,7 +49,7 @@ pub struct ApplicationRuntime {
     acquisition: AcquisitionController,
     signal_processing: SignalProcessingService<SeriesId>,
     _process_control_dispatcher: ProcessControlDispatcher,
-    process_control: ProcessControlService<SeriesId>,
+    _process_control: ProcessControlService<SeriesId>,
     dispatcher: CommandDispatcher,
     device_emulator: DeviceEmulatorService,
     lua_command_receiver: Receiver<UserCommand>,
@@ -179,13 +179,14 @@ impl ApplicationRuntime {
 
         let acquisition = AcquisitionController::new(workers, log.clone());
 
+        let processing = ProcessingHandles::new(signal_processing_handle, process_control_handle);
+
         let dispatcher = CommandDispatcher::new(
             connection_router,
             serial_connections,
             definition.clone(),
             series.clone(),
-            signal_processing_handle,
-            process_control_handle,
+            processing,
             event_receiver,
             log.clone(),
         );
@@ -315,7 +316,7 @@ impl ApplicationRuntime {
             acquisition,
             signal_processing,
             _process_control_dispatcher: process_control_dispatcher,
-            process_control,
+            _process_control: process_control,
             dispatcher,
             device_emulator,
             lua_command_receiver,
@@ -346,15 +347,6 @@ impl ApplicationRuntime {
     }
 
     fn execute_from(&mut self, command: UserCommand, origin: ProcessActionOrigin) {
-        if matches!(&command, UserCommand::Clear)
-            && let Err(error) = self.process_control.handle().clear()
-        {
-            self.log.error(format!(
-                "Failed to clear PID \
-                     control loops: {error}",
-            ));
-        }
-
         if let Some(action) = process_action_from_command(&command) {
             self.process_recorder.record_action(origin, action);
         }

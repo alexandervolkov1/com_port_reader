@@ -64,21 +64,8 @@ impl ConnectionWorkers {
         self.apply_to_all(Worker::stop)
     }
 
-    pub fn clear_series(&self) -> Result<(), ConnectionWorkersError> {
-        self.primary()
-            .clear_series()
-            .map_err(|source| ConnectionWorkersError::new(ConnectionId::PRIMARY, source))
-    }
-
     pub fn is_running(&self) -> bool {
         self.workers.values().any(Worker::is_running)
-    }
-
-    fn primary(&self) -> &Worker {
-        self.workers.get(&ConnectionId::PRIMARY).expect(
-            "primary worker was inserted \
-                 during construction",
-        )
     }
 
     fn apply_to_all(

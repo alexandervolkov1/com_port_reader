@@ -348,54 +348,11 @@ impl Worker {
                         }
                     }
 
-                    Ok(WorkerCommand::ClearSeries) => {
-                        let event = match signal_processing.clear() {
-                            Ok(()) => {
-                                series.clear();
-
-                                WorkerEvent::SeriesCleared
-                            }
-
-                            Err(error) => WorkerEvent::SignalProcessingFailed(format!(
-                                "Cannot clear \
-                                             signal-processing \
-                                             graph: {error}",
-                            )),
-                        };
-
-                        let _ = event_sender.send(event);
-                    }
-
                     Ok(WorkerCommand::Shutdown) => {
                         if matches!(state, AcquisitionState::Running { .. }) {
                             let _ = source.stop();
                         }
                         break;
-                    }
-
-                    Ok(WorkerCommand::RemoveSeriesByName(name)) => {
-                        let event = match series.id_by_name(&name) {
-                            Some(id) => match signal_processing.remove_from(id) {
-                                Ok(dependent_ids) => {
-                                    for dependent_id in dependent_ids {
-                                        series.remove_series(dependent_id);
-                                    }
-
-                                    series.remove_series(id);
-
-                                    WorkerEvent::SeriesRemoved(id)
-                                }
-
-                                Err(error) => WorkerEvent::SignalProcessingFailed(format!(
-                                    "Cannot remove signal-processing \
-                                                 branch for series '{name}': {error}",
-                                )),
-                            },
-
-                            None => WorkerEvent::SeriesNotFound(name),
-                        };
-
-                        let _ = event_sender.send(event);
                     }
 
                     Ok(WorkerCommand::Connection(command)) => {
@@ -437,10 +394,6 @@ impl Worker {
 
     pub fn stop(&self) -> Result<(), WorkerHandleError> {
         self.commands.stop()
-    }
-
-    pub fn clear_series(&self) -> Result<(), WorkerHandleError> {
-        self.commands.clear_series()
     }
 
     pub fn is_running(&self) -> bool {

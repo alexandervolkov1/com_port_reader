@@ -45,14 +45,6 @@ impl WorkerHandle {
         self.sender.send(command).map_err(|_| WorkerHandleError)
     }
 
-    pub fn clear_series(&self) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::ClearSeries)
-    }
-
-    pub fn remove_series_by_name(&self, name: String) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::RemoveSeriesByName(name))
-    }
-
     pub fn send_serial_text(
         &self,
         config: SerialPortConfig,

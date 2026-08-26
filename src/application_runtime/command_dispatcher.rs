@@ -20,13 +20,29 @@ use super::{
     acquisition_controller::AcquisitionController, device_emulator_service::DeviceEmulatorService,
 };
 
+pub(crate) struct ProcessingHandles {
+    signal_processing: SignalProcessingHandle<SeriesId>,
+    process_control: ProcessControlHandle<SeriesId>,
+}
+
+impl ProcessingHandles {
+    pub(crate) fn new(
+        signal_processing: SignalProcessingHandle<SeriesId>,
+        process_control: ProcessControlHandle<SeriesId>,
+    ) -> Self {
+        Self {
+            signal_processing,
+            process_control,
+        }
+    }
+}
+
 pub(crate) struct CommandDispatcher {
     connections: ConnectionRouter,
     serial_connections: SerialConnectionRegistry,
     application_definition: ApplicationDefinition,
     series: SeriesStore,
-    signal_processing: SignalProcessingHandle<SeriesId>,
-    process_control: ProcessControlHandle<SeriesId>,
+    processing: ProcessingHandles,
     event_receiver: Receiver<ConnectionWorkerEvent>,
     log: LogHandle,
 }
@@ -37,8 +53,7 @@ impl CommandDispatcher {
         serial_connections: SerialConnectionRegistry,
         application_definition: ApplicationDefinition,
         series: SeriesStore,
-        signal_processing: SignalProcessingHandle<SeriesId>,
-        process_control: ProcessControlHandle<SeriesId>,
+        processing: ProcessingHandles,
         event_receiver: Receiver<ConnectionWorkerEvent>,
         log: LogHandle,
     ) -> Self {
@@ -47,8 +62,7 @@ impl CommandDispatcher {
             serial_connections,
             application_definition,
             series,
-            signal_processing,
-            process_control,
+            processing,
             event_receiver,
             log,
         }
@@ -95,12 +109,6 @@ impl CommandDispatcher {
 
     fn emulator_serial_config(&self) -> Result<SerialPortConfig, AcquisitionError> {
         self.serial_config(self.emulator_connection_id())
-    }
-
-    fn primary_worker(&self) -> WorkerHandle {
-        self.connections
-            .handle(ConnectionId::PRIMARY)
-            .expect("primary connection worker must be registered")
     }
 
     fn format_worker_event(&self, connection_event: &ConnectionWorkerEvent) -> String {
@@ -165,9 +173,7 @@ impl CommandDispatcher {
             }
 
             UserCommand::Delete { name } => {
-                if let Err(error) = self.primary_worker().remove_series_by_name(name) {
-                    self.set_worker_error(error);
-                }
+                self.delete_series(name);
             }
 
             UserCommand::Rename {
@@ -237,7 +243,7 @@ impl CommandDispatcher {
             }
 
             UserCommand::Clear => {
-                controls.clear();
+                self.clear_series();
             }
 
             UserCommand::StartEmulator => {
@@ -466,7 +472,7 @@ impl CommandDispatcher {
             }
         };
 
-        match self.process_control.add_loop(definition) {
+        match self.processing.process_control.add_loop(definition) {
             Ok(()) => {
                 self.log.info(format!(
                     "PID loop '{name}' \
@@ -486,7 +492,11 @@ impl CommandDispatcher {
     }
 
     fn set_pid_setpoint(&self, name: String, setpoint: f64) {
-        match self.process_control.set_setpoint(&name, setpoint) {
+        match self
+            .processing
+            .process_control
+            .set_setpoint(&name, setpoint)
+        {
             Ok(true) => {
                 self.log.info(format!(
                     "PID loop '{name}' \
@@ -566,6 +576,7 @@ impl CommandDispatcher {
         };
 
         if let Err(error) = self
+            .processing
             .signal_processing
             .add_filter(input_id, output_id, definition)
         {
@@ -591,7 +602,11 @@ impl CommandDispatcher {
             return;
         };
 
-        if let Err(error) = self.signal_processing.replace_filter(output_id, definition) {
+        if let Err(error) = self
+            .processing
+            .signal_processing
+            .replace_filter(output_id, definition)
+        {
             self.log.error(format!(
                 "Signal processing failed: \
                      cannot change filter for \
@@ -691,6 +706,113 @@ impl CommandDispatcher {
     fn set_worker_error(&self, error: WorkerHandleError) {
         self.log.error(format!("Failed to send command: {error}",));
     }
+
+    fn delete_series(&self, name: String) {
+        let Some(id) = self.series.id_by_name(&name) else {
+            self.log.error(format!("Series '{name}' not found.",));
+
+            return;
+        };
+
+        let dependent_ids = match self.processing.signal_processing.remove_from(id) {
+            Ok(dependent_ids) => dependent_ids,
+
+            Err(error) => {
+                self.log.error(format!(
+                    "Signal processing failed: \
+                             cannot remove \
+                             signal-processing branch \
+                             for series '{name}': \
+                             {error}",
+                ));
+
+                return;
+            }
+        };
+
+        let mut control_cleanup_failed = false;
+
+        if let Err(error) = self.processing.process_control.remove_from(id) {
+            self.log.error(format!(
+                "Failed to remove control \
+                     loops for series '{name}' \
+                     ({id}): {error}",
+            ));
+
+            control_cleanup_failed = true;
+        }
+
+        if !control_cleanup_failed {
+            for dependent_id in dependent_ids
+                .iter()
+                .copied()
+                .filter(|dependent_id| *dependent_id != id)
+            {
+                if let Err(error) = self.processing.process_control.remove_from(dependent_id) {
+                    self.log.error(format!(
+                        "Failed to remove \
+                             control loops for \
+                             dependent series \
+                             {dependent_id}: \
+                             {error}",
+                    ));
+
+                    break;
+                }
+            }
+        }
+
+        for dependent_id in dependent_ids
+            .iter()
+            .copied()
+            .filter(|dependent_id| *dependent_id != id)
+        {
+            self.series.remove_series(dependent_id);
+        }
+
+        self.series.remove_series(id);
+
+        let dependent_count = dependent_ids
+            .iter()
+            .filter(|&&dependent_id| dependent_id != id)
+            .count();
+
+        if dependent_count == 0 {
+            self.log.info(format!("Series '{name}' ({id}) removed.",));
+        } else {
+            self.log.info(format!(
+                "Series '{name}' ({id}) removed \
+                     with {dependent_count} dependent \
+                     series.",
+            ));
+        }
+    }
+
+    fn clear_series(&self) {
+        if let Err(error) = self.processing.process_control.clear() {
+            self.log.error(format!(
+                "Failed to clear control \
+                     loops: {error}",
+            ));
+        }
+
+        match self.processing.signal_processing.clear() {
+            Ok(()) => {
+                self.series.clear();
+
+                self.log.info("All series cleared.");
+            }
+
+            Err(error) => {
+                self.log.error(format!(
+                    "Signal processing failed: \
+                         cannot clear \
+                         signal-processing graph: \
+                         {error}",
+                ));
+            }
+        }
+    }
 }
 
 fn worker_event_is_error(event: &WorkerEvent) -> bool {
@@ -700,7 +822,6 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
             | WorkerEvent::AcquisitionFailed(_)
             | WorkerEvent::AcquisitionStopFailed(_)
             | WorkerEvent::SignalProcessingFailed(_)
-            | WorkerEvent::SeriesNotFound(_)
             | WorkerEvent::SerialTextCommandFailed { .. }
             | WorkerEvent::InstrumentReadFailed { .. }
             | WorkerEvent::InstrumentWriteFailed { .. }
