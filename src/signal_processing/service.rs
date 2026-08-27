@@ -11,7 +11,7 @@ use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use crate::instrument::{InstrumentValue, ParameterDescriptor};
 use crate::process_control::{
     ControlEvent, ControlLoopDefinition, ControlOutputTarget, ControllerAccessError,
-    ControllerRegistry, ControllerRegistryError, PidControllerError,
+    ControllerRegistry, ControllerRegistryError,
 };
 
 use super::{
@@ -88,12 +88,6 @@ enum ProcessingCommand<SignalId> {
     ResetController {
         name: String,
         response_sender: Sender<Result<(), ControllerAccessError>>,
-    },
-
-    SetPidSetpoint {
-        name: String,
-        setpoint: f64,
-        response_sender: Sender<Result<bool, PidControllerError>>,
     },
 
     Process(Vec<ProcessingInput<SignalId>>),
@@ -298,28 +292,6 @@ impl<SignalId> ProcessingHandle<SignalId> {
             .recv()
             .map_err(|_| ControllerRequestError::Disconnected)?
             .map_err(Into::into)
-    }
-
-    pub fn set_pid_setpoint(
-        &self,
-        name: impl Into<String>,
-        setpoint: f64,
-    ) -> Result<bool, SetPidLoopSetpointError> {
-        let (response_sender, response_receiver) = bounded(1);
-
-        self.command_sender
-            .send(ProcessingCommand::SetPidSetpoint {
-                name: name.into(),
-                setpoint,
-                response_sender,
-            })
-            .map_err(|_| SetPidLoopSetpointError::Disconnected)?;
-
-        let result = response_receiver
-            .recv()
-            .map_err(|_| SetPidLoopSetpointError::Disconnected)?;
-
-        result.map_err(SetPidLoopSetpointError::Controller)
     }
 
     pub fn process(
@@ -531,16 +503,6 @@ fn run_processing<SignalId>(
                 let _ = response_sender.send(result);
             }
 
-            ProcessingCommand::SetPidSetpoint {
-                name,
-                setpoint,
-                response_sender,
-            } => {
-                let result = registry.set_setpoint(&name, setpoint);
-
-                let _ = response_sender.send(result);
-            }
-
             ProcessingCommand::Process(inputs) => {
                 process_inputs(
                     &mut graph,
@@ -740,35 +702,6 @@ impl From<ControllerAccessError> for ControllerRequestError {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SetPidLoopSetpointError {
-    Controller(PidControllerError),
-    Disconnected,
-}
-
-impl fmt::Display for SetPidLoopSetpointError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Controller(error) => error.fmt(formatter),
-
-            Self::Disconnected => formatter.write_str(
-                "Processing \
-                     service is disconnected",
-            ),
-        }
-    }
-}
-
-impl Error for SetPidLoopSetpointError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Controller(error) => Some(error),
-
-            Self::Disconnected => None,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReplaceSignalFilterError<SignalId> {
     Definition(SignalProcessingGraphUpdateError<SignalId>),
@@ -822,7 +755,7 @@ mod tests {
     use super::{
         AddControlLoopError, AddSignalFilterError, ControllerRequestError, ProcessingEvent,
         ProcessingInput, ProcessingService, ProcessingServiceDisconnected,
-        ReplaceSignalFilterError, SetPidLoopSetpointError,
+        ReplaceSignalFilterError,
     };
 
     use crate::{
@@ -1267,7 +1200,7 @@ mod tests {
     }
 
     #[test]
-    fn changes_pid_setpoint() {
+    fn changes_controller_setpoint() {
         let service = ProcessingService::<u64>::spawn().unwrap();
 
         let handle = service.handle();
@@ -1278,7 +1211,11 @@ mod tests {
             .add_control_loop(pid_definition("heater", 1, 1))
             .unwrap();
 
-        assert_eq!(handle.set_pid_setpoint("heater", 90.0,), Ok(true),);
+        assert_eq!(
+            handle
+                .write_controller_parameter("heater", "setpoint", InstrumentValue::Number(90.0,),),
+            Ok(InstrumentValue::Number(90.0,),),
+        );
 
         handle.process(1, 1_000.0, 80.0).unwrap();
 
@@ -1287,32 +1224,6 @@ mod tests {
         assert_eq!(output.output.setpoint(), Some(90.0),);
 
         assert_eq!(output.output.value(), 20.0,);
-    }
-
-    #[test]
-    fn reports_missing_pid_when_setting_setpoint() {
-        let service = ProcessingService::<u64>::spawn().unwrap();
-
-        assert_eq!(
-            service.handle().set_pid_setpoint("missing", 90.0,),
-            Ok(false),
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_pid_setpoint() {
-        let service = ProcessingService::<u64>::spawn().unwrap();
-
-        let handle = service.handle();
-
-        handle
-            .add_control_loop(pid_definition("heater", 1, 1))
-            .unwrap();
-
-        assert!(matches!(
-            handle.set_pid_setpoint("heater", f64::NAN,),
-            Err(SetPidLoopSetpointError::Controller(_)),
-        ));
     }
 
     #[test]
@@ -1436,11 +1347,6 @@ mod tests {
 
         assert_eq!(
             AddControlLoopError::Disconnected.to_string(),
-            "Processing service is disconnected",
-        );
-
-        assert_eq!(
-            SetPidLoopSetpointError::Disconnected.to_string(),
             "Processing service is disconnected",
         );
 

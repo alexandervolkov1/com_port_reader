@@ -2,10 +2,7 @@ use std::{error::Error, fmt};
 
 use crate::instrument::{InstrumentValue, ParameterDescriptor};
 
-use super::{
-    Controller, ControllerError, ControllerOutput, ControllerParameterError, PidController,
-    PidControllerError, PidGains, PidOutputLimits,
-};
+use super::{Controller, ControllerError, ControllerOutput, ControllerParameterError};
 
 #[derive(Debug)]
 pub struct ControlLoopDefinition<SignalId, OutputTarget> {
@@ -110,46 +107,6 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         self.controller.configure(updates)
     }
 
-    fn pid_controller(&self) -> &PidController {
-        let Controller::Pid(controller) = &self.controller;
-
-        controller
-    }
-
-    fn pid_controller_mut(&mut self) -> &mut PidController {
-        let Controller::Pid(controller) = &mut self.controller;
-
-        controller
-    }
-
-    pub fn setpoint(&self) -> f64 {
-        self.pid_controller().setpoint()
-    }
-
-    pub fn gains(&self) -> PidGains {
-        self.pid_controller().gains()
-    }
-
-    pub fn output_limits(&self) -> PidOutputLimits {
-        self.pid_controller().output_limits()
-    }
-
-    pub fn integral(&self) -> f64 {
-        self.pid_controller().integral()
-    }
-
-    pub fn set_setpoint(&mut self, setpoint: f64) -> Result<(), PidControllerError> {
-        self.pid_controller_mut().set_setpoint(setpoint)
-    }
-
-    pub fn set_gains(&mut self, gains: PidGains) {
-        self.pid_controller_mut().set_gains(gains);
-    }
-
-    pub fn set_output_limits(&mut self, output_limits: PidOutputLimits) {
-        self.pid_controller_mut().set_output_limits(output_limits);
-    }
-
     pub fn update(
         &mut self,
         timestamp: f64,
@@ -202,7 +159,7 @@ mod tests {
     use super::{ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError};
 
     use crate::instrument::InstrumentValue;
-    use crate::process_control::{PidController, PidControllerError, PidGains, PidOutputLimits};
+    use crate::process_control::{PidController, PidGains, PidOutputLimits};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct TestOutputTarget {
@@ -296,107 +253,6 @@ mod tests {
     }
 
     #[test]
-    fn changes_setpoint_without_derivative_kick() {
-        let definition = definition_with(
-            100.0,
-            PidGains::new(0.0, 0.0, 4.0).unwrap(),
-            PidOutputLimits::new(-100.0, 100.0).unwrap(),
-        );
-
-        let mut control_loop = ControlLoop::new(definition);
-
-        control_loop.update(0.0, 20.0).unwrap();
-
-        control_loop.set_setpoint(200.0).unwrap();
-
-        let output = control_loop.update(1.0, 20.0).unwrap();
-
-        assert_eq!(control_loop.setpoint(), 200.0,);
-
-        assert_close(output.derivative().unwrap(), 0.0);
-
-        assert_close(output.value(), 0.0);
-    }
-
-    #[test]
-    fn rejects_invalid_setpoint_without_changing_configuration() {
-        let definition = definition_with(
-            100.0,
-            PidGains::new(1.0, 0.0, 0.0).unwrap(),
-            PidOutputLimits::new(0.0, 100.0).unwrap(),
-        );
-
-        let mut control_loop = ControlLoop::new(definition);
-
-        assert_eq!(
-            control_loop.set_setpoint(f64::NAN),
-            Err(PidControllerError::NonFiniteSetpoint),
-        );
-
-        assert_eq!(control_loop.setpoint(), 100.0,);
-
-        let output = control_loop.update(0.0, 90.0).unwrap();
-
-        assert_close(output.value(), 10.0);
-    }
-
-    #[test]
-    fn changes_gains_without_resetting_loop_integral() {
-        let definition = definition_with(
-            10.0,
-            PidGains::new(0.0, 1.0, 0.0).unwrap(),
-            PidOutputLimits::new(-100.0, 100.0).unwrap(),
-        );
-
-        let mut control_loop = ControlLoop::new(definition);
-
-        control_loop.update(0.0, 8.0).unwrap();
-
-        control_loop.update(1.0, 8.0).unwrap();
-
-        assert_close(control_loop.integral(), 2.0);
-
-        let gains = PidGains::new(2.0, 0.0, 0.0).unwrap();
-
-        control_loop.set_gains(gains);
-
-        let output = control_loop.update(2.0, 8.0).unwrap();
-
-        assert_eq!(control_loop.gains(), gains,);
-
-        assert_close(output.integral().unwrap(), 2.0);
-
-        assert_close(output.value(), 6.0);
-    }
-
-    #[test]
-    fn changes_output_limits_for_running_loop() {
-        let definition = definition_with(
-            100.0,
-            PidGains::new(2.0, 0.0, 0.0).unwrap(),
-            PidOutputLimits::new(0.0, 300.0).unwrap(),
-        );
-
-        let mut control_loop = ControlLoop::new(definition);
-
-        let initial = control_loop.update(0.0, 0.0).unwrap();
-
-        assert_close(initial.value(), 200.0);
-
-        let limits = PidOutputLimits::new(0.0, 100.0).unwrap();
-
-        control_loop.set_output_limits(limits);
-
-        let limited = control_loop.update(1.0, 0.0).unwrap();
-
-        assert_eq!(control_loop.output_limits(), limits,);
-
-        assert_close(limited.value(), 100.0);
-
-        assert_eq!(limited.saturated(), Some(true),);
-    }
-
-    #[test]
     fn reset_preserves_loop_configuration() {
         let definition = definition_with(
             100.0,
@@ -408,21 +264,22 @@ mod tests {
 
         control_loop.update(0.0, 90.0).unwrap();
 
-        control_loop.update(1.0, 90.0).unwrap();
+        let accumulated = control_loop.update(1.0, 90.0).unwrap();
 
-        assert_close(control_loop.integral(), 10.0);
+        assert_eq!(accumulated.integral(), Some(10.0),);
 
         control_loop.reset();
 
-        assert_close(control_loop.integral(), 0.0);
-
         assert_eq!(control_loop.name(), "heater",);
 
-        assert_eq!(control_loop.setpoint(), 100.0,);
+        assert_eq!(
+            control_loop.read_parameter("setpoint",),
+            Ok(InstrumentValue::Number(100.0,),),
+        );
 
         let restarted = control_loop.update(0.0, 90.0).unwrap();
 
-        assert_close(restarted.integral().unwrap(), 0.0);
+        assert_eq!(restarted.integral(), Some(0.0),);
     }
 
     fn definition_with(

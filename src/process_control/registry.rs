@@ -8,7 +8,6 @@ use crate::{
 use super::{
     ControlLoop, ControlLoopDefinition, ControlOutputConversionError, ControlOutputParameter,
     ControlOutputTarget, Controller, ControllerError, ControllerOutput, ControllerParameterError,
-    PidControllerError,
 };
 
 pub struct ControllerRegistry<SignalId> {
@@ -126,20 +125,6 @@ where
         self.control_loop_mut(name)?.reset();
 
         Ok(())
-    }
-
-    pub fn set_setpoint(&mut self, name: &str, setpoint: f64) -> Result<bool, PidControllerError> {
-        let Some(control_loop) = self
-            .loops
-            .iter_mut()
-            .find(|control_loop| control_loop.name() == name)
-        else {
-            return Ok(false);
-        };
-
-        control_loop.set_setpoint(setpoint)?;
-
-        Ok(true)
     }
 
     pub fn len(&self) -> usize {
@@ -567,54 +552,6 @@ mod tests {
         assert!(registry.contains("heater"),);
 
         assert!(!registry.is_empty(),);
-    }
-
-    #[test]
-    fn changes_registered_loop_setpoint() {
-        let mut registry = ControllerRegistry::new();
-
-        registry
-            .add(definition("heater", 1, virtual_target(1, 1, 1)))
-            .unwrap();
-
-        assert_eq!(registry.set_setpoint("heater", 90.0), Ok(true),);
-
-        let events = registry.process(1, 1_000.0, 80.0);
-
-        let [ControlEvent::Output(output)] = events.as_slice() else {
-            panic!("expected one PID output event");
-        };
-
-        assert_eq!(output.output.value(), 20.0,);
-    }
-
-    #[test]
-    fn reports_missing_loop_when_setting_setpoint() {
-        let mut registry = ControllerRegistry::<u64>::new();
-
-        assert_eq!(registry.set_setpoint("missing", 90.0), Ok(false),);
-    }
-
-    #[test]
-    fn rejects_invalid_setpoint_without_changing_existing_value() {
-        let mut registry = ControllerRegistry::new();
-
-        registry
-            .add(definition("heater", 1, virtual_target(1, 1, 1)))
-            .unwrap();
-
-        assert_eq!(
-            registry.set_setpoint("heater", f64::NAN),
-            Err(PidControllerError::NonFiniteSetpoint),
-        );
-
-        let events = registry.process(1, 1_000.0, 80.0);
-
-        let [ControlEvent::Output(output)] = events.as_slice() else {
-            panic!("expected one PID output event");
-        };
-
-        assert_eq!(output.output.value(), 40.0,);
     }
 
     #[test]
