@@ -182,6 +182,16 @@ impl CommandDispatcher {
                 let _ = response_sender.send(result);
             }
 
+            UserCommand::ConfigureController {
+                name,
+                updates,
+                response_sender,
+            } => {
+                let result = self.processing.configure_controller(&name, updates);
+
+                let _ = response_sender.send(result);
+            }
+
             UserCommand::ResetController {
                 name,
                 response_sender,

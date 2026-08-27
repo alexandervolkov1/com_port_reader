@@ -841,6 +841,55 @@ impl LuaControllerHandle {
         receive_controller_response(response_receiver, "parameter write")
     }
 
+    fn configure(&self, lua: &Lua, updates: Table) -> mlua::Result<()> {
+        let descriptors = self.controller_parameters()?;
+
+        let mut resolved_updates = Vec::new();
+
+        for pair in updates.pairs::<String, Value>() {
+            let (key, value) = pair?;
+
+            let descriptor = descriptors
+                .iter()
+                .find(|descriptor| descriptor.key == key)
+                .copied()
+                .ok_or_else(|| {
+                    mlua::Error::RuntimeError(format!(
+                        "Controller '{}' \
+                                     has no parameter \
+                                     '{key}'",
+                        self.name,
+                    ))
+                })?;
+
+            if !descriptor.access.writable() {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "Controller \
+                                 parameter '{}' \
+                                 is read-only",
+                    key,
+                )));
+            }
+
+            let value = controller_value_from_lua(lua, descriptor, value)?;
+
+            resolved_updates.push((key, value));
+        }
+
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::ConfigureController {
+                name: self.name.clone(),
+                updates: resolved_updates,
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "configuration")
+    }
+
     fn reset(&self) -> mlua::Result<()> {
         let (response_sender, response_receiver) = bounded(1);
 
@@ -1493,6 +1542,10 @@ impl UserData for LuaControllerHandle {
             let actual = controller.write_parameter(&key, value)?;
 
             Ok(instrument_value_to_lua(actual))
+        });
+
+        methods.add_method("configure", |lua, controller, updates: Table| {
+            controller.configure(lua, updates)
         });
 
         methods.add_method("reset", |_, controller, ()| controller.reset());

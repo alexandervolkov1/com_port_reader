@@ -659,23 +659,14 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
 
             Some(ProcessAction::AddPidLoop {
                 connection_id: pid_loop.output_target().connection_id(),
-
                 name: pid_loop.name().to_owned(),
-
                 input_name: pid_loop.input_name().to_owned(),
-
                 output_target: pid_loop.output_target().to_string(),
-
                 setpoint: pid_loop.setpoint(),
-
                 proportional_gain: gains.proportional(),
-
                 integral_gain: gains.integral(),
-
                 derivative_gain: gains.derivative(),
-
                 output_minimum: limits.minimum(),
-
                 output_maximum: limits.maximum(),
             })
         }
@@ -699,6 +690,7 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
 
         UserCommand::ControllerParameters { .. }
         | UserCommand::ReadControllerParameter { .. }
+        | UserCommand::ConfigureController { .. }
         | UserCommand::ResetController { .. } => None,
 
         UserCommand::SetPidSetpoint { name, setpoint } => Some(ProcessAction::SetPidSetpoint {

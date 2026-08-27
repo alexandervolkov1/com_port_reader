@@ -35,6 +35,12 @@ pub enum UserCommand {
         response_sender: Sender<Result<InstrumentValue, ControllerRequestError>>,
     },
 
+    ConfigureController {
+        name: String,
+        updates: Vec<(String, InstrumentValue)>,
+        response_sender: Sender<Result<(), ControllerRequestError>>,
+    },
+
     ResetController {
         name: String,
         response_sender: Sender<Result<(), ControllerRequestError>>,
