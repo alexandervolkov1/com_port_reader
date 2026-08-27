@@ -180,6 +180,7 @@ struct PreviousSample {
 
 #[derive(Debug)]
 pub struct PidController {
+    setpoint: f64,
     gains: PidGains,
     output_limits: PidOutputLimits,
     integral: f64,
@@ -187,17 +188,44 @@ pub struct PidController {
 }
 
 impl PidController {
-    pub const fn new(gains: PidGains) -> Self {
-        Self::with_output_limits(gains, PidOutputLimits::FULL)
+    pub fn new(setpoint: f64, gains: PidGains) -> Result<Self, PidControllerError> {
+        Self::with_output_limits(setpoint, gains, PidOutputLimits::FULL)
     }
 
-    pub const fn with_output_limits(gains: PidGains, output_limits: PidOutputLimits) -> Self {
+    pub fn with_output_limits(
+        setpoint: f64,
+        gains: PidGains,
+        output_limits: PidOutputLimits,
+    ) -> Result<Self, PidControllerError> {
+        validate_setpoint(setpoint)?;
+
+        Ok(Self::from_validated_config(setpoint, gains, output_limits))
+    }
+
+    pub(crate) const fn from_validated_config(
+        setpoint: f64,
+        gains: PidGains,
+        output_limits: PidOutputLimits,
+    ) -> Self {
         Self {
+            setpoint,
             gains,
             output_limits,
             integral: 0.0,
             previous_sample: None,
         }
+    }
+
+    pub const fn setpoint(&self) -> f64 {
+        self.setpoint
+    }
+
+    pub fn set_setpoint(&mut self, setpoint: f64) -> Result<(), PidControllerError> {
+        validate_setpoint(setpoint)?;
+
+        self.setpoint = setpoint;
+
+        Ok(())
     }
 
     pub const fn gains(&self) -> PidGains {
@@ -223,22 +251,17 @@ impl PidController {
     pub fn update(
         &mut self,
         timestamp: f64,
-        setpoint: f64,
         measurement: f64,
     ) -> Result<PidOutput, PidControllerError> {
         if !timestamp.is_finite() {
             return Err(PidControllerError::NonFiniteTimestamp);
         }
 
-        if !setpoint.is_finite() {
-            return Err(PidControllerError::NonFiniteSetpoint);
-        }
-
         if !measurement.is_finite() {
             return Err(PidControllerError::NonFiniteMeasurement);
         }
 
-        let error = setpoint - measurement;
+        let error = self.setpoint - measurement;
 
         if !error.is_finite() {
             return Err(PidControllerError::NonFiniteOutput);
@@ -346,6 +369,14 @@ impl PidController {
     }
 }
 
+fn validate_setpoint(setpoint: f64) -> Result<(), PidControllerError> {
+    if !setpoint.is_finite() {
+        return Err(PidControllerError::NonFiniteSetpoint);
+    }
+
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PidControllerError {
     NonFiniteTimestamp,
@@ -397,7 +428,7 @@ mod tests {
         assert_eq!(gains.integral(), 0.5);
         assert_eq!(gains.derivative(), 1.5);
 
-        assert!(PidGains::new(0.0, 0.0, 0.0).is_ok(),);
+        assert!(PidGains::new(0.0, 0.0, 0.0,).is_ok(),);
     }
 
     #[test]
@@ -406,19 +437,76 @@ mod tests {
 
         for value in invalid_values {
             assert_eq!(
-                PidGains::new(value, 0.0, 0.0),
+                PidGains::new(value, 0.0, 0.0,),
                 Err(PidGainsError::InvalidProportionalGain,),
             );
 
             assert_eq!(
-                PidGains::new(0.0, value, 0.0),
+                PidGains::new(0.0, value, 0.0,),
                 Err(PidGainsError::InvalidIntegralGain,),
             );
 
             assert_eq!(
-                PidGains::new(0.0, 0.0, value),
+                PidGains::new(0.0, 0.0, value,),
                 Err(PidGainsError::InvalidDerivativeGain,),
             );
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_initial_setpoint() {
+        let gains = PidGains::new(1.0, 0.0, 0.0).unwrap();
+
+        assert!(matches!(
+            PidController::new(f64::NAN, gains,),
+            Err(PidControllerError::NonFiniteSetpoint),
+        ));
+
+        assert!(matches!(
+            PidController::new(f64::INFINITY, gains,),
+            Err(PidControllerError::NonFiniteSetpoint),
+        ));
+
+        assert!(matches!(
+            PidController::new(f64::NEG_INFINITY, gains,),
+            Err(PidControllerError::NonFiniteSetpoint),
+        ));
+    }
+
+    #[test]
+    fn changes_setpoint_without_resetting_state() {
+        let gains = PidGains::new(0.0, 1.0, 0.0).unwrap();
+
+        let mut controller = PidController::new(10.0, gains).unwrap();
+
+        controller.update(0.0, 8.0).unwrap();
+
+        let accumulated = controller.update(1.0, 8.0).unwrap();
+
+        assert_close(accumulated.integral(), 2.0);
+
+        controller.set_setpoint(20.0).unwrap();
+
+        assert_eq!(controller.setpoint(), 20.0,);
+
+        let updated = controller.update(2.0, 18.0).unwrap();
+
+        assert_close(updated.integral(), 4.0);
+    }
+
+    #[test]
+    fn rejects_invalid_setpoint_without_changing_configuration() {
+        let gains = PidGains::new(1.0, 0.0, 0.0).unwrap();
+
+        let mut controller = PidController::new(10.0, gains).unwrap();
+
+        for setpoint in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(
+                controller.set_setpoint(setpoint),
+                Err(PidControllerError::NonFiniteSetpoint,),
+            );
+
+            assert_eq!(controller.setpoint(), 10.0,);
         }
     }
 
@@ -426,9 +514,9 @@ mod tests {
     fn first_sample_only_applies_proportional_term() {
         let gains = PidGains::new(2.0, 3.0, 4.0).unwrap();
 
-        let mut controller = PidController::new(gains);
+        let mut controller = PidController::new(100.0, gains).unwrap();
 
-        let output = controller.update(10.0, 100.0, 90.0).unwrap();
+        let output = controller.update(10.0, 90.0).unwrap();
 
         assert_close(output.proportional(), 20.0);
 
@@ -443,17 +531,17 @@ mod tests {
     fn integrates_using_actual_elapsed_time() {
         let gains = PidGains::new(0.0, 2.0, 0.0).unwrap();
 
-        let mut controller = PidController::new(gains);
+        let mut controller = PidController::new(10.0, gains).unwrap();
 
-        let first = controller.update(10.0, 10.0, 8.0).unwrap();
+        let first = controller.update(10.0, 8.0).unwrap();
 
         assert_close(first.integral(), 0.0);
 
-        let second = controller.update(10.25, 10.0, 8.0).unwrap();
+        let second = controller.update(10.25, 8.0).unwrap();
 
         assert_close(second.integral(), 1.0);
 
-        let third = controller.update(11.0, 10.0, 9.0).unwrap();
+        let third = controller.update(11.0, 9.0).unwrap();
 
         assert_close(third.integral(), 2.5);
 
@@ -464,17 +552,19 @@ mod tests {
     fn differentiates_measurement_without_setpoint_kick() {
         let gains = PidGains::new(0.0, 0.0, 4.0).unwrap();
 
-        let mut controller = PidController::new(gains);
+        let mut controller = PidController::new(100.0, gains).unwrap();
 
-        let first = controller.update(10.0, 100.0, 20.0).unwrap();
+        let first = controller.update(10.0, 20.0).unwrap();
 
         assert_close(first.derivative(), 0.0);
 
-        let second = controller.update(12.0, 100.0, 23.0).unwrap();
+        let second = controller.update(12.0, 23.0).unwrap();
 
         assert_close(second.derivative(), -6.0);
 
-        let third = controller.update(13.0, 200.0, 23.0).unwrap();
+        controller.set_setpoint(200.0).unwrap();
+
+        let third = controller.update(13.0, 23.0).unwrap();
 
         assert_close(third.derivative(), 0.0);
     }
@@ -483,11 +573,11 @@ mod tests {
     fn combines_proportional_integral_and_derivative_terms() {
         let gains = PidGains::new(2.0, 3.0, 4.0).unwrap();
 
-        let mut controller = PidController::new(gains);
+        let mut controller = PidController::new(10.0, gains).unwrap();
 
-        controller.update(0.0, 10.0, 8.0).unwrap();
+        controller.update(0.0, 8.0).unwrap();
 
-        let output = controller.update(2.0, 10.0, 7.0).unwrap();
+        let output = controller.update(2.0, 7.0).unwrap();
 
         assert_close(output.proportional(), 6.0);
 
@@ -502,34 +592,29 @@ mod tests {
     fn rejects_invalid_inputs_without_changing_state() {
         let gains = PidGains::new(1.0, 1.0, 1.0).unwrap();
 
-        let mut controller = PidController::new(gains);
+        let mut controller = PidController::new(10.0, gains).unwrap();
 
-        controller.update(1.0, 10.0, 8.0).unwrap();
+        controller.update(1.0, 8.0).unwrap();
 
         assert_eq!(
-            controller.update(f64::NAN, 10.0, 7.0,),
+            controller.update(f64::NAN, 7.0,),
             Err(PidControllerError::NonFiniteTimestamp,),
         );
 
         assert_eq!(
-            controller.update(2.0, f64::INFINITY, 7.0,),
-            Err(PidControllerError::NonFiniteSetpoint,),
-        );
-
-        assert_eq!(
-            controller.update(2.0, 10.0, f64::NAN,),
+            controller.update(2.0, f64::NAN,),
             Err(PidControllerError::NonFiniteMeasurement,),
         );
 
         assert_eq!(
-            controller.update(1.0, 10.0, 7.0,),
+            controller.update(1.0, 7.0,),
             Err(PidControllerError::NonIncreasingTimestamp {
                 previous: 1.0,
                 current: 1.0,
             },),
         );
 
-        let output = controller.update(2.0, 10.0, 7.0).unwrap();
+        let output = controller.update(2.0, 7.0).unwrap();
 
         assert_close(output.proportional(), 3.0);
 
@@ -544,14 +629,16 @@ mod tests {
     fn rejects_non_finite_output_without_changing_state() {
         let gains = PidGains::new(f64::MAX, 0.0, 0.0).unwrap();
 
-        let mut controller = PidController::new(gains);
+        let mut controller = PidController::new(2.0, gains).unwrap();
 
         assert_eq!(
-            controller.update(1.0, 2.0, 0.0,),
+            controller.update(1.0, 0.0,),
             Err(PidControllerError::NonFiniteOutput,),
         );
 
-        let output = controller.update(1.0, 1.0, 0.0).unwrap();
+        controller.set_setpoint(1.0).unwrap();
+
+        let output = controller.update(1.0, 0.0).unwrap();
 
         assert_eq!(output.value(), f64::MAX,);
     }
@@ -560,11 +647,11 @@ mod tests {
     fn reset_clears_integral_and_derivative_history() {
         let gains = PidGains::new(0.0, 1.0, 1.0).unwrap();
 
-        let mut controller = PidController::new(gains);
+        let mut controller = PidController::new(10.0, gains).unwrap();
 
-        controller.update(10.0, 10.0, 5.0).unwrap();
+        controller.update(10.0, 5.0).unwrap();
 
-        let accumulated = controller.update(11.0, 10.0, 4.0).unwrap();
+        let accumulated = controller.update(11.0, 4.0).unwrap();
 
         assert_close(accumulated.integral(), 6.0);
 
@@ -574,7 +661,7 @@ mod tests {
 
         assert_close(controller.integral(), 0.0);
 
-        let restarted = controller.update(0.0, 20.0, 15.0).unwrap();
+        let restarted = controller.update(0.0, 5.0).unwrap();
 
         assert_close(restarted.integral(), 0.0);
 
@@ -585,8 +672,9 @@ mod tests {
     fn validates_output_limits() {
         let limits = PidOutputLimits::new(0.0, 100.0).unwrap();
 
-        assert_eq!(limits.minimum(), 0.0);
-        assert_eq!(limits.maximum(), 100.0);
+        assert_eq!(limits.minimum(), 0.0,);
+
+        assert_eq!(limits.maximum(), 100.0,);
 
         assert_eq!(
             PidOutputLimits::new(f64::NAN, 100.0,),
@@ -615,9 +703,9 @@ mod tests {
 
         let limits = PidOutputLimits::new(0.0, 100.0).unwrap();
 
-        let mut controller = PidController::with_output_limits(gains, limits);
+        let mut controller = PidController::with_output_limits(100.0, gains, limits).unwrap();
 
-        let high = controller.update(0.0, 100.0, 0.0).unwrap();
+        let high = controller.update(0.0, 0.0).unwrap();
 
         assert_close(high.unconstrained_value(), 200.0);
 
@@ -625,7 +713,9 @@ mod tests {
 
         assert!(high.saturated());
 
-        let low = controller.update(1.0, 0.0, 10.0).unwrap();
+        controller.set_setpoint(0.0).unwrap();
+
+        let low = controller.update(1.0, 10.0).unwrap();
 
         assert_close(low.unconstrained_value(), -20.0);
 
@@ -640,11 +730,11 @@ mod tests {
 
         let limits = PidOutputLimits::new(0.0, 100.0).unwrap();
 
-        let mut controller = PidController::with_output_limits(gains, limits);
+        let mut controller = PidController::with_output_limits(20.0, gains, limits).unwrap();
 
-        controller.update(0.0, 20.0, 0.0).unwrap();
+        controller.update(0.0, 0.0).unwrap();
 
-        let first_saturated = controller.update(1.0, 20.0, 0.0).unwrap();
+        let first_saturated = controller.update(1.0, 0.0).unwrap();
 
         assert_close(first_saturated.value(), 100.0);
 
@@ -652,7 +742,7 @@ mod tests {
 
         assert!(first_saturated.saturated(),);
 
-        let still_saturated = controller.update(2.0, 20.0, 0.0).unwrap();
+        let still_saturated = controller.update(2.0, 0.0).unwrap();
 
         assert_close(still_saturated.value(), 100.0);
 
@@ -660,7 +750,9 @@ mod tests {
 
         assert!(still_saturated.saturated(),);
 
-        let unwinding = controller.update(3.0, 0.0, 5.0).unwrap();
+        controller.set_setpoint(0.0).unwrap();
+
+        let unwinding = controller.update(3.0, 5.0).unwrap();
 
         assert_close(unwinding.integral(), 50.0);
 
@@ -675,23 +767,23 @@ mod tests {
 
         let limits = PidOutputLimits::new(-100.0, 0.0).unwrap();
 
-        let mut controller = PidController::with_output_limits(gains, limits);
+        let mut controller = PidController::with_output_limits(0.0, gains, limits).unwrap();
 
-        controller.update(0.0, 0.0, 20.0).unwrap();
+        controller.update(0.0, 20.0).unwrap();
 
-        let saturated = controller.update(1.0, 0.0, 20.0).unwrap();
+        let saturated = controller.update(1.0, 20.0).unwrap();
 
         assert_close(saturated.integral(), -100.0);
 
         assert_close(saturated.value(), -100.0);
 
-        assert!(saturated.saturated(),);
+        assert!(saturated.saturated());
 
-        let still_saturated = controller.update(2.0, 0.0, 20.0).unwrap();
+        let still_saturated = controller.update(2.0, 20.0).unwrap();
 
         assert_close(still_saturated.integral(), -100.0);
 
-        let unwinding = controller.update(3.0, 0.0, -5.0).unwrap();
+        let unwinding = controller.update(3.0, -5.0).unwrap();
 
         assert_close(unwinding.integral(), -50.0);
 
@@ -706,11 +798,12 @@ mod tests {
 
         let limits = PidOutputLimits::new(-100.0, 100.0).unwrap();
 
-        let mut controller = PidController::with_output_limits(initial_gains, limits);
+        let mut controller =
+            PidController::with_output_limits(10.0, initial_gains, limits).unwrap();
 
-        controller.update(0.0, 10.0, 8.0).unwrap();
+        controller.update(0.0, 8.0).unwrap();
 
-        let accumulated = controller.update(1.0, 10.0, 8.0).unwrap();
+        let accumulated = controller.update(1.0, 8.0).unwrap();
 
         assert_close(accumulated.integral(), 2.0);
 
@@ -718,7 +811,7 @@ mod tests {
 
         controller.set_gains(new_gains);
 
-        let updated = controller.update(2.0, 10.0, 8.0).unwrap();
+        let updated = controller.update(2.0, 8.0).unwrap();
 
         assert_eq!(controller.gains(), new_gains,);
 
@@ -735,9 +828,9 @@ mod tests {
     fn changes_output_limits_without_resetting_controller() {
         let gains = PidGains::new(2.0, 0.0, 0.0).unwrap();
 
-        let mut controller = PidController::new(gains);
+        let mut controller = PidController::new(100.0, gains).unwrap();
 
-        let unrestricted = controller.update(0.0, 100.0, 0.0).unwrap();
+        let unrestricted = controller.update(0.0, 0.0).unwrap();
 
         assert_close(unrestricted.value(), 200.0);
 
@@ -747,19 +840,19 @@ mod tests {
 
         controller.set_output_limits(narrow_limits);
 
-        let limited = controller.update(1.0, 100.0, 0.0).unwrap();
+        let limited = controller.update(1.0, 0.0).unwrap();
 
         assert_eq!(controller.output_limits(), narrow_limits,);
 
         assert_close(limited.value(), 100.0);
 
-        assert!(limited.saturated(),);
+        assert!(limited.saturated());
 
         let wide_limits = PidOutputLimits::new(0.0, 300.0).unwrap();
 
         controller.set_output_limits(wide_limits);
 
-        let unrestricted_again = controller.update(2.0, 100.0, 0.0).unwrap();
+        let unrestricted_again = controller.update(2.0, 0.0).unwrap();
 
         assert_close(unrestricted_again.value(), 200.0);
 
@@ -767,18 +860,20 @@ mod tests {
     }
 
     #[test]
-    fn reset_preserves_gains_and_output_limits() {
+    fn reset_preserves_controller_configuration() {
         let gains = PidGains::new(2.0, 3.0, 4.0).unwrap();
 
         let limits = PidOutputLimits::new(0.0, 100.0).unwrap();
 
-        let mut controller = PidController::with_output_limits(gains, limits);
+        let mut controller = PidController::with_output_limits(10.0, gains, limits).unwrap();
 
-        controller.update(0.0, 10.0, 5.0).unwrap();
+        controller.update(0.0, 5.0).unwrap();
 
-        controller.update(1.0, 10.0, 4.0).unwrap();
+        controller.update(1.0, 4.0).unwrap();
 
         controller.reset();
+
+        assert_eq!(controller.setpoint(), 10.0,);
 
         assert_eq!(controller.gains(), gains,);
 
