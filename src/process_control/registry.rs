@@ -10,17 +10,17 @@ use super::{
     PidControllerError, PidLoopDefinition, PidLoopDefinitionError, PidOutput, PidOutputLimits,
 };
 
-pub struct PidLoopRegistry<SignalId> {
+pub struct ControllerRegistry<SignalId> {
     loops: Vec<ControlLoop<SignalId, ControlOutputTarget>>,
 }
 
-impl<SignalId> Default for PidLoopRegistry<SignalId> {
+impl<SignalId> Default for ControllerRegistry<SignalId> {
     fn default() -> Self {
         Self { loops: Vec::new() }
     }
 }
 
-impl<SignalId> PidLoopRegistry<SignalId>
+impl<SignalId> ControllerRegistry<SignalId>
 where
     SignalId: Copy + Eq,
 {
@@ -31,18 +31,18 @@ where
     pub fn add(
         &mut self,
         definition: PidLoopDefinition<SignalId, ControlOutputTarget>,
-    ) -> Result<(), PidLoopRegistryError> {
+    ) -> Result<(), ControllerRegistryError> {
         let name = definition.name();
 
         if self.contains(name) {
-            return Err(PidLoopRegistryError::DuplicateName(name.to_owned()));
+            return Err(ControllerRegistryError::DuplicateName(name.to_owned()));
         }
 
         let target = definition.output_target();
 
         for existing in &self.loops {
             if output_targets_overlap(existing.output_target(), target) {
-                return Err(PidLoopRegistryError::OutputAlreadyControlled {
+                return Err(ControllerRegistryError::OutputAlreadyControlled {
                     existing_loop: existing.name().to_owned(),
 
                     target: *target,
@@ -142,7 +142,7 @@ where
         signal_id: SignalId,
         timestamp: f64,
         measurement: f64,
-    ) -> Vec<PidLoopEvent<SignalId>> {
+    ) -> Vec<ControlEvent<SignalId>> {
         let mut events = Vec::new();
 
         for control_loop in &mut self.loops {
@@ -160,7 +160,7 @@ where
                 Ok(output) => output,
 
                 Err(source) => {
-                    events.push(PidLoopEvent::Error(PidLoopExecutionError::Controller {
+                    events.push(ControlEvent::Error(ControlExecutionError::Controller {
                         loop_name,
                         source,
                     }));
@@ -173,7 +173,7 @@ where
                 Ok(request) => request,
 
                 Err(source) => {
-                    events.push(PidLoopEvent::Error(PidLoopExecutionError::Output {
+                    events.push(ControlEvent::Error(ControlExecutionError::Output {
                         loop_name,
                         source,
                     }));
@@ -182,7 +182,7 @@ where
                 }
             };
 
-            events.push(PidLoopEvent::Output(PidLoopOutput {
+            events.push(ControlEvent::Output(ControlOutput {
                 loop_name,
                 input: signal_id,
                 timestamp,
@@ -241,7 +241,7 @@ fn output_targets_overlap(left: &ControlOutputTarget, right: &ControlOutputTarge
 fn validate_output_limits(
     limits: PidOutputLimits,
     target: &ControlOutputTarget,
-) -> Result<(), PidLoopRegistryError> {
+) -> Result<(), ControllerRegistryError> {
     let Some(range) = target.range() else {
         return Ok(());
     };
@@ -253,7 +253,7 @@ fn validate_output_limits(
     };
 
     if limits.minimum() < target_minimum || limits.maximum() > target_maximum {
-        return Err(PidLoopRegistryError::OutputLimitsOutsideRange {
+        return Err(ControllerRegistryError::OutputLimitsOutsideRange {
             minimum: limits.minimum(),
 
             maximum: limits.maximum(),
@@ -268,13 +268,13 @@ fn validate_output_limits(
 }
 
 #[derive(Debug)]
-pub enum PidLoopEvent<SignalId> {
-    Output(PidLoopOutput<SignalId>),
-    Error(PidLoopExecutionError),
+pub enum ControlEvent<SignalId> {
+    Output(ControlOutput<SignalId>),
+    Error(ControlExecutionError),
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct PidLoopOutput<SignalId> {
+pub struct ControlOutput<SignalId> {
     pub loop_name: String,
     pub input: SignalId,
     pub timestamp: f64,
@@ -286,7 +286,7 @@ pub struct PidLoopOutput<SignalId> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum PidLoopRegistryError {
+pub enum ControllerRegistryError {
     DuplicateName(String),
 
     OutputAlreadyControlled {
@@ -302,7 +302,7 @@ pub enum PidLoopRegistryError {
     },
 }
 
-impl fmt::Display for PidLoopRegistryError {
+impl fmt::Display for ControllerRegistryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DuplicateName(name) => {
@@ -349,10 +349,10 @@ impl fmt::Display for PidLoopRegistryError {
     }
 }
 
-impl std::error::Error for PidLoopRegistryError {}
+impl std::error::Error for ControllerRegistryError {}
 
 #[derive(Debug)]
-pub enum PidLoopExecutionError {
+pub enum ControlExecutionError {
     Controller {
         loop_name: String,
 
@@ -366,7 +366,7 @@ pub enum PidLoopExecutionError {
     },
 }
 
-impl fmt::Display for PidLoopExecutionError {
+impl fmt::Display for ControlExecutionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Controller { loop_name, source } => {
@@ -389,7 +389,7 @@ impl fmt::Display for PidLoopExecutionError {
     }
 }
 
-impl std::error::Error for PidLoopExecutionError {
+impl std::error::Error for ControlExecutionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Controller { source, .. } => Some(source),
@@ -417,7 +417,7 @@ mod tests {
         },
     };
 
-    use super::{PidLoopEvent, PidLoopExecutionError, PidLoopRegistry, PidLoopRegistryError};
+    use super::{ControlEvent, ControlExecutionError, ControllerRegistry, ControllerRegistryError};
 
     fn virtual_target(connection: u64, instrument: u16, parameter: u16) -> ControlOutputTarget {
         let descriptor = VirtualParameterDescriptor::new(
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn starts_empty() {
-        let registry = PidLoopRegistry::<u64>::new();
+        let registry = ControllerRegistry::<u64>::new();
 
         assert!(registry.is_empty());
 
@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn registers_pid_loop() {
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         registry
             .add(definition("heater", 1, virtual_target(1, 1, 1)))
@@ -485,7 +485,7 @@ mod tests {
 
     #[test]
     fn changes_registered_loop_setpoint() {
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         registry
             .add(definition("heater", 1, virtual_target(1, 1, 1)))
@@ -495,7 +495,7 @@ mod tests {
 
         let events = registry.process(1, 1_000.0, 80.0);
 
-        let [PidLoopEvent::Output(output)] = events.as_slice() else {
+        let [ControlEvent::Output(output)] = events.as_slice() else {
             panic!("expected one PID output event");
         };
 
@@ -504,14 +504,14 @@ mod tests {
 
     #[test]
     fn reports_missing_loop_when_setting_setpoint() {
-        let mut registry = PidLoopRegistry::<u64>::new();
+        let mut registry = ControllerRegistry::<u64>::new();
 
         assert_eq!(registry.set_setpoint("missing", 90.0), Ok(false),);
     }
 
     #[test]
     fn rejects_invalid_setpoint_without_changing_existing_value() {
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         registry
             .add(definition("heater", 1, virtual_target(1, 1, 1)))
@@ -524,7 +524,7 @@ mod tests {
 
         let events = registry.process(1, 1_000.0, 80.0);
 
-        let [PidLoopEvent::Output(output)] = events.as_slice() else {
+        let [ControlEvent::Output(output)] = events.as_slice() else {
             panic!("expected one PID output event");
         };
 
@@ -535,7 +535,7 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_loop_name() {
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         registry
             .add(definition("heater", 1, virtual_target(1, 1, 1)))
@@ -545,7 +545,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(PidLoopRegistryError::DuplicateName("heater".to_owned(),),),
+            Err(ControllerRegistryError::DuplicateName("heater".to_owned(),),),
         );
 
         assert_eq!(registry.len(), 1,);
@@ -553,7 +553,7 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_virtual_output() {
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         let target = virtual_target(1, 1, 1);
 
@@ -563,7 +563,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(PidLoopRegistryError::OutputAlreadyControlled {
+            Err(ControllerRegistryError::OutputAlreadyControlled {
                 existing_loop: "heater_one".to_owned(),
 
                 target,
@@ -573,7 +573,7 @@ mod tests {
 
     #[test]
     fn rejects_same_metakon_parameter_with_different_scales() {
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         let first = ControlOutputTarget::metakon_5x3(
             ConnectionId::PRIMARY,
@@ -597,7 +597,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(PidLoopRegistryError::OutputAlreadyControlled {
+            Err(ControllerRegistryError::OutputAlreadyControlled {
                 existing_loop: "heater_one".to_owned(),
 
                 target: second,
@@ -607,7 +607,7 @@ mod tests {
 
     #[test]
     fn allows_same_parameter_on_different_connections() {
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         registry
             .add(definition("heater_one", 1, virtual_target(1, 1, 1)))
@@ -634,13 +634,13 @@ mod tests {
         )
         .unwrap();
 
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         let result = registry.add(definition);
 
         assert_eq!(
             result,
-            Err(PidLoopRegistryError::OutputLimitsOutsideRange {
+            Err(ControllerRegistryError::OutputLimitsOutsideRange {
                 minimum: -1.0,
 
                 maximum: 100.0,
@@ -656,7 +656,7 @@ mod tests {
 
     #[test]
     fn creates_output_for_matching_input() {
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         registry
             .add(definition("heater", 5, virtual_target(2, 7, 4)))
@@ -668,7 +668,7 @@ mod tests {
 
         let event = events.into_iter().next().unwrap();
 
-        let PidLoopEvent::Output(output) = event else {
+        let ControlEvent::Output(output) = event else {
             panic!("expected PID output event",);
         };
 
@@ -700,7 +700,7 @@ mod tests {
 
     #[test]
     fn ignores_unrelated_input() {
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         registry
             .add(definition("heater", 5, virtual_target(1, 1, 1)))
@@ -713,7 +713,7 @@ mod tests {
 
     #[test]
     fn processes_multiple_loops_from_same_input() {
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         registry
             .add(definition("heater_one", 5, virtual_target(1, 1, 1)))
@@ -730,7 +730,7 @@ mod tests {
         assert!(matches!(
             &events[0],
 
-            PidLoopEvent::Output(
+            ControlEvent::Output(
                 output,
             ) if output.loop_name
                 == "heater_one"
@@ -739,7 +739,7 @@ mod tests {
         assert!(matches!(
             &events[1],
 
-            PidLoopEvent::Output(
+            ControlEvent::Output(
                 output,
             ) if output.loop_name
                 == "heater_two"
@@ -748,7 +748,7 @@ mod tests {
 
     #[test]
     fn reports_controller_errors() {
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         registry
             .add(definition("heater", 5, virtual_target(1, 1, 1)))
@@ -761,8 +761,8 @@ mod tests {
         assert!(matches!(
             &events[0],
 
-            PidLoopEvent::Error(
-                PidLoopExecutionError::
+            ControlEvent::Error(
+                ControlExecutionError::
                     Controller {
                         loop_name,
                         ..
@@ -773,7 +773,7 @@ mod tests {
 
     #[test]
     fn removes_loop_by_name() {
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         registry
             .add(definition("heater", 1, virtual_target(1, 1, 1)))
@@ -788,7 +788,7 @@ mod tests {
 
     #[test]
     fn removes_loops_for_deleted_input() {
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         registry
             .add(definition("first", 1, virtual_target(1, 1, 1)))
@@ -813,7 +813,7 @@ mod tests {
 
     #[test]
     fn resets_only_matching_loops() {
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         registry
             .add(definition("first", 1, virtual_target(1, 1, 1)))
@@ -834,7 +834,7 @@ mod tests {
 
     #[test]
     fn clears_all_loops() {
-        let mut registry = PidLoopRegistry::new();
+        let mut registry = ControllerRegistry::new();
 
         registry
             .add(definition("heater", 1, virtual_target(1, 1, 1)))
@@ -848,12 +848,12 @@ mod tests {
     #[test]
     fn describes_registry_errors() {
         assert_eq!(
-            PidLoopRegistryError::DuplicateName("heater".to_owned(),).to_string(),
+            ControllerRegistryError::DuplicateName("heater".to_owned(),).to_string(),
             "PID loop 'heater' already exists",
         );
 
         assert_eq!(
-            PidLoopRegistryError::OutputLimitsOutsideRange {
+            ControllerRegistryError::OutputLimitsOutsideRange {
                 minimum: -10.0,
 
                 maximum: 100.0,

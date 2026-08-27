@@ -9,8 +9,8 @@ use std::{
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 
 use crate::process_control::{
-    ControlOutputTarget, PidLoopDefinition, PidLoopDefinitionError, PidLoopEvent, PidLoopRegistry,
-    PidLoopRegistryError,
+    ControlEvent, ControlOutputTarget, ControllerRegistry, ControllerRegistryError,
+    PidLoopDefinition, PidLoopDefinitionError,
 };
 
 use super::{
@@ -57,7 +57,7 @@ enum ProcessingCommand<SignalId> {
 
     AddPidLoop {
         definition: PidLoopDefinition<SignalId, ControlOutputTarget>,
-        response_sender: Sender<Result<(), PidLoopRegistryError>>,
+        response_sender: Sender<Result<(), ControllerRegistryError>>,
     },
 
     SetPidSetpoint {
@@ -239,7 +239,7 @@ impl<SignalId> ProcessingHandle<SignalId> {
 pub struct ProcessingService<SignalId> {
     handle: ProcessingHandle<SignalId>,
     event_receiver: Receiver<ProcessingEvent<SignalId>>,
-    control_event_receiver: Receiver<PidLoopEvent<SignalId>>,
+    control_event_receiver: Receiver<ControlEvent<SignalId>>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -281,7 +281,7 @@ impl<SignalId> ProcessingService<SignalId> {
         self.event_receiver.clone()
     }
 
-    pub fn control_event_receiver(&self) -> Receiver<PidLoopEvent<SignalId>> {
+    pub fn control_event_receiver(&self) -> Receiver<ControlEvent<SignalId>> {
         self.control_event_receiver.clone()
     }
 
@@ -303,13 +303,13 @@ impl<SignalId> Drop for ProcessingService<SignalId> {
 fn run_processing<SignalId>(
     command_receiver: Receiver<ProcessingCommand<SignalId>>,
     event_sender: Sender<ProcessingEvent<SignalId>>,
-    control_event_sender: Sender<PidLoopEvent<SignalId>>,
+    control_event_sender: Sender<ControlEvent<SignalId>>,
 ) where
     SignalId: Copy + Eq + Hash,
 {
     let mut graph = SignalProcessingGraph::new();
 
-    let mut registry = PidLoopRegistry::new();
+    let mut registry = ControllerRegistry::new();
 
     while let Ok(command) = command_receiver.recv() {
         match command {
@@ -403,13 +403,13 @@ fn run_processing<SignalId>(
 fn process_inputs<SignalId>(
     graph: &mut SignalProcessingGraph<SignalId>,
 
-    registry: &mut PidLoopRegistry<SignalId>,
+    registry: &mut ControllerRegistry<SignalId>,
 
     inputs: Vec<ProcessingInput<SignalId>>,
 
     event_sender: &Sender<ProcessingEvent<SignalId>>,
 
-    control_event_sender: &Sender<PidLoopEvent<SignalId>>,
+    control_event_sender: &Sender<ControlEvent<SignalId>>,
 ) where
     SignalId: Copy + Eq + Hash,
 {
@@ -445,9 +445,9 @@ fn process_inputs<SignalId>(
 }
 
 fn send_control_events<SignalId>(
-    events: Vec<PidLoopEvent<SignalId>>,
+    events: Vec<ControlEvent<SignalId>>,
 
-    sender: &Sender<PidLoopEvent<SignalId>>,
+    sender: &Sender<ControlEvent<SignalId>>,
 ) {
     for event in events {
         let _ = sender.send(event);
@@ -488,7 +488,7 @@ where
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AddPidLoopError {
-    Definition(PidLoopRegistryError),
+    Definition(ControllerRegistryError),
 
     Disconnected,
 }
@@ -610,7 +610,7 @@ mod tests {
             },
         },
         process_control::{
-            ControlOutputTarget, PidGains, PidLoopDefinition, PidLoopEvent, PidLoopOutput,
+            ControlEvent, ControlOutput, ControlOutputTarget, PidGains, PidLoopDefinition,
             PidOutputLimits,
         },
         signal_processing::{
@@ -659,11 +659,11 @@ mod tests {
     }
 
     fn receive_pid_output(
-        events: &crossbeam_channel::Receiver<PidLoopEvent<u64>>,
-    ) -> PidLoopOutput<u64> {
+        events: &crossbeam_channel::Receiver<ControlEvent<u64>>,
+    ) -> ControlOutput<u64> {
         let event = events.recv_timeout(EVENT_TIMEOUT).unwrap();
 
-        let PidLoopEvent::Output(output) = event else {
+        let ControlEvent::Output(output) = event else {
             panic!("expected PID output event");
         };
 

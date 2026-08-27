@@ -768,7 +768,7 @@ mod tests {
             },
         },
         process_control::{
-            ControlOutputTarget, PidGains, PidLoopDefinition, PidLoopEvent, PidOutputLimits,
+            ControlEvent, ControlOutputTarget, PidGains, PidLoopDefinition, PidOutputLimits,
         },
         signal_processing::SignalFilterDefinition,
         user_command::UserCommand,
@@ -887,7 +887,7 @@ mod tests {
 
         let event = control_events.recv_timeout(Duration::from_secs(1)).unwrap();
 
-        let PidLoopEvent::Output(output) = event else {
+        let ControlEvent::Output(output) = event else {
             panic!("expected PID output from processing service");
         };
 

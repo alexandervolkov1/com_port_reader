@@ -16,5 +16,5 @@ pub use pid::{
     PidOutputLimitsError,
 };
 pub use registry::{
-    PidLoopEvent, PidLoopExecutionError, PidLoopOutput, PidLoopRegistry, PidLoopRegistryError,
+    ControlEvent, ControlExecutionError, ControlOutput, ControllerRegistry, ControllerRegistryError,
 };

@@ -11,7 +11,7 @@ use crate::{
     connection::ConnectionId,
     data::SeriesId,
     instrument::InstrumentWriteRequest,
-    process_control::PidLoopEvent,
+    process_control::ControlEvent,
     process_recorder::{ProcessControlOutput, ProcessRecorder},
     serial_connection::SerialConnectionRegistry,
     worker::ConnectionRouter,
@@ -24,7 +24,7 @@ pub(crate) struct ProcessControlDispatcher {
 
 impl ProcessControlDispatcher {
     pub(crate) fn spawn(
-        event_receiver: Receiver<PidLoopEvent<SeriesId>>,
+        event_receiver: Receiver<ControlEvent<SeriesId>>,
         connection_router: ConnectionRouter,
         serial_connections: SerialConnectionRegistry,
         process_recorder: ProcessRecorder,
@@ -63,7 +63,7 @@ impl Drop for ProcessControlDispatcher {
 }
 
 fn run(
-    event_receiver: Receiver<PidLoopEvent<SeriesId>>,
+    event_receiver: Receiver<ControlEvent<SeriesId>>,
     shutdown_receiver: Receiver<()>,
     connection_router: ConnectionRouter,
     serial_connections: SerialConnectionRegistry,
@@ -82,7 +82,7 @@ fn run(
                 };
 
                 match event {
-                    PidLoopEvent::Output(output) => {
+                    ControlEvent::Output(output) => {
                         let loop_name =
                             output.loop_name;
 
@@ -208,7 +208,7 @@ fn run(
                             );
                     }
 
-                    PidLoopEvent::Error(error) => {
+                    ControlEvent::Error(error) => {
                         log.error(format!(
                             "PID loop execution failed: \
                              {error}",
