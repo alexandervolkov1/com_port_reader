@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crossbeam_channel::{RecvTimeoutError, Sender, bounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded};
 use mlua::{FromLua, Lua, Table, UserData, UserDataMethods, Value};
 
 use crate::{
@@ -11,8 +11,8 @@ use crate::{
         NewSeries, SamplingInterval, SeriesColor,
     },
     instrument::{
-        InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterRange,
-        ParameterValueType,
+        InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterDescriptor,
+        ParameterRange, ParameterValueType,
         metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
         virtual_instrument::{
             VirtualInstrumentDescriptor, VirtualInstrumentId, VirtualParameterDescriptor,
@@ -20,13 +20,15 @@ use crate::{
     },
     lua_application_script::LuaApplicationEvent,
     process_control::{ControlOutputTarget, NewPidLoop, PidGains, PidOutputLimits},
-    signal_processing::SignalFilterDefinition,
+    signal_processing::{ControllerRequestError, SignalFilterDefinition},
     user_command::UserCommand,
 };
 
 const INSTRUMENT_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 const INSTRUMENT_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
+const CONTROLLER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 const VIRTUAL_INSTRUMENT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -474,7 +476,7 @@ fn add_pid_loop(
     command_sender: &Sender<UserCommand>,
     output_target: ControlOutputTarget,
     options: &Table,
-) -> mlua::Result<()> {
+) -> mlua::Result<LuaControllerHandle> {
     validate_pid_options(options)?;
 
     let name = options
@@ -520,7 +522,7 @@ fn add_pid_loop(
         .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
     let pid_loop = NewPidLoop::new(
-        name,
+        name.clone(),
         input_name,
         output_target,
         setpoint,
@@ -529,7 +531,12 @@ fn add_pid_loop(
     )
     .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
-    send_application_command(command_sender, UserCommand::AddPidLoop(pid_loop))
+    send_application_command(command_sender, UserCommand::AddPidLoop(pid_loop))?;
+
+    Ok(LuaControllerHandle {
+        name,
+        command_sender: command_sender.clone(),
+    })
 }
 
 fn validate_pid_options(options: &Table) -> mlua::Result<()> {
@@ -716,6 +723,137 @@ fn validate_metakon_controller_options(options: &Table) -> mlua::Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Clone)]
+struct LuaControllerHandle {
+    name: String,
+    command_sender: Sender<UserCommand>,
+}
+
+fn receive_controller_response<T>(
+    receiver: Receiver<Result<T, ControllerRequestError>>,
+    operation: &str,
+) -> mlua::Result<T> {
+    match receiver.recv_timeout(CONTROLLER_REQUEST_TIMEOUT) {
+        Ok(Ok(value)) => Ok(value),
+
+        Ok(Err(error)) => Err(mlua::Error::RuntimeError(format!(
+            "Controller {operation} failed: {error}",
+        ))),
+
+        Err(RecvTimeoutError::Timeout) => Err(mlua::Error::RuntimeError(format!(
+            "Timed out waiting for controller {operation}",
+        ))),
+
+        Err(RecvTimeoutError::Disconnected) => Err(mlua::Error::RuntimeError(format!(
+            "Controller {operation} response channel is disconnected",
+        ))),
+    }
+}
+
+impl LuaControllerHandle {
+    fn controller_parameters(&self) -> mlua::Result<Vec<ParameterDescriptor>> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::ControllerParameters {
+                name: self.name.clone(),
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "parameter discovery")
+    }
+
+    fn parameters(&self, lua: &Lua) -> mlua::Result<Table> {
+        let descriptors = self.controller_parameters()?;
+
+        let parameters = lua.create_table_with_capacity(descriptors.len(), 0)?;
+
+        for (index, descriptor) in descriptors.into_iter().enumerate() {
+            let entry = lua.create_table_with_capacity(0, 6)?;
+
+            entry.set("key", descriptor.key)?;
+            entry.set("name", descriptor.name)?;
+            entry.set("access", descriptor.access.as_str())?;
+            entry.set("value_type", descriptor.value_type.as_str())?;
+
+            match descriptor.range {
+                ParameterRange::Integer { minimum, maximum } => {
+                    entry.set("minimum", minimum)?;
+                    entry.set("maximum", maximum)?;
+                }
+
+                ParameterRange::Number { minimum, maximum } => {
+                    entry.set("minimum", minimum)?;
+                    entry.set("maximum", maximum)?;
+                }
+            }
+
+            parameters.raw_set((index + 1) as i64, entry)?;
+        }
+
+        Ok(parameters)
+    }
+
+    fn parameter_descriptor(&self, key: &str) -> mlua::Result<ParameterDescriptor> {
+        self.controller_parameters()?
+            .into_iter()
+            .find(|parameter| parameter.key == key)
+            .ok_or_else(|| {
+                mlua::Error::RuntimeError(format!(
+                    "Controller '{}' has no parameter '{key}'",
+                    self.name,
+                ))
+            })
+    }
+
+    fn read_parameter(&self, key: &str) -> mlua::Result<InstrumentValue> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::ReadControllerParameter {
+                name: self.name.clone(),
+                key: key.to_owned(),
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "parameter read")
+    }
+
+    fn write_parameter(&self, key: &str, value: InstrumentValue) -> mlua::Result<InstrumentValue> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::WriteControllerParameter {
+                name: self.name.clone(),
+                key: key.to_owned(),
+                value,
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "parameter write")
+    }
+
+    fn reset(&self) -> mlua::Result<()> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::ResetController {
+                name: self.name.clone(),
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "reset")
+    }
 }
 
 #[derive(Clone)]
@@ -1221,6 +1359,54 @@ fn instrument_value_to_lua(value: InstrumentValue) -> Value {
     }
 }
 
+fn controller_value_from_lua(
+    lua: &Lua,
+    parameter: ParameterDescriptor,
+    value: Value,
+) -> mlua::Result<InstrumentValue> {
+    match parameter.value_type {
+        ParameterValueType::Boolean => {
+            let value = bool::from_lua(value, lua).map_err(|_| {
+                mlua::Error::RuntimeError(format!(
+                    "Controller parameter '{}' expects a Boolean value",
+                    parameter.key,
+                ))
+            })?;
+
+            Ok(InstrumentValue::Boolean(value))
+        }
+
+        ParameterValueType::Integer => {
+            let value = i64::from_lua(value, lua).map_err(|_| {
+                mlua::Error::RuntimeError(format!(
+                    "Controller parameter '{}' expects an integer value",
+                    parameter.key,
+                ))
+            })?;
+
+            Ok(InstrumentValue::Integer(value))
+        }
+
+        ParameterValueType::Number => {
+            let value = f64::from_lua(value, lua).map_err(|_| {
+                mlua::Error::RuntimeError(format!(
+                    "Controller parameter '{}' expects a numeric value",
+                    parameter.key,
+                ))
+            })?;
+
+            if !value.is_finite() {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "Controller parameter '{}' must be finite",
+                    parameter.key,
+                )));
+            }
+
+            Ok(InstrumentValue::Number(value))
+        }
+    }
+}
+
 fn virtual_instrument_value_from_lua(
     lua: &Lua,
     parameter: &VirtualParameterDescriptor,
@@ -1275,6 +1461,44 @@ fn virtual_instrument_value_from_lua(
     }
 }
 
+impl UserData for LuaControllerHandle {
+    fn add_methods<M>(methods: &mut M)
+    where
+        M: UserDataMethods<Self>,
+    {
+        methods.add_method("name", |_, controller, ()| Ok(controller.name.clone()));
+
+        methods.add_method("parameters", |lua, controller, ()| {
+            controller.parameters(lua)
+        });
+
+        methods.add_method("read", |_, controller, key: String| {
+            let value = controller.read_parameter(&key)?;
+
+            Ok(instrument_value_to_lua(value))
+        });
+
+        methods.add_method("write", |lua, controller, (key, value): (String, Value)| {
+            let parameter = controller.parameter_descriptor(&key)?;
+
+            if !parameter.access.writable() {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "Controller parameter '{}' is read-only",
+                    key,
+                )));
+            }
+
+            let value = controller_value_from_lua(lua, parameter, value)?;
+
+            let actual = controller.write_parameter(&key, value)?;
+
+            Ok(instrument_value_to_lua(actual))
+        });
+
+        methods.add_method("reset", |_, controller, ()| controller.reset());
+    }
+}
+
 impl UserData for LuaVirtualInstrument {
     fn add_methods<M>(methods: &mut M)
     where
@@ -1320,7 +1544,7 @@ impl UserData for LuaVirtualInstrument {
 
         methods.add_method(
             "pid",
-            |_, instrument, (parameter_key, options): (String, Table)| {
+            |lua, instrument, (parameter_key, options): (String, Table)| {
                 let parameter = instrument.parameter(&parameter_key)?;
 
                 let output_target = ControlOutputTarget::virtual_instrument(
@@ -1330,7 +1554,9 @@ impl UserData for LuaVirtualInstrument {
                 )
                 .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
-                add_pid_loop(&instrument.command_sender, output_target, &options)
+                let controller = add_pid_loop(&instrument.command_sender, output_target, &options)?;
+
+                lua.create_userdata(controller)
             },
         );
     }
@@ -1383,7 +1609,7 @@ impl UserData for LuaMetakon5x3 {
 
         methods.add_method(
             "pid",
-            |_, controller, (parameter_key, options): (String, Table)| {
+            |lua, controller, (parameter_key, options): (String, Table)| {
                 let parameter = metakon_parameter_from_key(&parameter_key)?;
 
                 let scale = controller.parameter_scale(parameter);
@@ -1396,7 +1622,9 @@ impl UserData for LuaMetakon5x3 {
                 )
                 .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
-                add_pid_loop(&controller.command_sender, output_target, &options)
+                let handle = add_pid_loop(&controller.command_sender, output_target, &options)?;
+
+                lua.create_userdata(handle)
             },
         );
     }

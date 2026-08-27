@@ -4,9 +4,11 @@ use crate::{
     acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
     connection::ConnectionId,
     data::{NewFilteredSeries, NewSeries, SeriesColor},
-    instrument::{InstrumentReadRequest, InstrumentWriteRequest},
+    instrument::{
+        InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterDescriptor,
+    },
     process_control::{ControlOutputTarget, NewPidLoop},
-    signal_processing::SignalFilterDefinition,
+    signal_processing::{ControllerRequestError, SignalFilterDefinition},
 };
 
 #[derive(Debug)]
@@ -14,28 +16,58 @@ pub enum UserCommand {
     Add(NewSeries),
     AddFilter(NewFilteredSeries),
     AddPidLoop(NewPidLoop<ControlOutputTarget>),
+
+    ControllerParameters {
+        name: String,
+        response_sender: Sender<Result<Vec<ParameterDescriptor>, ControllerRequestError>>,
+    },
+
+    ReadControllerParameter {
+        name: String,
+        key: String,
+        response_sender: Sender<Result<InstrumentValue, ControllerRequestError>>,
+    },
+
+    WriteControllerParameter {
+        name: String,
+        key: String,
+        value: InstrumentValue,
+        response_sender: Sender<Result<InstrumentValue, ControllerRequestError>>,
+    },
+
+    ResetController {
+        name: String,
+        response_sender: Sender<Result<(), ControllerRequestError>>,
+    },
+
     SetPidSetpoint {
         name: String,
         setpoint: f64,
     },
+
     SetFilter {
         name: String,
         definition: SignalFilterDefinition,
     },
+
     Delete {
         name: String,
     },
+
     Rename {
         current_name: String,
         new_name: String,
     },
+
     SetSeriesColor {
         name: String,
         color: Option<SeriesColor>,
     },
+
     Retry {
         name: String,
     },
+
     RetryAll,
 
     Start,

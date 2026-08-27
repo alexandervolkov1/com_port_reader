@@ -150,6 +150,47 @@ impl CommandDispatcher {
                 self.add_pid_loop(pid_loop);
             }
 
+            UserCommand::ControllerParameters {
+                name,
+                response_sender,
+            } => {
+                let result = self.processing.controller_parameters(&name);
+
+                let _ = response_sender.send(result);
+            }
+
+            UserCommand::ReadControllerParameter {
+                name,
+                key,
+                response_sender,
+            } => {
+                let result = self.processing.read_controller_parameter(&name, &key);
+
+                let _ = response_sender.send(result);
+            }
+
+            UserCommand::WriteControllerParameter {
+                name,
+                key,
+                value,
+                response_sender,
+            } => {
+                let result = self
+                    .processing
+                    .write_controller_parameter(&name, &key, value);
+
+                let _ = response_sender.send(result);
+            }
+
+            UserCommand::ResetController {
+                name,
+                response_sender,
+            } => {
+                let result = self.processing.reset_controller(&name);
+
+                let _ = response_sender.send(result);
+            }
+
             UserCommand::SetPidSetpoint { name, setpoint } => {
                 self.set_pid_setpoint(name, setpoint);
             }

@@ -13,6 +13,7 @@ use crate::{
     application_paths::ApplicationPaths,
     connection::ConnectionId,
     data::{Sample, SeriesId, SeriesSample, SeriesStore},
+    instrument::InstrumentValue,
     lua_application_definition::apply_lua_definition,
     lua_application_script::{LuaApplicationEvent, LuaControlInvocation},
     lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle, LuaWorkerHandleError},
@@ -678,6 +679,27 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
                 output_maximum: limits.maximum(),
             })
         }
+
+        UserCommand::WriteControllerParameter {
+            name, key, value, ..
+        } => {
+            if key == "setpoint" {
+                if let InstrumentValue::Number(setpoint) = value {
+                    Some(ProcessAction::SetPidSetpoint {
+                        name: name.clone(),
+                        setpoint: *setpoint,
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+
+        UserCommand::ControllerParameters { .. }
+        | UserCommand::ReadControllerParameter { .. }
+        | UserCommand::ResetController { .. } => None,
 
         UserCommand::SetPidSetpoint { name, setpoint } => Some(ProcessAction::SetPidSetpoint {
             name: name.clone(),
