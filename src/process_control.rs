@@ -1,5 +1,6 @@
 mod control_loop;
 mod controller;
+mod diagnostic;
 mod new_loop;
 mod output_conversion;
 mod output_target;
@@ -11,6 +12,7 @@ pub use controller::{
     Controller, ControllerError, ControllerKind, ControllerOutput, ControllerParameter,
     ControllerParameterError,
 };
+pub use diagnostic::ControllerDiagnostic;
 pub use new_loop::{NewPidLoop, NewPidLoopError};
 pub use output_conversion::ControlOutputConversionError;
 pub use output_target::{ControlOutputParameter, ControlOutputTarget, ControlOutputTargetError};

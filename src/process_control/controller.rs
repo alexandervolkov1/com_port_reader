@@ -1,9 +1,10 @@
 use std::{error::Error, fmt};
 
 use super::{
-    PidController, PidControllerError, PidGains, PidGainsError, PidOutput, PidOutputLimits,
-    PidOutputLimitsError,
+    ControllerDiagnostic, PidController, PidControllerError, PidGains, PidGainsError, PidOutput,
+    PidOutputLimits, PidOutputLimitsError,
 };
+
 use crate::instrument::{
     InstrumentValue, ParameterAccess, ParameterDescriptor, ParameterRange, ParameterValueType,
 };
@@ -407,6 +408,22 @@ impl ControllerOutput {
         }
     }
 
+    pub const fn diagnostic(&self, diagnostic: ControllerDiagnostic) -> Option<f64> {
+        match diagnostic {
+            ControllerDiagnostic::Setpoint => self.setpoint(),
+
+            ControllerDiagnostic::Proportional => self.proportional(),
+
+            ControllerDiagnostic::Integral => self.integral(),
+
+            ControllerDiagnostic::Derivative => self.derivative(),
+
+            ControllerDiagnostic::Output => Some(self.value()),
+
+            ControllerDiagnostic::UnconstrainedOutput => self.unconstrained_value(),
+        }
+    }
+
     pub const fn setpoint(&self) -> Option<f64> {
         match self {
             Self::Pid { setpoint, .. } => Some(*setpoint),
@@ -586,8 +603,8 @@ impl Error for ControllerError {
 #[cfg(test)]
 mod tests {
     use super::{
-        Controller, ControllerError, ControllerKind, ControllerOutput, ControllerParameter,
-        ControllerParameterError,
+        Controller, ControllerDiagnostic, ControllerError, ControllerKind, ControllerOutput,
+        ControllerParameter, ControllerParameterError,
     };
 
     use crate::{
@@ -644,6 +661,40 @@ mod tests {
         assert_eq!(setpoint, 100.0,);
 
         assert_eq!(output.proportional(), 40.0,);
+    }
+
+    #[test]
+    fn exposes_pid_diagnostics() {
+        let mut controller = controller();
+
+        let output = controller.update(1_000.0, 80.0).unwrap();
+
+        assert_eq!(
+            output.diagnostic(ControllerDiagnostic::Setpoint,),
+            Some(100.0),
+        );
+
+        assert_eq!(
+            output.diagnostic(ControllerDiagnostic::Proportional,),
+            Some(40.0),
+        );
+
+        assert_eq!(
+            output.diagnostic(ControllerDiagnostic::Integral,),
+            Some(0.0),
+        );
+
+        assert_eq!(
+            output.diagnostic(ControllerDiagnostic::Derivative,),
+            Some(0.0),
+        );
+
+        assert_eq!(output.diagnostic(ControllerDiagnostic::Output,), Some(40.0),);
+
+        assert_eq!(
+            output.diagnostic(ControllerDiagnostic::UnconstrainedOutput,),
+            Some(40.0),
+        );
     }
 
     #[test]
