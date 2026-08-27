@@ -171,34 +171,55 @@ impl Controller {
         }
     }
 
+    pub fn configure<I, K>(&mut self, updates: I) -> Result<(), ControllerParameterError>
+    where
+        I: IntoIterator<Item = (K, InstrumentValue)>,
+        K: AsRef<str>,
+    {
+        let mut resolved = Vec::new();
+
+        for (key, value) in updates {
+            let key = key.as_ref();
+
+            let parameter = ControllerParameter::from_key(key)
+                .ok_or_else(|| ControllerParameterError::UnknownParameter(key.to_owned()))?;
+
+            if !self.supports_parameter(parameter) {
+                return Err(ControllerParameterError::UnsupportedParameter {
+                    kind: self.kind(),
+                    parameter,
+                });
+            }
+
+            let descriptor = parameter.descriptor();
+
+            if !descriptor.access.writable() {
+                return Err(ControllerParameterError::NotWritable(parameter));
+            }
+
+            if resolved
+                .iter()
+                .any(|(existing_parameter, _)| *existing_parameter == parameter)
+            {
+                return Err(ControllerParameterError::DuplicateParameter(parameter));
+            }
+
+            let value = expect_number(parameter, value)?;
+
+            resolved.push((parameter, value));
+        }
+
+        match self {
+            Self::Pid(controller) => configure_pid(controller, &resolved),
+        }
+    }
+
     pub fn write(
         &mut self,
         key: &str,
         value: InstrumentValue,
     ) -> Result<InstrumentValue, ControllerParameterError> {
-        let parameter = ControllerParameter::from_key(key)
-            .ok_or_else(|| ControllerParameterError::UnknownParameter(key.to_owned()))?;
-
-        if !self.supports_parameter(parameter) {
-            return Err(ControllerParameterError::UnsupportedParameter {
-                kind: self.kind(),
-                parameter,
-            });
-        }
-
-        let descriptor = parameter.descriptor();
-
-        if !descriptor.access.writable() {
-            return Err(ControllerParameterError::NotWritable(parameter));
-        }
-
-        let number = expect_number(parameter, value)?;
-
-        match self {
-            Self::Pid(controller) => {
-                write_pid_parameter(controller, parameter, number)?;
-            }
-        }
+        self.configure([(key, value)])?;
 
         self.read(key)
     }
@@ -278,65 +299,63 @@ fn read_pid_parameter(
     InstrumentValue::Number(value)
 }
 
-fn write_pid_parameter(
+fn configure_pid(
     controller: &mut PidController,
-    parameter: ControllerParameter,
-    value: f64,
+    updates: &[(ControllerParameter, f64)],
 ) -> Result<(), ControllerParameterError> {
-    match parameter {
-        ControllerParameter::Setpoint => {
-            controller
-                .set_setpoint(value)
-                .map_err(ControllerParameterError::Controller)?;
-        }
+    let mut setpoint = controller.setpoint();
 
-        ControllerParameter::ProportionalGain => {
-            let current = controller.gains();
+    let current_gains = controller.gains();
 
-            let gains = PidGains::new(value, current.integral(), current.derivative())
-                .map_err(ControllerParameterError::Gains)?;
+    let mut proportional_gain = current_gains.proportional();
 
-            controller.set_gains(gains);
-        }
+    let mut integral_gain = current_gains.integral();
 
-        ControllerParameter::IntegralGain => {
-            let current = controller.gains();
+    let mut derivative_gain = current_gains.derivative();
 
-            let gains = PidGains::new(current.proportional(), value, current.derivative())
-                .map_err(ControllerParameterError::Gains)?;
+    let current_limits = controller.output_limits();
 
-            controller.set_gains(gains);
-        }
+    let mut output_minimum = current_limits.minimum();
 
-        ControllerParameter::DerivativeGain => {
-            let current = controller.gains();
+    let mut output_maximum = current_limits.maximum();
 
-            let gains = PidGains::new(current.proportional(), current.integral(), value)
-                .map_err(ControllerParameterError::Gains)?;
+    for (parameter, value) in updates {
+        match parameter {
+            ControllerParameter::Setpoint => {
+                setpoint = *value;
+            }
 
-            controller.set_gains(gains);
-        }
+            ControllerParameter::ProportionalGain => {
+                proportional_gain = *value;
+            }
 
-        ControllerParameter::OutputMinimum => {
-            let current = controller.output_limits();
+            ControllerParameter::IntegralGain => {
+                integral_gain = *value;
+            }
 
-            let limits = PidOutputLimits::new(value, current.maximum())
-                .map_err(ControllerParameterError::OutputLimits)?;
+            ControllerParameter::DerivativeGain => {
+                derivative_gain = *value;
+            }
 
-            controller.set_output_limits(limits);
-        }
+            ControllerParameter::OutputMinimum => {
+                output_minimum = *value;
+            }
 
-        ControllerParameter::OutputMaximum => {
-            let current = controller.output_limits();
-
-            let limits = PidOutputLimits::new(current.minimum(), value)
-                .map_err(ControllerParameterError::OutputLimits)?;
-
-            controller.set_output_limits(limits);
+            ControllerParameter::OutputMaximum => {
+                output_maximum = *value;
+            }
         }
     }
 
-    Ok(())
+    let gains = PidGains::new(proportional_gain, integral_gain, derivative_gain)
+        .map_err(ControllerParameterError::Gains)?;
+
+    let output_limits = PidOutputLimits::new(output_minimum, output_maximum)
+        .map_err(ControllerParameterError::OutputLimits)?;
+
+    controller
+        .configure(setpoint, gains, output_limits)
+        .map_err(ControllerParameterError::Controller)
 }
 
 fn expect_number(
@@ -429,6 +448,8 @@ impl ControllerOutput {
 pub enum ControllerParameterError {
     UnknownParameter(String),
 
+    DuplicateParameter(ControllerParameter),
+
     UnsupportedParameter {
         kind: ControllerKind,
         parameter: ControllerParameter,
@@ -459,6 +480,15 @@ impl fmt::Display for ControllerParameterError {
                     formatter,
                     "Unknown controller parameter \
                      '{key}'",
+                )
+            }
+
+            Self::DuplicateParameter(parameter) => {
+                write!(
+                    formatter,
+                    "Controller parameter '{}' was \
+                     configured more than once",
+                    parameter.key(),
                 )
             }
 
@@ -523,6 +553,7 @@ impl Error for ControllerParameterError {
             Self::OutputLimits(error) => Some(error),
 
             Self::UnknownParameter(_)
+            | Self::DuplicateParameter(_)
             | Self::UnsupportedParameter { .. }
             | Self::NotReadable(_)
             | Self::NotWritable(_)
@@ -818,6 +849,99 @@ mod tests {
             Err(ControllerParameterError::UnknownParameter(
                 "banana".to_owned(),
             ),),
+        );
+    }
+
+    #[test]
+    fn configures_output_limits_atomically() {
+        let mut controller = controller();
+
+        controller
+            .configure([
+                ("output_min", InstrumentValue::Number(200.0)),
+                ("output_max", InstrumentValue::Number(300.0)),
+            ])
+            .unwrap();
+
+        assert_eq!(
+            controller.read("output_min",),
+            Ok(InstrumentValue::Number(200.0,),),
+        );
+
+        assert_eq!(
+            controller.read("output_max",),
+            Ok(InstrumentValue::Number(300.0,),),
+        );
+    }
+
+    #[test]
+    fn configures_multiple_pid_parameters() {
+        let mut controller = controller();
+
+        controller
+            .configure([
+                ("setpoint", InstrumentValue::Number(150.0)),
+                ("kp", InstrumentValue::Number(3.0)),
+                ("ki", InstrumentValue::Number(0.25)),
+                ("kd", InstrumentValue::Number(0.5)),
+            ])
+            .unwrap();
+
+        assert_eq!(
+            controller.read("setpoint"),
+            Ok(InstrumentValue::Number(150.0,),),
+        );
+
+        assert_eq!(controller.read("kp"), Ok(InstrumentValue::Number(3.0,),),);
+
+        assert_eq!(controller.read("ki"), Ok(InstrumentValue::Number(0.25,),),);
+
+        assert_eq!(controller.read("kd"), Ok(InstrumentValue::Number(0.5,),),);
+    }
+
+    #[test]
+    fn failed_configure_does_not_change_any_parameter() {
+        let mut controller = controller();
+
+        assert!(matches!(
+            controller.configure([
+                ("setpoint", InstrumentValue::Number(150.0,),),
+                ("kp", InstrumentValue::Number(-1.0,),),
+                ("output_max", InstrumentValue::Number(200.0,),),
+            ]),
+            Err(ControllerParameterError::Gains(_)),
+        ));
+
+        assert_eq!(
+            controller.read("setpoint"),
+            Ok(InstrumentValue::Number(100.0,),),
+        );
+
+        assert_eq!(controller.read("kp"), Ok(InstrumentValue::Number(2.0,),),);
+
+        assert_eq!(
+            controller.read("output_max",),
+            Ok(InstrumentValue::Number(100.0,),),
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_parameter_in_configuration() {
+        let mut controller = controller();
+
+        assert_eq!(
+            controller.configure([
+                ("setpoint", InstrumentValue::Number(120.0,),),
+                ("setpoint", InstrumentValue::Number(130.0,),),
+            ]),
+            Err(ControllerParameterError::DuplicateParameter(
+                ControllerParameter::Setpoint,
+            ),),
+        );
+
+        assert_eq!(
+            controller.read("setpoint"),
+            Ok(InstrumentValue::Number(100.0,),),
         );
     }
 }

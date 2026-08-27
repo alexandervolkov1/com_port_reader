@@ -202,7 +202,22 @@ impl PidController {
         Ok(Self::from_validated_config(setpoint, gains, output_limits))
     }
 
-    pub(crate) const fn from_validated_config(
+    pub fn configure(
+        &mut self,
+        setpoint: f64,
+        gains: PidGains,
+        output_limits: PidOutputLimits,
+    ) -> Result<(), PidControllerError> {
+        validate_setpoint(setpoint)?;
+
+        self.setpoint = setpoint;
+        self.gains = gains;
+        self.output_limits = output_limits;
+
+        Ok(())
+    }
+
+    const fn from_validated_config(
         setpoint: f64,
         gains: PidGains,
         output_limits: PidOutputLimits,
@@ -889,5 +904,58 @@ mod tests {
             (actual - expected).abs() <= tolerance,
             "expected {expected}, got {actual}",
         );
+    }
+
+    #[test]
+    fn configure_changes_pid_configuration_without_resetting_state() {
+        let gains = PidGains::new(0.0, 1.0, 0.0).unwrap();
+
+        let limits = PidOutputLimits::new(-100.0, 100.0).unwrap();
+
+        let mut controller = PidController::with_output_limits(10.0, gains, limits).unwrap();
+
+        controller.update(0.0, 8.0).unwrap();
+
+        controller.update(1.0, 8.0).unwrap();
+
+        assert_close(controller.integral(), 2.0);
+
+        let new_gains = PidGains::new(2.0, 0.5, 0.0).unwrap();
+
+        let new_limits = PidOutputLimits::new(-50.0, 50.0).unwrap();
+
+        controller.configure(20.0, new_gains, new_limits).unwrap();
+
+        assert_eq!(controller.setpoint(), 20.0,);
+
+        assert_eq!(controller.gains(), new_gains,);
+
+        assert_eq!(controller.output_limits(), new_limits,);
+
+        assert_close(controller.integral(), 2.0);
+    }
+
+    #[test]
+    fn failed_configure_does_not_change_pid_configuration() {
+        let gains = PidGains::new(1.0, 0.5, 0.0).unwrap();
+
+        let limits = PidOutputLimits::new(0.0, 100.0).unwrap();
+
+        let mut controller = PidController::with_output_limits(10.0, gains, limits).unwrap();
+
+        let new_gains = PidGains::new(2.0, 1.0, 0.0).unwrap();
+
+        let new_limits = PidOutputLimits::new(-100.0, 100.0).unwrap();
+
+        assert_eq!(
+            controller.configure(f64::NAN, new_gains, new_limits,),
+            Err(PidControllerError::NonFiniteSetpoint,),
+        );
+
+        assert_eq!(controller.setpoint(), 10.0,);
+
+        assert_eq!(controller.gains(), gains,);
+
+        assert_eq!(controller.output_limits(), limits,);
     }
 }
