@@ -768,7 +768,8 @@ mod tests {
             },
         },
         process_control::{
-            ControlEvent, ControlOutputTarget, PidGains, PidLoopDefinition, PidOutputLimits,
+            ControlEvent, ControlLoopDefinition, ControlOutputTarget, PidController, PidGains,
+            PidOutputLimits,
         },
         signal_processing::SignalFilterDefinition,
         user_command::UserCommand,
@@ -871,15 +872,15 @@ mod tests {
         )
         .unwrap();
 
-        let definition = PidLoopDefinition::new(
-            "heater",
-            input,
-            output,
+        let controller = PidController::with_output_limits(
             100.0,
             PidGains::new(2.0, 0.0, 0.0).unwrap(),
             PidOutputLimits::new(0.0, 100.0).unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .into();
+
+        let definition = ControlLoopDefinition::new("heater", input, output, controller).unwrap();
 
         handle.add_pid_loop(definition).unwrap();
 

@@ -7,7 +7,9 @@ use crate::{
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
     data::{NewFilteredSeries, NewSeries, SeriesId, SeriesStore},
-    process_control::{ControlOutputTarget, NewPidLoop, PidLoopDefinition},
+    process_control::{
+        ControlLoopDefinition, ControlOutputTarget, Controller, NewPidLoop, PidController,
+    },
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
     signal_processing::{ProcessingHandle, SignalFilterDefinition},
     user_command::UserCommand,
@@ -434,26 +436,32 @@ impl CommandDispatcher {
             return;
         };
 
-        let definition = match PidLoopDefinition::new(
-            name.clone(),
-            input_id,
-            output_target,
-            setpoint,
-            gains,
-            output_limits,
-        ) {
-            Ok(definition) => definition,
+        let controller = match PidController::with_output_limits(setpoint, gains, output_limits) {
+            Ok(controller) => Controller::Pid(controller),
 
             Err(error) => {
                 self.log.error(format!(
-                    "Failed to add PID \
-                             loop '{name}': \
-                             {error}",
+                    "Failed to add PID loop \
+                         '{name}': {error}",
                 ));
 
                 return;
             }
         };
+
+        let definition =
+            match ControlLoopDefinition::new(name.clone(), input_id, output_target, controller) {
+                Ok(definition) => definition,
+
+                Err(error) => {
+                    self.log.error(format!(
+                        "Failed to add PID loop \
+                         '{name}': {error}",
+                    ));
+
+                    return;
+                }
+            };
 
         match self.processing.add_pid_loop(definition) {
             Ok(()) => {

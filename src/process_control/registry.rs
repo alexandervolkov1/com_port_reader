@@ -6,8 +6,8 @@ use crate::{
 };
 
 use super::{
-    ControlLoop, ControlOutputConversionError, ControlOutputParameter, ControlOutputTarget,
-    PidControllerError, PidLoopDefinition, PidLoopDefinitionError, PidOutput, PidOutputLimits,
+    ControlLoop, ControlLoopDefinition, ControlOutputConversionError, ControlOutputParameter,
+    ControlOutputTarget, Controller, PidControllerError, PidOutput, PidOutputLimits,
 };
 
 pub struct ControllerRegistry<SignalId> {
@@ -30,7 +30,7 @@ where
 
     pub fn add(
         &mut self,
-        definition: PidLoopDefinition<SignalId, ControlOutputTarget>,
+        definition: ControlLoopDefinition<SignalId, ControlOutputTarget>,
     ) -> Result<(), ControllerRegistryError> {
         let name = definition.name();
 
@@ -39,6 +39,8 @@ where
         }
 
         let target = definition.output_target();
+
+        validate_controller_output(definition.controller(), target)?;
 
         for existing in &self.loops {
             if output_targets_overlap(existing.output_target(), target) {
@@ -49,8 +51,6 @@ where
                 });
             }
         }
-
-        validate_output_limits(definition.output_limits(), target)?;
 
         self.loops.push(ControlLoop::new(definition));
 
@@ -63,11 +63,7 @@ where
             .any(|control_loop| control_loop.name() == name)
     }
 
-    pub fn set_setpoint(
-        &mut self,
-        name: &str,
-        setpoint: f64,
-    ) -> Result<bool, PidLoopDefinitionError> {
+    pub fn set_setpoint(&mut self, name: &str, setpoint: f64) -> Result<bool, PidControllerError> {
         let Some(control_loop) = self
             .loops
             .iter_mut()
@@ -267,6 +263,15 @@ fn validate_output_limits(
     Ok(())
 }
 
+fn validate_controller_output(
+    controller: &Controller,
+    target: &ControlOutputTarget,
+) -> Result<(), ControllerRegistryError> {
+    match controller {
+        Controller::Pid(controller) => validate_output_limits(controller.output_limits(), target),
+    }
+}
+
 #[derive(Debug)]
 pub enum ControlEvent<SignalId> {
     Output(ControlOutput<SignalId>),
@@ -412,8 +417,8 @@ mod tests {
             },
         },
         process_control::{
-            ControlOutputTarget, PidGains, PidLoopDefinition, PidLoopDefinitionError,
-            PidOutputLimits,
+            ControlLoopDefinition, ControlOutputTarget, PidController, PidControllerError,
+            PidGains, PidOutputLimits,
         },
     };
 
@@ -445,16 +450,16 @@ mod tests {
         name: &str,
         input: u64,
         target: ControlOutputTarget,
-    ) -> PidLoopDefinition<u64, ControlOutputTarget> {
-        PidLoopDefinition::new(
-            name,
-            input,
-            target,
+    ) -> ControlLoopDefinition<u64, ControlOutputTarget> {
+        let controller = PidController::with_output_limits(
             100.0,
             PidGains::new(2.0, 0.0, 0.0).unwrap(),
             PidOutputLimits::new(0.0, 100.0).unwrap(),
         )
         .unwrap()
+        .into();
+
+        ControlLoopDefinition::new(name, input, target, controller).unwrap()
     }
 
     #[test]
@@ -519,7 +524,7 @@ mod tests {
 
         assert_eq!(
             registry.set_setpoint("heater", f64::NAN),
-            Err(PidLoopDefinitionError::NonFiniteSetpoint),
+            Err(PidControllerError::NonFiniteSetpoint),
         );
 
         let events = registry.process(1, 1_000.0, 80.0);
@@ -528,8 +533,6 @@ mod tests {
             panic!("expected one PID output event");
         };
 
-        // Old setpoint = 100 remains active:
-        // (100 - 80) * 2 = 40.
         assert_eq!(output.output.value(), 40.0,);
     }
 
@@ -624,15 +627,15 @@ mod tests {
     fn rejects_limits_outside_target_range() {
         let target = virtual_target(1, 1, 1);
 
-        let definition = PidLoopDefinition::new(
-            "heater",
-            1_u64,
-            target,
+        let controller = PidController::with_output_limits(
             100.0,
             PidGains::new(2.0, 0.0, 0.0).unwrap(),
             PidOutputLimits::new(-1.0, 100.0).unwrap(),
         )
-        .unwrap();
+        .unwrap()
+        .into();
+
+        let definition = ControlLoopDefinition::new("heater", 1_u64, target, controller).unwrap();
 
         let mut registry = ControllerRegistry::new();
 
@@ -642,16 +645,13 @@ mod tests {
             result,
             Err(ControllerRegistryError::OutputLimitsOutsideRange {
                 minimum: -1.0,
-
                 maximum: 100.0,
-
                 target_minimum: 0.0,
-
                 target_maximum: 100.0,
             },),
         );
 
-        assert!(registry.is_empty(),);
+        assert!(registry.is_empty());
     }
 
     #[test]

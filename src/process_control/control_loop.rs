@@ -2,38 +2,29 @@ use std::{error::Error, fmt};
 
 use super::{Controller, PidController, PidControllerError, PidGains, PidOutput, PidOutputLimits};
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct PidLoopDefinition<SignalId, OutputTarget> {
+#[derive(Debug)]
+pub struct ControlLoopDefinition<SignalId, OutputTarget> {
     name: String,
     input: SignalId,
     output_target: OutputTarget,
-    setpoint: f64,
-    gains: PidGains,
-    output_limits: PidOutputLimits,
+    controller: Controller,
 }
 
-impl<SignalId, OutputTarget> PidLoopDefinition<SignalId, OutputTarget> {
+impl<SignalId, OutputTarget> ControlLoopDefinition<SignalId, OutputTarget> {
     pub fn new(
         name: impl Into<String>,
         input: SignalId,
         output_target: OutputTarget,
-        setpoint: f64,
-        gains: PidGains,
-        output_limits: PidOutputLimits,
-    ) -> Result<Self, PidLoopDefinitionError> {
+        controller: Controller,
+    ) -> Result<Self, ControlLoopDefinitionError> {
         let name = name.into();
-
         let name = normalize_name(&name)?;
-
-        validate_setpoint(setpoint)?;
 
         Ok(Self {
             name: name.to_owned(),
             input,
             output_target,
-            setpoint,
-            gains,
-            output_limits,
+            controller,
         })
     }
 
@@ -49,16 +40,12 @@ impl<SignalId, OutputTarget> PidLoopDefinition<SignalId, OutputTarget> {
         &self.output_target
     }
 
-    pub const fn setpoint(&self) -> f64 {
-        self.setpoint
+    pub const fn controller(&self) -> &Controller {
+        &self.controller
     }
 
-    pub const fn gains(&self) -> PidGains {
-        self.gains
-    }
-
-    pub const fn output_limits(&self) -> PidOutputLimits {
-        self.output_limits
+    fn into_parts(self) -> (String, SignalId, OutputTarget, Controller) {
+        (self.name, self.input, self.output_target, self.controller)
     }
 }
 
@@ -71,18 +58,8 @@ pub struct ControlLoop<SignalId, OutputTarget> {
 }
 
 impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
-    pub fn new(definition: PidLoopDefinition<SignalId, OutputTarget>) -> Self {
-        let PidLoopDefinition {
-            name,
-            input,
-            output_target,
-            setpoint,
-            gains,
-            output_limits,
-        } = definition;
-
-        let controller =
-            PidController::from_validated_config(setpoint, gains, output_limits).into();
+    pub fn new(definition: ControlLoopDefinition<SignalId, OutputTarget>) -> Self {
+        let (name, input, output_target, controller) = definition.into_parts();
 
         Self {
             name,
@@ -132,14 +109,8 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         self.pid_controller().integral()
     }
 
-    pub fn set_setpoint(&mut self, setpoint: f64) -> Result<(), PidLoopDefinitionError> {
-        validate_setpoint(setpoint)?;
-
-        self.pid_controller_mut()
-            .set_setpoint(setpoint)
-            .expect("validated PID setpoint must be accepted by controller");
-
-        Ok(())
+    pub fn set_setpoint(&mut self, setpoint: f64) -> Result<(), PidControllerError> {
+        self.pid_controller_mut().set_setpoint(setpoint)
     }
 
     pub fn set_gains(&mut self, gains: PidGains) {
@@ -163,57 +134,45 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
     }
 }
 
-fn normalize_name(name: &str) -> Result<&str, PidLoopDefinitionError> {
+fn normalize_name(name: &str) -> Result<&str, ControlLoopDefinitionError> {
     let name = name.trim();
 
     if name.is_empty() {
-        return Err(PidLoopDefinitionError::EmptyName);
+        return Err(ControlLoopDefinitionError::EmptyName);
     }
 
     if name.chars().any(char::is_whitespace) {
-        return Err(PidLoopDefinitionError::NameContainsWhitespace);
+        return Err(ControlLoopDefinitionError::NameContainsWhitespace);
     }
 
     Ok(name)
 }
 
-fn validate_setpoint(setpoint: f64) -> Result<(), PidLoopDefinitionError> {
-    if !setpoint.is_finite() {
-        return Err(PidLoopDefinitionError::NonFiniteSetpoint);
-    }
-
-    Ok(())
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PidLoopDefinitionError {
+pub enum ControlLoopDefinitionError {
     EmptyName,
     NameContainsWhitespace,
-    NonFiniteSetpoint,
 }
 
-impl fmt::Display for PidLoopDefinitionError {
+impl fmt::Display for ControlLoopDefinitionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyName => formatter.write_str("PID loop name cannot be empty"),
+            Self::EmptyName => formatter.write_str("Control loop name cannot be empty"),
 
-            Self::NameContainsWhitespace => formatter.write_str(
-                "PID loop name cannot contain \
-                     whitespace",
-            ),
-
-            Self::NonFiniteSetpoint => formatter.write_str("PID loop setpoint must be finite"),
+            Self::NameContainsWhitespace => {
+                formatter.write_str("Control loop name cannot contain whitespace")
+            }
         }
     }
 }
 
-impl Error for PidLoopDefinitionError {}
+impl Error for ControlLoopDefinitionError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{ControlLoop, PidLoopDefinition, PidLoopDefinitionError};
+    use super::{ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError};
 
-    use crate::process_control::{PidGains, PidOutputLimits};
+    use crate::process_control::{PidController, PidControllerError, PidGains, PidOutputLimits};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct TestOutputTarget {
@@ -234,25 +193,22 @@ mod tests {
 
         let limits = PidOutputLimits::new(0.0, 100.0).unwrap();
 
+        let controller = PidController::with_output_limits(200.0, gains, limits)
+            .unwrap()
+            .into();
+
         let definition =
-            PidLoopDefinition::new("  heater  ", 11_u64, output_target, 200.0, gains, limits)
-                .unwrap();
+            ControlLoopDefinition::new("  heater  ", 11_u64, output_target, controller).unwrap();
 
         assert_eq!(definition.name(), "heater",);
 
         assert_eq!(*definition.input(), 11,);
 
         assert_eq!(*definition.output_target(), output_target,);
-
-        assert_eq!(definition.setpoint(), 200.0,);
-
-        assert_eq!(definition.gains(), gains,);
-
-        assert_eq!(definition.output_limits(), limits,);
     }
 
     #[test]
-    fn rejects_invalid_pid_loop_names() {
+    fn rejects_invalid_control_loop_names() {
         let gains = PidGains::new(1.0, 0.0, 0.0).unwrap();
 
         let limits = PidOutputLimits::new(0.0, 100.0).unwrap();
@@ -264,37 +220,25 @@ mod tests {
         };
 
         for name in ["", " ", "\t"] {
-            assert_eq!(
-                PidLoopDefinition::new(name, 1_u64, output_target, 100.0, gains, limits,),
-                Err(PidLoopDefinitionError::EmptyName,),
-            );
+            let controller = PidController::with_output_limits(100.0, gains, limits)
+                .unwrap()
+                .into();
+
+            let error =
+                ControlLoopDefinition::new(name, 1_u64, output_target, controller).unwrap_err();
+
+            assert_eq!(error, ControlLoopDefinitionError::EmptyName,);
         }
 
         for name in ["heater one", "heater\tone", "heater\none"] {
-            assert_eq!(
-                PidLoopDefinition::new(name, 1_u64, output_target, 100.0, gains, limits,),
-                Err(PidLoopDefinitionError::NameContainsWhitespace,),
-            );
-        }
-    }
+            let controller = PidController::with_output_limits(100.0, gains, limits)
+                .unwrap()
+                .into();
 
-    #[test]
-    fn rejects_non_finite_setpoints() {
-        let gains = PidGains::new(1.0, 0.0, 0.0).unwrap();
+            let error =
+                ControlLoopDefinition::new(name, 1_u64, output_target, controller).unwrap_err();
 
-        let limits = PidOutputLimits::new(0.0, 100.0).unwrap();
-
-        let output_target = TestOutputTarget {
-            connection: 1,
-            instrument: 1,
-            parameter: 1,
-        };
-
-        for setpoint in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            assert_eq!(
-                PidLoopDefinition::new("heater", 1_u64, output_target, setpoint, gains, limits,),
-                Err(PidLoopDefinitionError::NonFiniteSetpoint,),
-            );
+            assert_eq!(error, ControlLoopDefinitionError::NameContainsWhitespace,);
         }
     }
 
@@ -355,8 +299,8 @@ mod tests {
         let mut control_loop = ControlLoop::new(definition);
 
         assert_eq!(
-            control_loop.set_setpoint(f64::NAN,),
-            Err(PidLoopDefinitionError::NonFiniteSetpoint,),
+            control_loop.set_setpoint(f64::NAN),
+            Err(PidControllerError::NonFiniteSetpoint),
         );
 
         assert_eq!(control_loop.setpoint(), 100.0,);
@@ -455,8 +399,12 @@ mod tests {
         setpoint: f64,
         gains: PidGains,
         output_limits: PidOutputLimits,
-    ) -> PidLoopDefinition<u64, TestOutputTarget> {
-        PidLoopDefinition::new(
+    ) -> ControlLoopDefinition<u64, TestOutputTarget> {
+        let controller = PidController::with_output_limits(setpoint, gains, output_limits)
+            .unwrap()
+            .into();
+
+        ControlLoopDefinition::new(
             "heater",
             1_u64,
             TestOutputTarget {
@@ -464,9 +412,7 @@ mod tests {
                 instrument: 7,
                 parameter: 3,
             },
-            setpoint,
-            gains,
-            output_limits,
+            controller,
         )
         .unwrap()
     }

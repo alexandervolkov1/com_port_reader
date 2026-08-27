@@ -9,8 +9,8 @@ use std::{
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 
 use crate::process_control::{
-    ControlEvent, ControlOutputTarget, ControllerRegistry, ControllerRegistryError,
-    PidLoopDefinition, PidLoopDefinitionError,
+    ControlEvent, ControlLoopDefinition, ControlOutputTarget, ControllerRegistry,
+    ControllerRegistryError, PidControllerError,
 };
 
 use super::{
@@ -56,14 +56,14 @@ enum ProcessingCommand<SignalId> {
     },
 
     AddPidLoop {
-        definition: PidLoopDefinition<SignalId, ControlOutputTarget>,
+        definition: ControlLoopDefinition<SignalId, ControlOutputTarget>,
         response_sender: Sender<Result<(), ControllerRegistryError>>,
     },
 
     SetPidSetpoint {
         name: String,
         setpoint: f64,
-        response_sender: Sender<Result<bool, PidLoopDefinitionError>>,
+        response_sender: Sender<Result<bool, PidControllerError>>,
     },
 
     Process(Vec<ProcessingInput<SignalId>>),
@@ -143,7 +143,7 @@ impl<SignalId> ProcessingHandle<SignalId> {
 
     pub fn add_pid_loop(
         &self,
-        definition: PidLoopDefinition<SignalId, ControlOutputTarget>,
+        definition: ControlLoopDefinition<SignalId, ControlOutputTarget>,
     ) -> Result<(), AddPidLoopError> {
         let (response_sender, response_receiver) = bounded(1);
 
@@ -180,7 +180,7 @@ impl<SignalId> ProcessingHandle<SignalId> {
             .recv()
             .map_err(|_| SetPidLoopSetpointError::Disconnected)?;
 
-        result.map_err(SetPidLoopSetpointError::Definition)
+        result.map_err(SetPidLoopSetpointError::Controller)
     }
 
     pub fn process(
@@ -516,17 +516,16 @@ impl Error for AddPidLoopError {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SetPidLoopSetpointError {
-    Definition(PidLoopDefinitionError),
-
+    Controller(PidControllerError),
     Disconnected,
 }
 
 impl fmt::Display for SetPidLoopSetpointError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Definition(error) => error.fmt(formatter),
+            Self::Controller(error) => error.fmt(formatter),
 
             Self::Disconnected => formatter.write_str(
                 "Processing \
@@ -539,7 +538,7 @@ impl fmt::Display for SetPidLoopSetpointError {
 impl Error for SetPidLoopSetpointError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Definition(error) => Some(error),
+            Self::Controller(error) => Some(error),
 
             Self::Disconnected => None,
         }
@@ -610,8 +609,8 @@ mod tests {
             },
         },
         process_control::{
-            ControlEvent, ControlOutput, ControlOutputTarget, PidGains, PidLoopDefinition,
-            PidOutputLimits,
+            ControlEvent, ControlLoopDefinition, ControlOutput, ControlOutputTarget, PidController,
+            PidGains, PidOutputLimits,
         },
         signal_processing::{
             ProcessedSignal, SignalFilterDefinition, SignalFilterError,
@@ -627,7 +626,7 @@ mod tests {
         name: &str,
         input: u64,
         parameter: u16,
-    ) -> PidLoopDefinition<u64, ControlOutputTarget> {
+    ) -> ControlLoopDefinition<u64, ControlOutputTarget> {
         let descriptor = VirtualParameterDescriptor::new(
             VirtualParameterId::new(parameter),
             format!("power_{parameter}"),
@@ -647,15 +646,15 @@ mod tests {
         )
         .unwrap();
 
-        PidLoopDefinition::new(
-            name,
-            input,
-            target,
+        let controller = PidController::with_output_limits(
             100.0,
             PidGains::new(2.0, 0.0, 0.0).unwrap(),
             PidOutputLimits::new(0.0, 100.0).unwrap(),
         )
         .unwrap()
+        .into();
+
+        ControlLoopDefinition::new(name, input, target, controller).unwrap()
     }
 
     fn receive_pid_output(
@@ -840,8 +839,6 @@ mod tests {
 
         handle.reset_from(1).unwrap();
 
-        // Timestamp intentionally goes backwards.
-        // Both the filter and PID must have been reset.
         handle.process(1, 0.0, 90.0).unwrap();
 
         let restarted_control = receive_pid_output(&control_events);
@@ -1079,7 +1076,7 @@ mod tests {
 
         assert!(matches!(
             handle.set_pid_setpoint("heater", f64::NAN,),
-            Err(SetPidLoopSetpointError::Definition(_)),
+            Err(SetPidLoopSetpointError::Controller(_)),
         ));
     }
 
