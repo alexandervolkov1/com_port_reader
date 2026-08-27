@@ -6,7 +6,7 @@ mod output_target;
 mod pid;
 mod registry;
 
-pub use control_loop::{PidLoop, PidLoopDefinition, PidLoopDefinitionError};
+pub use control_loop::{ControlLoop, PidLoopDefinition, PidLoopDefinitionError};
 pub use controller::Controller;
 pub use new_loop::{NewPidLoop, NewPidLoopError};
 pub use output_conversion::ControlOutputConversionError;

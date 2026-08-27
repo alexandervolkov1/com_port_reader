@@ -6,12 +6,12 @@ use crate::{
 };
 
 use super::{
-    ControlOutputConversionError, ControlOutputParameter, ControlOutputTarget, PidControllerError,
-    PidLoop, PidLoopDefinition, PidLoopDefinitionError, PidOutput, PidOutputLimits,
+    ControlLoop, ControlOutputConversionError, ControlOutputParameter, ControlOutputTarget,
+    PidControllerError, PidLoopDefinition, PidLoopDefinitionError, PidOutput, PidOutputLimits,
 };
 
 pub struct PidLoopRegistry<SignalId> {
-    loops: Vec<PidLoop<SignalId, ControlOutputTarget>>,
+    loops: Vec<ControlLoop<SignalId, ControlOutputTarget>>,
 }
 
 impl<SignalId> Default for PidLoopRegistry<SignalId> {
@@ -52,7 +52,7 @@ where
 
         validate_output_limits(definition.output_limits(), target)?;
 
-        self.loops.push(PidLoop::new(definition));
+        self.loops.push(ControlLoop::new(definition));
 
         Ok(())
     }

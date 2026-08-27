@@ -63,14 +63,14 @@ impl<SignalId, OutputTarget> PidLoopDefinition<SignalId, OutputTarget> {
 }
 
 #[derive(Debug)]
-pub struct PidLoop<SignalId, OutputTarget> {
+pub struct ControlLoop<SignalId, OutputTarget> {
     name: String,
     input: SignalId,
     output_target: OutputTarget,
     controller: Controller,
 }
 
-impl<SignalId, OutputTarget> PidLoop<SignalId, OutputTarget> {
+impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
     pub fn new(definition: PidLoopDefinition<SignalId, OutputTarget>) -> Self {
         let PidLoopDefinition {
             name,
@@ -211,7 +211,7 @@ impl Error for PidLoopDefinitionError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{PidLoop, PidLoopDefinition, PidLoopDefinitionError};
+    use super::{ControlLoop, PidLoopDefinition, PidLoopDefinitionError};
 
     use crate::process_control::{PidGains, PidOutputLimits};
 
@@ -306,7 +306,7 @@ mod tests {
             PidOutputLimits::new(0.0, 100.0).unwrap(),
         );
 
-        let mut control_loop = PidLoop::new(definition);
+        let mut control_loop = ControlLoop::new(definition);
 
         let first = control_loop.update(0.0, 50.0).unwrap();
 
@@ -329,7 +329,7 @@ mod tests {
             PidOutputLimits::new(-100.0, 100.0).unwrap(),
         );
 
-        let mut control_loop = PidLoop::new(definition);
+        let mut control_loop = ControlLoop::new(definition);
 
         control_loop.update(0.0, 20.0).unwrap();
 
@@ -352,7 +352,7 @@ mod tests {
             PidOutputLimits::new(0.0, 100.0).unwrap(),
         );
 
-        let mut control_loop = PidLoop::new(definition);
+        let mut control_loop = ControlLoop::new(definition);
 
         assert_eq!(
             control_loop.set_setpoint(f64::NAN,),
@@ -374,7 +374,7 @@ mod tests {
             PidOutputLimits::new(-100.0, 100.0).unwrap(),
         );
 
-        let mut control_loop = PidLoop::new(definition);
+        let mut control_loop = ControlLoop::new(definition);
 
         control_loop.update(0.0, 8.0).unwrap();
 
@@ -403,7 +403,7 @@ mod tests {
             PidOutputLimits::new(0.0, 300.0).unwrap(),
         );
 
-        let mut control_loop = PidLoop::new(definition);
+        let mut control_loop = ControlLoop::new(definition);
 
         let initial = control_loop.update(0.0, 0.0).unwrap();
 
@@ -430,7 +430,7 @@ mod tests {
             PidOutputLimits::new(0.0, 100.0).unwrap(),
         );
 
-        let mut control_loop = PidLoop::new(definition);
+        let mut control_loop = ControlLoop::new(definition);
 
         control_loop.update(0.0, 90.0).unwrap();
 
