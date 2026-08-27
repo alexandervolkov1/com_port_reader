@@ -1,8 +1,12 @@
 use std::{error::Error, fmt};
 
-use crate::instrument::{ParameterAccess, ParameterDescriptor, ParameterRange, ParameterValueType};
-
-use super::{PidController, PidControllerError, PidOutput};
+use super::{
+    PidController, PidControllerError, PidGains, PidGainsError, PidOutput, PidOutputLimits,
+    PidOutputLimitsError,
+};
+use crate::instrument::{
+    InstrumentValue, ParameterAccess, ParameterDescriptor, ParameterRange, ParameterValueType,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControllerKind {
@@ -43,10 +47,14 @@ impl ControllerParameter {
         Self::OutputMaximum,
     ];
 
+    pub const fn key(self) -> &'static str {
+        self.descriptor().key
+    }
+
     pub fn from_key(key: &str) -> Option<Self> {
         Self::ALL
             .into_iter()
-            .find(|parameter| parameter.descriptor().key == key)
+            .find(|parameter| parameter.key() == key)
     }
 
     pub const fn descriptor(self) -> ParameterDescriptor {
@@ -141,6 +149,74 @@ impl Controller {
         }
     }
 
+    pub fn read(&self, key: &str) -> Result<InstrumentValue, ControllerParameterError> {
+        let parameter = ControllerParameter::from_key(key)
+            .ok_or_else(|| ControllerParameterError::UnknownParameter(key.to_owned()))?;
+
+        if !self.supports_parameter(parameter) {
+            return Err(ControllerParameterError::UnsupportedParameter {
+                kind: self.kind(),
+                parameter,
+            });
+        }
+
+        let descriptor = parameter.descriptor();
+
+        if !descriptor.access.readable() {
+            return Err(ControllerParameterError::NotReadable(parameter));
+        }
+
+        match self {
+            Self::Pid(controller) => Ok(read_pid_parameter(controller, parameter)),
+        }
+    }
+
+    pub fn write(
+        &mut self,
+        key: &str,
+        value: InstrumentValue,
+    ) -> Result<InstrumentValue, ControllerParameterError> {
+        let parameter = ControllerParameter::from_key(key)
+            .ok_or_else(|| ControllerParameterError::UnknownParameter(key.to_owned()))?;
+
+        if !self.supports_parameter(parameter) {
+            return Err(ControllerParameterError::UnsupportedParameter {
+                kind: self.kind(),
+                parameter,
+            });
+        }
+
+        let descriptor = parameter.descriptor();
+
+        if !descriptor.access.writable() {
+            return Err(ControllerParameterError::NotWritable(parameter));
+        }
+
+        let number = expect_number(parameter, value)?;
+
+        match self {
+            Self::Pid(controller) => {
+                write_pid_parameter(controller, parameter, number)?;
+            }
+        }
+
+        self.read(key)
+    }
+
+    fn supports_parameter(&self, parameter: ControllerParameter) -> bool {
+        match self {
+            Self::Pid(_) => matches!(
+                parameter,
+                ControllerParameter::Setpoint
+                    | ControllerParameter::ProportionalGain
+                    | ControllerParameter::IntegralGain
+                    | ControllerParameter::DerivativeGain
+                    | ControllerParameter::OutputMinimum
+                    | ControllerParameter::OutputMaximum
+            ),
+        }
+    }
+
     pub fn output_range(&self) -> ParameterRange {
         match self {
             Self::Pid(controller) => {
@@ -178,6 +254,113 @@ impl Controller {
                 controller.reset();
             }
         }
+    }
+}
+
+fn read_pid_parameter(
+    controller: &PidController,
+    parameter: ControllerParameter,
+) -> InstrumentValue {
+    let value = match parameter {
+        ControllerParameter::Setpoint => controller.setpoint(),
+
+        ControllerParameter::ProportionalGain => controller.gains().proportional(),
+
+        ControllerParameter::IntegralGain => controller.gains().integral(),
+
+        ControllerParameter::DerivativeGain => controller.gains().derivative(),
+
+        ControllerParameter::OutputMinimum => controller.output_limits().minimum(),
+
+        ControllerParameter::OutputMaximum => controller.output_limits().maximum(),
+    };
+
+    InstrumentValue::Number(value)
+}
+
+fn write_pid_parameter(
+    controller: &mut PidController,
+    parameter: ControllerParameter,
+    value: f64,
+) -> Result<(), ControllerParameterError> {
+    match parameter {
+        ControllerParameter::Setpoint => {
+            controller
+                .set_setpoint(value)
+                .map_err(ControllerParameterError::Controller)?;
+        }
+
+        ControllerParameter::ProportionalGain => {
+            let current = controller.gains();
+
+            let gains = PidGains::new(value, current.integral(), current.derivative())
+                .map_err(ControllerParameterError::Gains)?;
+
+            controller.set_gains(gains);
+        }
+
+        ControllerParameter::IntegralGain => {
+            let current = controller.gains();
+
+            let gains = PidGains::new(current.proportional(), value, current.derivative())
+                .map_err(ControllerParameterError::Gains)?;
+
+            controller.set_gains(gains);
+        }
+
+        ControllerParameter::DerivativeGain => {
+            let current = controller.gains();
+
+            let gains = PidGains::new(current.proportional(), current.integral(), value)
+                .map_err(ControllerParameterError::Gains)?;
+
+            controller.set_gains(gains);
+        }
+
+        ControllerParameter::OutputMinimum => {
+            let current = controller.output_limits();
+
+            let limits = PidOutputLimits::new(value, current.maximum())
+                .map_err(ControllerParameterError::OutputLimits)?;
+
+            controller.set_output_limits(limits);
+        }
+
+        ControllerParameter::OutputMaximum => {
+            let current = controller.output_limits();
+
+            let limits = PidOutputLimits::new(current.minimum(), value)
+                .map_err(ControllerParameterError::OutputLimits)?;
+
+            controller.set_output_limits(limits);
+        }
+    }
+
+    Ok(())
+}
+
+fn expect_number(
+    parameter: ControllerParameter,
+    value: InstrumentValue,
+) -> Result<f64, ControllerParameterError> {
+    match value {
+        InstrumentValue::Number(value) => Ok(value),
+
+        value => Err(ControllerParameterError::TypeMismatch {
+            parameter,
+            expected: ParameterValueType::Number,
+            actual: instrument_value_type(value),
+        }),
+    }
+}
+
+fn instrument_value_type(value: InstrumentValue) -> ParameterValueType {
+    match value {
+        InstrumentValue::Boolean(_) => ParameterValueType::Boolean,
+
+        InstrumentValue::Integer(_) => ParameterValueType::Integer,
+
+        InstrumentValue::Number(_) => ParameterValueType::Number,
     }
 }
 
@@ -242,6 +425,112 @@ impl ControllerOutput {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum ControllerParameterError {
+    UnknownParameter(String),
+
+    UnsupportedParameter {
+        kind: ControllerKind,
+        parameter: ControllerParameter,
+    },
+
+    NotReadable(ControllerParameter),
+
+    NotWritable(ControllerParameter),
+
+    TypeMismatch {
+        parameter: ControllerParameter,
+        expected: ParameterValueType,
+        actual: ParameterValueType,
+    },
+
+    Controller(PidControllerError),
+
+    Gains(PidGainsError),
+
+    OutputLimits(PidOutputLimitsError),
+}
+
+impl fmt::Display for ControllerParameterError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownParameter(key) => {
+                write!(
+                    formatter,
+                    "Unknown controller parameter \
+                     '{key}'",
+                )
+            }
+
+            Self::UnsupportedParameter { kind, parameter } => {
+                write!(
+                    formatter,
+                    "Controller type '{kind}' does \
+                     not support parameter '{}'",
+                    parameter.key(),
+                )
+            }
+
+            Self::NotReadable(parameter) => {
+                write!(
+                    formatter,
+                    "Controller parameter '{}' is \
+                     not readable",
+                    parameter.key(),
+                )
+            }
+
+            Self::NotWritable(parameter) => {
+                write!(
+                    formatter,
+                    "Controller parameter '{}' is \
+                     not writable",
+                    parameter.key(),
+                )
+            }
+
+            Self::TypeMismatch {
+                parameter,
+                expected,
+                actual,
+            } => {
+                write!(
+                    formatter,
+                    "Controller parameter '{}' \
+                     expects {}, received {}",
+                    parameter.key(),
+                    expected.as_str(),
+                    actual.as_str(),
+                )
+            }
+
+            Self::Controller(error) => error.fmt(formatter),
+
+            Self::Gains(error) => error.fmt(formatter),
+
+            Self::OutputLimits(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for ControllerParameterError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Controller(error) => Some(error),
+
+            Self::Gains(error) => Some(error),
+
+            Self::OutputLimits(error) => Some(error),
+
+            Self::UnknownParameter(_)
+            | Self::UnsupportedParameter { .. }
+            | Self::NotReadable(_)
+            | Self::NotWritable(_)
+            | Self::TypeMismatch { .. } => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ControllerError {
     Pid(PidControllerError),
@@ -267,10 +556,11 @@ impl Error for ControllerError {
 mod tests {
     use super::{
         Controller, ControllerError, ControllerKind, ControllerOutput, ControllerParameter,
+        ControllerParameterError,
     };
 
     use crate::{
-        instrument::{ParameterAccess, ParameterRange, ParameterValueType},
+        instrument::{InstrumentValue, ParameterAccess, ParameterRange, ParameterValueType},
         process_control::{PidController, PidControllerError, PidGains, PidOutputLimits},
     };
 
@@ -409,6 +699,125 @@ mod tests {
                 minimum: 0.0,
                 maximum: f64::MAX,
             },
+        );
+    }
+
+    #[test]
+    fn reads_pid_parameters() {
+        let controller = controller();
+
+        assert_eq!(
+            controller.read("setpoint"),
+            Ok(InstrumentValue::Number(100.0,),),
+        );
+
+        assert_eq!(controller.read("kp"), Ok(InstrumentValue::Number(2.0,),),);
+
+        assert_eq!(controller.read("ki"), Ok(InstrumentValue::Number(0.0,),),);
+
+        assert_eq!(controller.read("kd"), Ok(InstrumentValue::Number(0.0,),),);
+
+        assert_eq!(
+            controller.read("output_min"),
+            Ok(InstrumentValue::Number(0.0,),),
+        );
+
+        assert_eq!(
+            controller.read("output_max"),
+            Ok(InstrumentValue::Number(100.0,),),
+        );
+    }
+
+    #[test]
+    fn writes_pid_setpoint() {
+        let mut controller = controller();
+
+        assert_eq!(
+            controller.write("setpoint", InstrumentValue::Number(120.0,),),
+            Ok(InstrumentValue::Number(120.0,),),
+        );
+
+        assert_eq!(
+            controller.read("setpoint"),
+            Ok(InstrumentValue::Number(120.0,),),
+        );
+    }
+
+    #[test]
+    fn writes_pid_gain() {
+        let mut controller = controller();
+
+        controller
+            .write("ki", InstrumentValue::Number(0.25))
+            .unwrap();
+
+        assert_eq!(controller.read("kp"), Ok(InstrumentValue::Number(2.0,),),);
+
+        assert_eq!(controller.read("ki"), Ok(InstrumentValue::Number(0.25,),),);
+
+        assert_eq!(controller.read("kd"), Ok(InstrumentValue::Number(0.0,),),);
+    }
+
+    #[test]
+    fn rejects_invalid_pid_gain_without_change() {
+        let mut controller = controller();
+
+        assert!(matches!(
+            controller.write("kp", InstrumentValue::Number(-1.0,),),
+            Err(ControllerParameterError::Gains(_)),
+        ));
+
+        assert_eq!(controller.read("kp"), Ok(InstrumentValue::Number(2.0,),),);
+    }
+
+    #[test]
+    fn rejects_invalid_output_limits_without_change() {
+        let mut controller = controller();
+
+        assert!(matches!(
+            controller.write("output_min", InstrumentValue::Number(150.0,),),
+            Err(ControllerParameterError::OutputLimits(_)),
+        ));
+
+        assert_eq!(
+            controller.read("output_min"),
+            Ok(InstrumentValue::Number(0.0,),),
+        );
+
+        assert_eq!(
+            controller.read("output_max"),
+            Ok(InstrumentValue::Number(100.0,),),
+        );
+    }
+
+    #[test]
+    fn rejects_controller_parameter_type_mismatch() {
+        let mut controller = controller();
+
+        assert_eq!(
+            controller.write("setpoint", InstrumentValue::Integer(120,),),
+            Err(ControllerParameterError::TypeMismatch {
+                parameter: ControllerParameter::Setpoint,
+                expected: ParameterValueType::Number,
+                actual: ParameterValueType::Integer,
+            },),
+        );
+
+        assert_eq!(
+            controller.read("setpoint"),
+            Ok(InstrumentValue::Number(100.0,),),
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_controller_parameter() {
+        let controller = controller();
+
+        assert_eq!(
+            controller.read("banana"),
+            Err(ControllerParameterError::UnknownParameter(
+                "banana".to_owned(),
+            ),),
         );
     }
 }
