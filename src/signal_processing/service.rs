@@ -8,9 +8,10 @@ use std::{
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 
+use crate::instrument::{InstrumentValue, ParameterDescriptor};
 use crate::process_control::{
-    ControlEvent, ControlLoopDefinition, ControlOutputTarget, ControllerRegistry,
-    ControllerRegistryError, PidControllerError,
+    ControlEvent, ControlLoopDefinition, ControlOutputTarget, ControllerAccessError,
+    ControllerRegistry, ControllerRegistryError, PidControllerError,
 };
 
 use super::{
@@ -58,6 +59,35 @@ enum ProcessingCommand<SignalId> {
     AddControlLoop {
         definition: ControlLoopDefinition<SignalId, ControlOutputTarget>,
         response_sender: Sender<Result<(), ControllerRegistryError>>,
+    },
+
+    ControllerParameters {
+        name: String,
+        response_sender: Sender<Result<Vec<ParameterDescriptor>, ControllerAccessError>>,
+    },
+
+    ReadControllerParameter {
+        name: String,
+        key: String,
+        response_sender: Sender<Result<InstrumentValue, ControllerAccessError>>,
+    },
+
+    WriteControllerParameter {
+        name: String,
+        key: String,
+        value: InstrumentValue,
+        response_sender: Sender<Result<InstrumentValue, ControllerAccessError>>,
+    },
+
+    ConfigureController {
+        name: String,
+        updates: Vec<(String, InstrumentValue)>,
+        response_sender: Sender<Result<(), ControllerAccessError>>,
+    },
+
+    ResetController {
+        name: String,
+        response_sender: Sender<Result<(), ControllerAccessError>>,
     },
 
     SetPidSetpoint {
@@ -159,6 +189,115 @@ impl<SignalId> ProcessingHandle<SignalId> {
             .map_err(|_| AddControlLoopError::Disconnected)?;
 
         result.map_err(AddControlLoopError::Definition)
+    }
+
+    pub fn controller_parameters(
+        &self,
+        name: impl Into<String>,
+    ) -> Result<Vec<ParameterDescriptor>, ControllerRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::ControllerParameters {
+                name: name.into(),
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn read_controller_parameter(
+        &self,
+        name: impl Into<String>,
+        key: impl Into<String>,
+    ) -> Result<InstrumentValue, ControllerRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::ReadControllerParameter {
+                name: name.into(),
+                key: key.into(),
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn write_controller_parameter(
+        &self,
+        name: impl Into<String>,
+        key: impl Into<String>,
+        value: InstrumentValue,
+    ) -> Result<InstrumentValue, ControllerRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::WriteControllerParameter {
+                name: name.into(),
+                key: key.into(),
+                value,
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn configure_controller<I, K>(
+        &self,
+        name: impl Into<String>,
+        updates: I,
+    ) -> Result<(), ControllerRequestError>
+    where
+        I: IntoIterator<Item = (K, InstrumentValue)>,
+        K: AsRef<str>,
+    {
+        let updates = updates
+            .into_iter()
+            .map(|(key, value)| (key.as_ref().to_owned(), value))
+            .collect();
+
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::ConfigureController {
+                name: name.into(),
+                updates,
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn reset_controller(&self, name: impl Into<String>) -> Result<(), ControllerRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::ResetController {
+                name: name.into(),
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
     }
 
     pub fn set_pid_setpoint(
@@ -343,6 +482,55 @@ fn run_processing<SignalId>(
                 let _ = response_sender.send(result);
             }
 
+            ProcessingCommand::ControllerParameters {
+                name,
+                response_sender,
+            } => {
+                let result = registry.parameters(&name);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::ReadControllerParameter {
+                name,
+                key,
+                response_sender,
+            } => {
+                let result = registry.read_parameter(&name, &key);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::WriteControllerParameter {
+                name,
+                key,
+                value,
+                response_sender,
+            } => {
+                let result = registry.write_parameter(&name, &key, value);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::ConfigureController {
+                name,
+                updates,
+                response_sender,
+            } => {
+                let result = registry.configure(&name, updates);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::ResetController {
+                name,
+                response_sender,
+            } => {
+                let result = registry.reset(&name);
+
+                let _ = response_sender.send(result);
+            }
+
             ProcessingCommand::SetPidSetpoint {
                 name,
                 setpoint,
@@ -516,6 +704,42 @@ impl Error for AddControlLoopError {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum ControllerRequestError {
+    Access(ControllerAccessError),
+
+    Disconnected,
+}
+
+impl fmt::Display for ControllerRequestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Access(error) => error.fmt(formatter),
+
+            Self::Disconnected => formatter.write_str(
+                "Processing service is \
+                     disconnected",
+            ),
+        }
+    }
+}
+
+impl Error for ControllerRequestError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Access(error) => Some(error),
+
+            Self::Disconnected => None,
+        }
+    }
+}
+
+impl From<ControllerAccessError> for ControllerRequestError {
+    fn from(error: ControllerAccessError) -> Self {
+        Self::Access(error)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SetPidLoopSetpointError {
     Controller(PidControllerError),
@@ -596,15 +820,15 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AddControlLoopError, AddSignalFilterError, ProcessingEvent, ProcessingInput,
-        ProcessingService, ProcessingServiceDisconnected, ReplaceSignalFilterError,
-        SetPidLoopSetpointError,
+        AddControlLoopError, AddSignalFilterError, ControllerRequestError, ProcessingEvent,
+        ProcessingInput, ProcessingService, ProcessingServiceDisconnected,
+        ReplaceSignalFilterError, SetPidLoopSetpointError,
     };
 
     use crate::{
         connection::ConnectionId,
         instrument::{
-            ParameterAccess, ParameterRange, ParameterValueType,
+            InstrumentValue, ParameterAccess, ParameterRange, ParameterValueType,
             virtual_instrument::{
                 VirtualInstrumentId, VirtualParameterDescriptor, VirtualParameterId,
             },
@@ -1229,5 +1453,124 @@ mod tests {
             ReplaceSignalFilterError::<u64>::Disconnected.to_string(),
             "Processing service is disconnected",
         );
+    }
+
+    #[test]
+    fn reads_controller_parameter() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        handle
+            .add_control_loop(pid_definition("heater", 1, 1))
+            .unwrap();
+
+        assert_eq!(
+            handle.read_controller_parameter("heater", "setpoint",),
+            Ok(InstrumentValue::Number(100.0,),),
+        );
+    }
+
+    #[test]
+    fn writes_controller_parameter() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        handle
+            .add_control_loop(pid_definition("heater", 1, 1))
+            .unwrap();
+
+        assert_eq!(
+            handle.write_controller_parameter(
+                "heater",
+                "setpoint",
+                InstrumentValue::Number(120.0,),
+            ),
+            Ok(InstrumentValue::Number(120.0,),),
+        );
+
+        assert_eq!(
+            handle.read_controller_parameter("heater", "setpoint",),
+            Ok(InstrumentValue::Number(120.0,),),
+        );
+    }
+
+    #[test]
+    fn configures_controller_atomically() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        handle
+            .add_control_loop(pid_definition("heater", 1, 1))
+            .unwrap();
+
+        handle
+            .configure_controller(
+                "heater",
+                [
+                    ("output_min", InstrumentValue::Number(200.0)),
+                    ("output_max", InstrumentValue::Number(300.0)),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(
+            handle.read_controller_parameter("heater", "output_min",),
+            Ok(InstrumentValue::Number(200.0,),),
+        );
+
+        assert_eq!(
+            handle.read_controller_parameter("heater", "output_max",),
+            Ok(InstrumentValue::Number(300.0,),),
+        );
+    }
+
+    #[test]
+    fn reports_missing_controller_request() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        assert!(matches!(
+            service
+                .handle()
+                .read_controller_parameter("missing", "setpoint",),
+            Err(ControllerRequestError::Access(_)),
+        ));
+    }
+
+    #[test]
+    fn resets_controller_by_name() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        let control_events = service.control_event_receiver();
+
+        handle
+            .add_control_loop(pid_definition("heater", 1, 1))
+            .unwrap();
+
+        handle
+            .write_controller_parameter("heater", "ki", InstrumentValue::Number(1.0))
+            .unwrap();
+
+        handle.process(1, 0.0, 90.0).unwrap();
+
+        let _ = receive_pid_output(&control_events);
+
+        handle.process(1, 1.0, 90.0).unwrap();
+
+        let accumulated = receive_pid_output(&control_events);
+
+        assert!(accumulated.output.integral().unwrap() > 0.0,);
+
+        handle.reset_controller("heater").unwrap();
+
+        handle.process(1, 0.0, 90.0).unwrap();
+
+        let restarted = receive_pid_output(&control_events);
+
+        assert_eq!(restarted.output.integral(), Some(0.0),);
     }
 }

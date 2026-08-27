@@ -13,7 +13,7 @@ pub use graph::{
 };
 
 pub use service::{
-    AddControlLoopError, AddSignalFilterError, ProcessingEvent, ProcessingHandle, ProcessingInput,
-    ProcessingService, ProcessingServiceDisconnected, ReplaceSignalFilterError,
-    SetPidLoopSetpointError,
+    AddControlLoopError, AddSignalFilterError, ControllerRequestError, ProcessingEvent,
+    ProcessingHandle, ProcessingInput, ProcessingService, ProcessingServiceDisconnected,
+    ReplaceSignalFilterError, SetPidLoopSetpointError,
 };
