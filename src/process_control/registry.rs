@@ -2,12 +2,13 @@ use std::fmt;
 
 use crate::{
     connection::ConnectionId,
-    instrument::{InstrumentWriteRequest, ParameterRange},
+    instrument::{InstrumentValue, InstrumentWriteRequest, ParameterDescriptor, ParameterRange},
 };
 
 use super::{
     ControlLoop, ControlLoopDefinition, ControlOutputConversionError, ControlOutputParameter,
-    ControlOutputTarget, Controller, ControllerError, ControllerOutput, PidControllerError,
+    ControlOutputTarget, Controller, ControllerError, ControllerOutput, ControllerParameterError,
+    PidControllerError,
 };
 
 pub struct ControllerRegistry<SignalId> {
@@ -61,6 +62,70 @@ where
         self.loops
             .iter()
             .any(|control_loop| control_loop.name() == name)
+    }
+
+    fn control_loop(
+        &self,
+        name: &str,
+    ) -> Result<&ControlLoop<SignalId, ControlOutputTarget>, ControllerAccessError> {
+        self.loops
+            .iter()
+            .find(|control_loop| control_loop.name() == name)
+            .ok_or_else(|| ControllerAccessError::ControlLoopNotFound(name.to_owned()))
+    }
+
+    fn control_loop_mut(
+        &mut self,
+        name: &str,
+    ) -> Result<&mut ControlLoop<SignalId, ControlOutputTarget>, ControllerAccessError> {
+        self.loops
+            .iter_mut()
+            .find(|control_loop| control_loop.name() == name)
+            .ok_or_else(|| ControllerAccessError::ControlLoopNotFound(name.to_owned()))
+    }
+
+    pub fn parameters(
+        &self,
+        name: &str,
+    ) -> Result<Vec<ParameterDescriptor>, ControllerAccessError> {
+        Ok(self.control_loop(name)?.parameters())
+    }
+
+    pub fn read_parameter(
+        &self,
+        name: &str,
+        key: &str,
+    ) -> Result<InstrumentValue, ControllerAccessError> {
+        self.control_loop(name)?
+            .read_parameter(key)
+            .map_err(Into::into)
+    }
+
+    pub fn write_parameter(
+        &mut self,
+        name: &str,
+        key: &str,
+        value: InstrumentValue,
+    ) -> Result<InstrumentValue, ControllerAccessError> {
+        self.control_loop_mut(name)?
+            .write_parameter(key, value)
+            .map_err(Into::into)
+    }
+
+    pub fn configure<I, K>(&mut self, name: &str, updates: I) -> Result<(), ControllerAccessError>
+    where
+        I: IntoIterator<Item = (K, InstrumentValue)>,
+        K: AsRef<str>,
+    {
+        self.control_loop_mut(name)?
+            .configure(updates)
+            .map_err(Into::into)
+    }
+
+    pub fn reset(&mut self, name: &str) -> Result<(), ControllerAccessError> {
+        self.control_loop_mut(name)?.reset();
+
+        Ok(())
     }
 
     pub fn set_setpoint(&mut self, name: &str, setpoint: f64) -> Result<bool, PidControllerError> {
@@ -338,6 +403,45 @@ impl fmt::Display for ControllerRegistryError {
 
 impl std::error::Error for ControllerRegistryError {}
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum ControllerAccessError {
+    ControlLoopNotFound(String),
+
+    Parameter(ControllerParameterError),
+}
+
+impl fmt::Display for ControllerAccessError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ControlLoopNotFound(name) => {
+                write!(
+                    formatter,
+                    "Control loop '{name}' \
+                     was not found",
+                )
+            }
+
+            Self::Parameter(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for ControllerAccessError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ControlLoopNotFound(_) => None,
+
+            Self::Parameter(error) => Some(error),
+        }
+    }
+}
+
+impl From<ControllerParameterError> for ControllerAccessError {
+    fn from(error: ControllerParameterError) -> Self {
+        Self::Parameter(error)
+    }
+}
+
 #[derive(Debug)]
 pub enum ControlExecutionError {
     Controller {
@@ -396,7 +500,10 @@ mod tests {
         },
     };
 
-    use super::{ControlEvent, ControlExecutionError, ControllerRegistry, ControllerRegistryError};
+    use super::{
+        ControlEvent, ControlExecutionError, ControllerAccessError, ControllerRegistry,
+        ControllerRegistryError,
+    };
 
     fn virtual_target(connection: u64, instrument: u16, parameter: u16) -> ControlOutputTarget {
         let descriptor = VirtualParameterDescriptor::new(
@@ -840,5 +947,107 @@ mod tests {
              -10..=100 exceeds target range \
              0..=100",
         );
+    }
+
+    #[test]
+    fn reads_registered_controller_parameter() {
+        let mut registry = ControllerRegistry::new();
+
+        registry
+            .add(definition("heater", 1, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        assert_eq!(
+            registry.read_parameter("heater", "setpoint",),
+            Ok(InstrumentValue::Number(100.0,),),
+        );
+
+        assert_eq!(
+            registry.read_parameter("heater", "kp",),
+            Ok(InstrumentValue::Number(2.0,),),
+        );
+    }
+
+    #[test]
+    fn writes_registered_controller_parameter() {
+        let mut registry = ControllerRegistry::new();
+
+        registry
+            .add(definition("heater", 1, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        assert_eq!(
+            registry.write_parameter("heater", "setpoint", InstrumentValue::Number(120.0,),),
+            Ok(InstrumentValue::Number(120.0,),),
+        );
+
+        assert_eq!(
+            registry.read_parameter("heater", "setpoint",),
+            Ok(InstrumentValue::Number(120.0,),),
+        );
+    }
+
+    #[test]
+    fn configures_registered_controller_atomically() {
+        let mut registry = ControllerRegistry::new();
+
+        registry
+            .add(definition("heater", 1, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        registry
+            .configure(
+                "heater",
+                [
+                    ("output_min", InstrumentValue::Number(200.0)),
+                    ("output_max", InstrumentValue::Number(300.0)),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(
+            registry.read_parameter("heater", "output_min",),
+            Ok(InstrumentValue::Number(200.0,),),
+        );
+
+        assert_eq!(
+            registry.read_parameter("heater", "output_max",),
+            Ok(InstrumentValue::Number(300.0,),),
+        );
+    }
+
+    #[test]
+    fn reports_missing_controller_parameter_target() {
+        let registry = ControllerRegistry::<u64>::new();
+
+        assert_eq!(
+            registry.read_parameter("missing", "setpoint",),
+            Err(ControllerAccessError::ControlLoopNotFound(
+                "missing".to_owned(),
+            ),),
+        );
+    }
+
+    #[test]
+    fn resets_registered_controller_by_name() {
+        let mut registry = ControllerRegistry::new();
+
+        registry
+            .add(definition("heater", 1, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        registry.process(1, 0.0, 90.0);
+
+        registry.process(1, 1.0, 90.0);
+
+        registry.reset("heater").unwrap();
+
+        let events = registry.process(1, 0.0, 90.0);
+
+        let [ControlEvent::Output(output)] = events.as_slice() else {
+            panic!("expected one control output");
+        };
+
+        assert_eq!(output.output.integral(), Some(0.0),);
     }
 }
