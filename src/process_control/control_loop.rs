@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use super::{PidController, PidControllerError, PidGains, PidOutput, PidOutputLimits};
+use super::{Controller, PidController, PidControllerError, PidGains, PidOutput, PidOutputLimits};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PidLoopDefinition<SignalId, OutputTarget> {
@@ -67,7 +67,7 @@ pub struct PidLoop<SignalId, OutputTarget> {
     name: String,
     input: SignalId,
     output_target: OutputTarget,
-    controller: PidController,
+    controller: Controller,
 }
 
 impl<SignalId, OutputTarget> PidLoop<SignalId, OutputTarget> {
@@ -81,7 +81,8 @@ impl<SignalId, OutputTarget> PidLoop<SignalId, OutputTarget> {
             output_limits,
         } = definition;
 
-        let controller = PidController::from_validated_config(setpoint, gains, output_limits);
+        let controller =
+            PidController::from_validated_config(setpoint, gains, output_limits).into();
 
         Self {
             name,
@@ -103,26 +104,38 @@ impl<SignalId, OutputTarget> PidLoop<SignalId, OutputTarget> {
         &self.output_target
     }
 
-    pub const fn setpoint(&self) -> f64 {
-        self.controller.setpoint()
+    fn pid_controller(&self) -> &PidController {
+        let Controller::Pid(controller) = &self.controller;
+
+        controller
     }
 
-    pub const fn gains(&self) -> PidGains {
-        self.controller.gains()
+    fn pid_controller_mut(&mut self) -> &mut PidController {
+        let Controller::Pid(controller) = &mut self.controller;
+
+        controller
     }
 
-    pub const fn output_limits(&self) -> PidOutputLimits {
-        self.controller.output_limits()
+    pub fn setpoint(&self) -> f64 {
+        self.pid_controller().setpoint()
     }
 
-    pub const fn integral(&self) -> f64 {
-        self.controller.integral()
+    pub fn gains(&self) -> PidGains {
+        self.pid_controller().gains()
+    }
+
+    pub fn output_limits(&self) -> PidOutputLimits {
+        self.pid_controller().output_limits()
+    }
+
+    pub fn integral(&self) -> f64 {
+        self.pid_controller().integral()
     }
 
     pub fn set_setpoint(&mut self, setpoint: f64) -> Result<(), PidLoopDefinitionError> {
         validate_setpoint(setpoint)?;
 
-        self.controller
+        self.pid_controller_mut()
             .set_setpoint(setpoint)
             .expect("validated PID setpoint must be accepted by controller");
 
@@ -130,11 +143,11 @@ impl<SignalId, OutputTarget> PidLoop<SignalId, OutputTarget> {
     }
 
     pub fn set_gains(&mut self, gains: PidGains) {
-        self.controller.set_gains(gains);
+        self.pid_controller_mut().set_gains(gains);
     }
 
     pub fn set_output_limits(&mut self, output_limits: PidOutputLimits) {
-        self.controller.set_output_limits(output_limits);
+        self.pid_controller_mut().set_output_limits(output_limits);
     }
 
     pub fn update(
@@ -142,11 +155,11 @@ impl<SignalId, OutputTarget> PidLoop<SignalId, OutputTarget> {
         timestamp: f64,
         measurement: f64,
     ) -> Result<PidOutput, PidControllerError> {
-        self.controller.update(timestamp, measurement)
+        self.pid_controller_mut().update(timestamp, measurement)
     }
 
     pub fn reset(&mut self) {
-        self.controller.reset();
+        self.pid_controller_mut().reset();
     }
 }
 
