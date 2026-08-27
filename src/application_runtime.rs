@@ -693,11 +693,6 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
         | UserCommand::ConfigureController { .. }
         | UserCommand::ResetController { .. } => None,
 
-        UserCommand::SetPidSetpoint { name, setpoint } => Some(ProcessAction::SetPidSetpoint {
-            name: name.clone(),
-            setpoint: *setpoint,
-        }),
-
         UserCommand::SetFilter { name, definition } => Some(ProcessAction::SetFilter {
             name: name.clone(),
             definition: definition.to_string(),

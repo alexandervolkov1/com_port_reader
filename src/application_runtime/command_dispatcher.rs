@@ -7,7 +7,6 @@ use crate::{
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
     data::{NewFilteredSeries, NewSeries, SeriesId, SeriesStore},
-    instrument::InstrumentValue,
     process_control::{
         ControlLoopDefinition, ControlOutputTarget, Controller, NewPidLoop, PidController,
     },
@@ -199,10 +198,6 @@ impl CommandDispatcher {
                 let result = self.processing.reset_controller(&name);
 
                 let _ = response_sender.send(result);
-            }
-
-            UserCommand::SetPidSetpoint { name, setpoint } => {
-                self.set_pid_setpoint(name, setpoint);
             }
 
             UserCommand::SetFilter { name, definition } => {
@@ -529,30 +524,6 @@ impl CommandDispatcher {
                 self.log.error(format!(
                     "Failed to add PID loop \
                          '{name}': {error}",
-                ));
-            }
-        }
-    }
-
-    fn set_pid_setpoint(&self, name: String, setpoint: f64) {
-        match self.processing.write_controller_parameter(
-            &name,
-            "setpoint",
-            InstrumentValue::Number(setpoint),
-        ) {
-            Ok(_) => {
-                self.log.info(format!(
-                    "PID loop '{name}' \
-                     setpoint changed to \
-                     {setpoint}.",
-                ));
-            }
-
-            Err(error) => {
-                self.log.error(format!(
-                    "Failed to change PID \
-                     loop '{name}' setpoint: \
-                     {error}",
                 ));
             }
         }

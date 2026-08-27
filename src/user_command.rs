@@ -46,11 +46,6 @@ pub enum UserCommand {
         response_sender: Sender<Result<(), ControllerRequestError>>,
     },
 
-    SetPidSetpoint {
-        name: String,
-        setpoint: f64,
-    },
-
     SetFilter {
         name: String,
         definition: SignalFilterDefinition,

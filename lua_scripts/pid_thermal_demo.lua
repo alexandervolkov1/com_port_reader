@@ -40,6 +40,7 @@ local OUTPUT_MAX = 100.0
 
 
 local plant = nil
+local controller = nil
 local panel_registered = false
 
 
@@ -175,29 +176,30 @@ local function configure_plant()
         }
     )
 
-    plant:pid(
-        "heater_power",
-        {
-            name =
-                PID_NAME,
+    controller =
+        plant:pid(
+            "heater_power",
+            {
+                name =
+                    PID_NAME,
 
-            input =
-                TEMPERATURE_SERIES_NAME,
+                input =
+                    TEMPERATURE_SERIES_NAME,
 
-            setpoint =
-                setpoint,
+                setpoint =
+                    setpoint,
 
-            kp = KP,
-            ki = KI,
-            kd = KD,
+                kp = KP,
+                ki = KI,
+                kd = KD,
 
-            output_min =
-                OUTPUT_MIN,
+                output_min =
+                    OUTPUT_MIN,
 
-            output_max =
-                OUTPUT_MAX,
-        }
-    )
+                output_max =
+                    OUTPUT_MAX,
+            }
+        )
 end
 
 
@@ -216,12 +218,17 @@ function script.set_setpoint(value)
         )
     end
 
-    setpoint = value
+    if controller == nil then
+        error(
+            "PID controller is not configured"
+        )
+    end
 
-    app.set_pid_setpoint(
-        PID_NAME,
-        setpoint
-    )
+    setpoint =
+        controller:write(
+            "setpoint",
+            value
+        )
 
     set_status(
         "PID setpoint updated to "
@@ -237,6 +244,7 @@ function script.run()
     app.clear()
 
     plant = nil
+    controller = nil
 
     app.start_emu()
 
