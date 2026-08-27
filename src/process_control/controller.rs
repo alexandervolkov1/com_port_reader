@@ -104,6 +104,36 @@ impl ControllerOutput {
             Self::Pid { setpoint, .. } => Some(*setpoint),
         }
     }
+
+    pub const fn unconstrained_value(&self) -> Option<f64> {
+        match self {
+            Self::Pid { output, .. } => Some(output.unconstrained_value()),
+        }
+    }
+
+    pub const fn proportional(&self) -> Option<f64> {
+        match self {
+            Self::Pid { output, .. } => Some(output.proportional()),
+        }
+    }
+
+    pub const fn integral(&self) -> Option<f64> {
+        match self {
+            Self::Pid { output, .. } => Some(output.integral()),
+        }
+    }
+
+    pub const fn derivative(&self) -> Option<f64> {
+        match self {
+            Self::Pid { output, .. } => Some(output.derivative()),
+        }
+    }
+
+    pub const fn saturated(&self) -> Option<bool> {
+        match self {
+            Self::Pid { output, .. } => Some(output.saturated()),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

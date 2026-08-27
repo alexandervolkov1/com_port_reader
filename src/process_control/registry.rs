@@ -7,7 +7,7 @@ use crate::{
 
 use super::{
     ControlLoop, ControlLoopDefinition, ControlOutputConversionError, ControlOutputParameter,
-    ControlOutputTarget, Controller, PidControllerError, PidOutput, PidOutputLimits,
+    ControlOutputTarget, Controller, ControllerError, ControllerOutput, PidControllerError,
 };
 
 pub struct ControllerRegistry<SignalId> {
@@ -150,8 +150,6 @@ where
 
             let target = *control_loop.output_target();
 
-            let setpoint = control_loop.setpoint();
-
             let output = match control_loop.update(timestamp, measurement) {
                 Ok(output) => output,
 
@@ -182,7 +180,6 @@ where
                 loop_name,
                 input: signal_id,
                 timestamp,
-                setpoint,
                 measurement,
                 output,
                 connection_id: target.connection_id(),
@@ -234,28 +231,23 @@ fn output_targets_overlap(left: &ControlOutputTarget, right: &ControlOutputTarge
     }
 }
 
-fn validate_output_limits(
-    limits: PidOutputLimits,
+fn validate_controller_output(
+    controller: &Controller,
     target: &ControlOutputTarget,
 ) -> Result<(), ControllerRegistryError> {
-    let Some(range) = target.range() else {
+    let Some(target_range) = target.range() else {
         return Ok(());
     };
 
-    let (target_minimum, target_maximum) = match range {
-        ParameterRange::Integer { minimum, maximum } => (minimum as f64, maximum as f64),
+    let (minimum, maximum) = numeric_range_bounds(controller.output_range());
 
-        ParameterRange::Number { minimum, maximum } => (minimum, maximum),
-    };
+    let (target_minimum, target_maximum) = numeric_range_bounds(target_range);
 
-    if limits.minimum() < target_minimum || limits.maximum() > target_maximum {
-        return Err(ControllerRegistryError::OutputLimitsOutsideRange {
-            minimum: limits.minimum(),
-
-            maximum: limits.maximum(),
-
+    if minimum < target_minimum || maximum > target_maximum {
+        return Err(ControllerRegistryError::OutputRangeOutsideTargetRange {
+            minimum,
+            maximum,
             target_minimum,
-
             target_maximum,
         });
     }
@@ -263,12 +255,11 @@ fn validate_output_limits(
     Ok(())
 }
 
-fn validate_controller_output(
-    controller: &Controller,
-    target: &ControlOutputTarget,
-) -> Result<(), ControllerRegistryError> {
-    match controller {
-        Controller::Pid(controller) => validate_output_limits(controller.output_limits(), target),
+fn numeric_range_bounds(range: ParameterRange) -> (f64, f64) {
+    match range {
+        ParameterRange::Integer { minimum, maximum } => (minimum as f64, maximum as f64),
+
+        ParameterRange::Number { minimum, maximum } => (minimum, maximum),
     }
 }
 
@@ -283,9 +274,8 @@ pub struct ControlOutput<SignalId> {
     pub loop_name: String,
     pub input: SignalId,
     pub timestamp: f64,
-    pub setpoint: f64,
     pub measurement: f64,
-    pub output: PidOutput,
+    pub output: ControllerOutput,
     pub connection_id: ConnectionId,
     pub request: InstrumentWriteRequest,
 }
@@ -299,7 +289,7 @@ pub enum ControllerRegistryError {
         target: ControlOutputTarget,
     },
 
-    OutputLimitsOutsideRange {
+    OutputRangeOutsideTargetRange {
         minimum: f64,
         maximum: f64,
         target_minimum: f64,
@@ -311,11 +301,7 @@ impl fmt::Display for ControllerRegistryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DuplicateName(name) => {
-                write!(
-                    formatter,
-                    "PID loop '{name}' \
-                     already exists",
-                )
+                write!(formatter, "Control loop '{name}' already exists")
             }
 
             Self::OutputAlreadyControlled {
@@ -326,26 +312,22 @@ impl fmt::Display for ControllerRegistryError {
                 write!(
                     formatter,
                     "Output target {target} \
-                     is already controlled \
-                     by PID loop \
+                    is already controlled by control loop \
                      '{existing_loop}'",
                 )
             }
 
-            Self::OutputLimitsOutsideRange {
+            Self::OutputRangeOutsideTargetRange {
                 minimum,
-
                 maximum,
-
                 target_minimum,
-
                 target_maximum,
             } => {
                 write!(
                     formatter,
-                    "PID output limits \
+                    "Controller output range \
                      {minimum}..={maximum} \
-                     exceed target range \
+                     exceeds target range \
                      {target_minimum}..=\
                      {target_maximum}",
                 )
@@ -360,13 +342,11 @@ impl std::error::Error for ControllerRegistryError {}
 pub enum ControlExecutionError {
     Controller {
         loop_name: String,
-
-        source: PidControllerError,
+        source: ControllerError,
     },
 
     Output {
         loop_name: String,
-
         source: ControlOutputConversionError,
     },
 }
@@ -375,19 +355,13 @@ impl fmt::Display for ControlExecutionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Controller { loop_name, source } => {
-                write!(
-                    formatter,
-                    "PID loop '{loop_name}' \
-                     failed: {source}",
-                )
+                write!(formatter, "Control loop '{loop_name}' failed: {source}")
             }
 
             Self::Output { loop_name, source } => {
                 write!(
                     formatter,
-                    "PID loop '{loop_name}' \
-                     output conversion \
-                     failed: {source}",
+                    "Control loop '{loop_name}' output conversion failed: {source}"
                 )
             }
         }
@@ -417,8 +391,8 @@ mod tests {
             },
         },
         process_control::{
-            ControlLoopDefinition, ControlOutputTarget, PidController, PidControllerError,
-            PidGains, PidOutputLimits,
+            ControlLoopDefinition, ControlOutputTarget, ControllerError, PidController,
+            PidControllerError, PidGains, PidOutputLimits,
         },
     };
 
@@ -624,7 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_limits_outside_target_range() {
+    fn rejects_controller_output_range_outside_target_range() {
         let target = virtual_target(1, 1, 1);
 
         let controller = PidController::with_output_limits(
@@ -643,7 +617,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(ControllerRegistryError::OutputLimitsOutsideRange {
+            Err(ControllerRegistryError::OutputRangeOutsideTargetRange {
                 minimum: -1.0,
                 maximum: 100.0,
                 target_minimum: 0.0,
@@ -678,7 +652,7 @@ mod tests {
 
         assert_eq!(output.timestamp, 1_000.0,);
 
-        assert_eq!(output.setpoint, 100.0,);
+        assert_eq!(output.output.setpoint(), Some(100.0),);
 
         assert_eq!(output.measurement, 80.0,);
 
@@ -760,15 +734,17 @@ mod tests {
 
         assert!(matches!(
             &events[0],
-
             ControlEvent::Error(
-                ControlExecutionError::
-                    Controller {
-                        loop_name,
-                        ..
-                    },
+                ControlExecutionError::Controller {
+                    loop_name,
+                    source:
+                        ControllerError::Pid(
+                            PidControllerError::
+                                NonFiniteTimestamp
+                        ),
+                },
             ) if loop_name == "heater"
-        ),);
+        ));
     }
 
     #[test]
@@ -849,22 +825,20 @@ mod tests {
     fn describes_registry_errors() {
         assert_eq!(
             ControllerRegistryError::DuplicateName("heater".to_owned(),).to_string(),
-            "PID loop 'heater' already exists",
+            "Control loop 'heater' already exists",
         );
 
         assert_eq!(
-            ControllerRegistryError::OutputLimitsOutsideRange {
+            ControllerRegistryError::OutputRangeOutsideTargetRange {
                 minimum: -10.0,
-
                 maximum: 100.0,
-
                 target_minimum: 0.0,
-
                 target_maximum: 100.0,
             }
             .to_string(),
-            "PID output limits -10..=100 \
-             exceed target range 0..=100",
+            "Controller output range \
+             -10..=100 exceeds target range \
+             0..=100",
         );
     }
 }

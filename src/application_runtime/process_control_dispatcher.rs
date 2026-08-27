@@ -92,13 +92,10 @@ fn run(
                         let timestamp =
                             output.timestamp;
 
-                        let setpoint =
-                            output.setpoint;
-
                         let measurement =
                             output.measurement;
 
-                        let pid_output =
+                        let controller_output =
                             output.output;
 
                         let connection_id =
@@ -125,7 +122,7 @@ fn run(
                                         Ok(Err(error)) => {
                                             log.error(
                                                 format!(
-                                                    "PID loop \
+                                                    "Control loop \
                                                      '{loop_name}' \
                                                      output failed: \
                                                      {error}",
@@ -138,7 +135,7 @@ fn run(
                                         Err(_) => {
                                             log.error(
                                                 format!(
-                                                    "PID loop \
+                                                    "Control loop \
                                                      '{loop_name}' \
                                                      output failed: \
                                                      instrument write \
@@ -155,7 +152,7 @@ fn run(
                                 Err(error) => {
                                     log.error(
                                         format!(
-                                            "PID loop \
+                                            "Control loop \
                                              '{loop_name}' \
                                              output failed: \
                                              {error}",
@@ -172,45 +169,41 @@ fn run(
                                     timestamp,
                                     loop_name,
                                     controller_kind:
-                                        "pid".to_owned(),
+                                        controller_output
+                                            .kind()
+                                            .as_str()
+                                            .to_owned(),
+
                                     input_series_id,
                                     connection_id,
                                     setpoint:
-                                        Some(setpoint),
+                                        controller_output.setpoint(),
                                     measurement,
                                     requested_output:
-                                        pid_output.value(),
+                                        controller_output.value(),
                                     actual_output,
                                     unconstrained_output:
-                                        Some(
-                                            pid_output
-                                                .unconstrained_value(),
-                                        ),
+                                        controller_output
+                                            .unconstrained_value(),
                                     proportional:
-                                        Some(
-                                            pid_output
-                                                .proportional(),
-                                        ),
+                                        controller_output
+                                            .proportional(),
                                     integral:
-                                        Some(
-                                            pid_output.integral(),
-                                        ),
+                                        controller_output
+                                            .integral(),
                                     derivative:
-                                        Some(
-                                            pid_output
-                                                .derivative(),
-                                        ),
+                                        controller_output
+                                            .derivative(),
                                     saturated:
-                                        Some(
-                                            pid_output.saturated(),
-                                        ),
+                                        controller_output
+                                            .saturated(),
                                 },
                             );
                     }
 
                     ControlEvent::Error(error) => {
                         log.error(format!(
-                            "PID loop execution failed: \
+                            "Control loop execution failed: \
                              {error}",
                         ));
                     }

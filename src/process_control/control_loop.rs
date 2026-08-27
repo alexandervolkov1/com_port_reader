@@ -1,6 +1,9 @@
 use std::{error::Error, fmt};
 
-use super::{Controller, PidController, PidControllerError, PidGains, PidOutput, PidOutputLimits};
+use super::{
+    Controller, ControllerError, ControllerOutput, PidController, PidControllerError, PidGains,
+    PidOutputLimits,
+};
 
 #[derive(Debug)]
 pub struct ControlLoopDefinition<SignalId, OutputTarget> {
@@ -125,12 +128,12 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         &mut self,
         timestamp: f64,
         measurement: f64,
-    ) -> Result<PidOutput, PidControllerError> {
-        self.pid_controller_mut().update(timestamp, measurement)
+    ) -> Result<ControllerOutput, ControllerError> {
+        self.controller.update(timestamp, measurement)
     }
 
     pub fn reset(&mut self) {
-        self.pid_controller_mut().reset();
+        self.controller.reset();
     }
 }
 
@@ -182,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn creates_pid_loop_definition() {
+    fn creates_control_loop_definition() {
         let output_target = TestOutputTarget {
             connection: 2,
             instrument: 7,
@@ -260,9 +263,9 @@ mod tests {
 
         assert_close(second.value(), 100.0);
 
-        assert_close(second.integral(), 20.0);
+        assert_close(second.integral().unwrap(), 20.0);
 
-        assert!(second.saturated(),);
+        assert_eq!(second.saturated(), Some(true),);
     }
 
     #[test]
@@ -283,7 +286,7 @@ mod tests {
 
         assert_eq!(control_loop.setpoint(), 200.0,);
 
-        assert_close(output.derivative(), 0.0);
+        assert_close(output.derivative().unwrap(), 0.0);
 
         assert_close(output.value(), 0.0);
     }
@@ -334,7 +337,7 @@ mod tests {
 
         assert_eq!(control_loop.gains(), gains,);
 
-        assert_close(output.integral(), 2.0);
+        assert_close(output.integral().unwrap(), 2.0);
 
         assert_close(output.value(), 6.0);
     }
@@ -363,7 +366,7 @@ mod tests {
 
         assert_close(limited.value(), 100.0);
 
-        assert!(limited.saturated(),);
+        assert_eq!(limited.saturated(), Some(true),);
     }
 
     #[test]
@@ -392,7 +395,7 @@ mod tests {
 
         let restarted = control_loop.update(0.0, 90.0).unwrap();
 
-        assert_close(restarted.integral(), 0.0);
+        assert_close(restarted.integral().unwrap(), 0.0);
     }
 
     fn definition_with(

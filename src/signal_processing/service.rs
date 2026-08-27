@@ -1060,7 +1060,7 @@ mod tests {
 
         let output = receive_pid_output(&control_events);
 
-        assert_eq!(output.setpoint, 90.0,);
+        assert_eq!(output.output.setpoint(), Some(90.0),);
 
         assert_eq!(output.output.value(), 20.0,);
     }
