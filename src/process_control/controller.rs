@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use crate::instrument::ParameterRange;
+use crate::instrument::{ParameterAccess, ParameterDescriptor, ParameterRange, ParameterValueType};
 
 use super::{PidController, PidControllerError, PidOutput};
 
@@ -23,6 +23,103 @@ impl fmt::Display for ControllerKind {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ControllerParameter {
+    Setpoint,
+    ProportionalGain,
+    IntegralGain,
+    DerivativeGain,
+    OutputMinimum,
+    OutputMaximum,
+}
+
+impl ControllerParameter {
+    pub const ALL: [Self; 6] = [
+        Self::Setpoint,
+        Self::ProportionalGain,
+        Self::IntegralGain,
+        Self::DerivativeGain,
+        Self::OutputMinimum,
+        Self::OutputMaximum,
+    ];
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|parameter| parameter.descriptor().key == key)
+    }
+
+    pub const fn descriptor(self) -> ParameterDescriptor {
+        match self {
+            Self::Setpoint => ParameterDescriptor {
+                key: "setpoint",
+                name: "setpoint",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -f64::MAX,
+                    maximum: f64::MAX,
+                },
+            },
+
+            Self::ProportionalGain => ParameterDescriptor {
+                key: "kp",
+                name: "proportional gain",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+
+            Self::IntegralGain => ParameterDescriptor {
+                key: "ki",
+                name: "integral gain",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+
+            Self::DerivativeGain => ParameterDescriptor {
+                key: "kd",
+                name: "derivative gain",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+
+            Self::OutputMinimum => ParameterDescriptor {
+                key: "output_min",
+                name: "output minimum",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -f64::MAX,
+                    maximum: f64::MAX,
+                },
+            },
+
+            Self::OutputMaximum => ParameterDescriptor {
+                key: "output_max",
+                name: "output maximum",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -f64::MAX,
+                    maximum: f64::MAX,
+                },
+            },
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Controller {
     Pid(PidController),
@@ -32,6 +129,15 @@ impl Controller {
     pub const fn kind(&self) -> ControllerKind {
         match self {
             Self::Pid(_) => ControllerKind::Pid,
+        }
+    }
+
+    pub fn parameters(&self) -> Vec<ParameterDescriptor> {
+        match self {
+            Self::Pid(_) => ControllerParameter::ALL
+                .into_iter()
+                .map(ControllerParameter::descriptor)
+                .collect(),
         }
     }
 
@@ -159,10 +265,12 @@ impl Error for ControllerError {
 
 #[cfg(test)]
 mod tests {
-    use super::{Controller, ControllerError, ControllerKind, ControllerOutput};
+    use super::{
+        Controller, ControllerError, ControllerKind, ControllerOutput, ControllerParameter,
+    };
 
     use crate::{
-        instrument::ParameterRange,
+        instrument::{ParameterAccess, ParameterRange, ParameterValueType},
         process_control::{PidController, PidControllerError, PidGains, PidOutputLimits},
     };
 
@@ -251,5 +359,56 @@ mod tests {
         let ControllerOutput::Pid { output, .. } = output;
 
         assert_eq!(output.integral(), 0.0,);
+    }
+
+    #[test]
+    fn describes_pid_parameters() {
+        let controller = controller();
+
+        let parameters = controller.parameters();
+
+        let keys = parameters
+            .iter()
+            .map(|parameter| parameter.key)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            keys,
+            vec!["setpoint", "kp", "ki", "kd", "output_min", "output_max",],
+        );
+    }
+
+    #[test]
+    fn finds_controller_parameter_by_key() {
+        assert_eq!(
+            ControllerParameter::from_key("setpoint",),
+            Some(ControllerParameter::Setpoint,),
+        );
+
+        assert_eq!(
+            ControllerParameter::from_key("kp",),
+            Some(ControllerParameter::ProportionalGain,),
+        );
+
+        assert_eq!(ControllerParameter::from_key("missing",), None,);
+    }
+
+    #[test]
+    fn describes_pid_gain_parameter() {
+        let descriptor = ControllerParameter::ProportionalGain.descriptor();
+
+        assert_eq!(descriptor.key, "kp",);
+
+        assert_eq!(descriptor.access, ParameterAccess::ReadWrite,);
+
+        assert_eq!(descriptor.value_type, ParameterValueType::Number,);
+
+        assert_eq!(
+            descriptor.range,
+            ParameterRange::Number {
+                minimum: 0.0,
+                maximum: f64::MAX,
+            },
+        );
     }
 }
