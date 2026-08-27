@@ -1,8 +1,10 @@
 use std::{error::Error, fmt};
 
+use crate::instrument::{InstrumentValue, ParameterDescriptor};
+
 use super::{
-    Controller, ControllerError, ControllerOutput, PidController, PidControllerError, PidGains,
-    PidOutputLimits,
+    Controller, ControllerError, ControllerOutput, ControllerParameterError, PidController,
+    PidControllerError, PidGains, PidOutputLimits,
 };
 
 #[derive(Debug)]
@@ -82,6 +84,30 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
 
     pub const fn output_target(&self) -> &OutputTarget {
         &self.output_target
+    }
+
+    pub fn parameters(&self) -> Vec<ParameterDescriptor> {
+        self.controller.parameters()
+    }
+
+    pub fn read_parameter(&self, key: &str) -> Result<InstrumentValue, ControllerParameterError> {
+        self.controller.read(key)
+    }
+
+    pub fn write_parameter(
+        &mut self,
+        key: &str,
+        value: InstrumentValue,
+    ) -> Result<InstrumentValue, ControllerParameterError> {
+        self.controller.write(key, value)
+    }
+
+    pub fn configure<I, K>(&mut self, updates: I) -> Result<(), ControllerParameterError>
+    where
+        I: IntoIterator<Item = (K, InstrumentValue)>,
+        K: AsRef<str>,
+    {
+        self.controller.configure(updates)
     }
 
     fn pid_controller(&self) -> &PidController {
@@ -175,6 +201,7 @@ impl Error for ControlLoopDefinitionError {}
 mod tests {
     use super::{ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError};
 
+    use crate::instrument::InstrumentValue;
     use crate::process_control::{PidController, PidControllerError, PidGains, PidOutputLimits};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -426,6 +453,96 @@ mod tests {
         assert!(
             (actual - expected).abs() <= tolerance,
             "expected {expected}, got {actual}",
+        );
+    }
+
+    #[test]
+    fn reads_controller_parameter() {
+        let definition = definition_with(
+            100.0,
+            PidGains::new(2.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        );
+
+        let control_loop = ControlLoop::new(definition);
+
+        assert_eq!(
+            control_loop.read_parameter("setpoint",),
+            Ok(InstrumentValue::Number(100.0,),),
+        );
+
+        assert_eq!(
+            control_loop.read_parameter("kp",),
+            Ok(InstrumentValue::Number(2.0,),),
+        );
+    }
+
+    #[test]
+    fn writes_controller_parameter() {
+        let definition = definition_with(
+            100.0,
+            PidGains::new(2.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        );
+
+        let mut control_loop = ControlLoop::new(definition);
+
+        assert_eq!(
+            control_loop.write_parameter("setpoint", InstrumentValue::Number(120.0,),),
+            Ok(InstrumentValue::Number(120.0,),),
+        );
+
+        assert_eq!(
+            control_loop.read_parameter("setpoint",),
+            Ok(InstrumentValue::Number(120.0,),),
+        );
+    }
+
+    #[test]
+    fn configures_controller_parameters_atomically() {
+        let definition = definition_with(
+            100.0,
+            PidGains::new(2.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        );
+
+        let mut control_loop = ControlLoop::new(definition);
+
+        control_loop
+            .configure([
+                ("output_min", InstrumentValue::Number(200.0)),
+                ("output_max", InstrumentValue::Number(300.0)),
+            ])
+            .unwrap();
+
+        assert_eq!(
+            control_loop.read_parameter("output_min",),
+            Ok(InstrumentValue::Number(200.0,),),
+        );
+
+        assert_eq!(
+            control_loop.read_parameter("output_max",),
+            Ok(InstrumentValue::Number(300.0,),),
+        );
+    }
+
+    #[test]
+    fn exposes_controller_parameter_descriptors() {
+        let control_loop = ControlLoop::new(definition_with(
+            100.0,
+            PidGains::new(2.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        ));
+
+        let keys = control_loop
+            .parameters()
+            .into_iter()
+            .map(|parameter| parameter.key)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            keys,
+            vec!["setpoint", "kp", "ki", "kd", "output_min", "output_max",],
         );
     }
 }
