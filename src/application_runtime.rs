@@ -882,7 +882,7 @@ mod tests {
 
         let definition = ControlLoopDefinition::new("heater", input, output, controller).unwrap();
 
-        handle.add_pid_loop(definition).unwrap();
+        handle.add_control_loop(definition).unwrap();
 
         handle.process(input, 1_000.0, 80.0).unwrap();
 

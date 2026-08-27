@@ -55,7 +55,7 @@ enum ProcessingCommand<SignalId> {
         response_sender: Sender<Result<(), SignalProcessingGraphUpdateError<SignalId>>>,
     },
 
-    AddPidLoop {
+    AddControlLoop {
         definition: ControlLoopDefinition<SignalId, ControlOutputTarget>,
         response_sender: Sender<Result<(), ControllerRegistryError>>,
     },
@@ -141,24 +141,24 @@ impl<SignalId> ProcessingHandle<SignalId> {
         result.map_err(ReplaceSignalFilterError::Definition)
     }
 
-    pub fn add_pid_loop(
+    pub fn add_control_loop(
         &self,
         definition: ControlLoopDefinition<SignalId, ControlOutputTarget>,
-    ) -> Result<(), AddPidLoopError> {
+    ) -> Result<(), AddControlLoopError> {
         let (response_sender, response_receiver) = bounded(1);
 
         self.command_sender
-            .send(ProcessingCommand::AddPidLoop {
+            .send(ProcessingCommand::AddControlLoop {
                 definition,
                 response_sender,
             })
-            .map_err(|_| AddPidLoopError::Disconnected)?;
+            .map_err(|_| AddControlLoopError::Disconnected)?;
 
         let result = response_receiver
             .recv()
-            .map_err(|_| AddPidLoopError::Disconnected)?;
+            .map_err(|_| AddControlLoopError::Disconnected)?;
 
-        result.map_err(AddPidLoopError::Definition)
+        result.map_err(AddControlLoopError::Definition)
     }
 
     pub fn set_pid_setpoint(
@@ -334,7 +334,7 @@ fn run_processing<SignalId>(
                 let _ = response_sender.send(result);
             }
 
-            ProcessingCommand::AddPidLoop {
+            ProcessingCommand::AddControlLoop {
                 definition,
                 response_sender,
             } => {
@@ -487,13 +487,13 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum AddPidLoopError {
+pub enum AddControlLoopError {
     Definition(ControllerRegistryError),
 
     Disconnected,
 }
 
-impl fmt::Display for AddPidLoopError {
+impl fmt::Display for AddControlLoopError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Definition(error) => error.fmt(formatter),
@@ -506,7 +506,7 @@ impl fmt::Display for AddPidLoopError {
     }
 }
 
-impl Error for AddPidLoopError {
+impl Error for AddControlLoopError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Definition(error) => Some(error),
@@ -596,8 +596,9 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AddPidLoopError, AddSignalFilterError, ProcessingEvent, ProcessingInput, ProcessingService,
-        ProcessingServiceDisconnected, ReplaceSignalFilterError, SetPidLoopSetpointError,
+        AddControlLoopError, AddSignalFilterError, ProcessingEvent, ProcessingInput,
+        ProcessingService, ProcessingServiceDisconnected, ReplaceSignalFilterError,
+        SetPidLoopSetpointError,
     };
 
     use crate::{
@@ -807,7 +808,9 @@ mod tests {
             .add_filter(1, 2, SignalFilterDefinition::moving_average(2).unwrap())
             .unwrap();
 
-        handle.add_pid_loop(pid_definition("heater", 1, 1)).unwrap();
+        handle
+            .add_control_loop(pid_definition("heater", 1, 1))
+            .unwrap();
 
         handle.process(1, 10.0, 80.0).unwrap();
 
@@ -871,7 +874,9 @@ mod tests {
             .add_filter(1, 2, SignalFilterDefinition::moving_average(2).unwrap())
             .unwrap();
 
-        handle.add_pid_loop(pid_definition("heater", 1, 1)).unwrap();
+        handle
+            .add_control_loop(pid_definition("heater", 1, 1))
+            .unwrap();
 
         handle.clear().unwrap();
 
@@ -940,7 +945,9 @@ mod tests {
 
         let control_events = service.control_event_receiver();
 
-        handle.add_pid_loop(pid_definition("heater", 1, 1)).unwrap();
+        handle
+            .add_control_loop(pid_definition("heater", 1, 1))
+            .unwrap();
 
         handle.process(1, 1_000.0, 80.0).unwrap();
 
@@ -968,7 +975,7 @@ mod tests {
             .unwrap();
 
         handle
-            .add_pid_loop(pid_definition("filtered_heater", 2, 1))
+            .add_control_loop(pid_definition("filtered_heater", 2, 1))
             .unwrap();
 
         handle.process(1, 1_000.0, 80.0).unwrap();
@@ -1005,7 +1012,7 @@ mod tests {
         let control_events = service.control_event_receiver();
 
         handle
-            .add_pid_loop(pid_definition("raw_heater", 1, 1))
+            .add_control_loop(pid_definition("raw_heater", 1, 1))
             .unwrap();
 
         handle
@@ -1013,7 +1020,7 @@ mod tests {
             .unwrap();
 
         handle
-            .add_pid_loop(pid_definition("filtered_heater", 2, 2))
+            .add_control_loop(pid_definition("filtered_heater", 2, 2))
             .unwrap();
 
         handle.process(1, 1_000.0, 80.0).unwrap();
@@ -1043,7 +1050,9 @@ mod tests {
 
         let control_events = service.control_event_receiver();
 
-        handle.add_pid_loop(pid_definition("heater", 1, 1)).unwrap();
+        handle
+            .add_control_loop(pid_definition("heater", 1, 1))
+            .unwrap();
 
         assert_eq!(handle.set_pid_setpoint("heater", 90.0,), Ok(true),);
 
@@ -1072,7 +1081,9 @@ mod tests {
 
         let handle = service.handle();
 
-        handle.add_pid_loop(pid_definition("heater", 1, 1)).unwrap();
+        handle
+            .add_control_loop(pid_definition("heater", 1, 1))
+            .unwrap();
 
         assert!(matches!(
             handle.set_pid_setpoint("heater", f64::NAN,),
@@ -1086,11 +1097,13 @@ mod tests {
 
         let handle = service.handle();
 
-        handle.add_pid_loop(pid_definition("heater", 1, 1)).unwrap();
+        handle
+            .add_control_loop(pid_definition("heater", 1, 1))
+            .unwrap();
 
         assert!(matches!(
-            handle.add_pid_loop(pid_definition("heater", 2, 2,),),
-            Err(AddPidLoopError::Definition(_)),
+            handle.add_control_loop(pid_definition("heater", 2, 2,),),
+            Err(AddControlLoopError::Definition(_)),
         ));
     }
 
@@ -1107,11 +1120,11 @@ mod tests {
             .unwrap();
 
         handle
-            .add_pid_loop(pid_definition("raw_heater", 1, 1))
+            .add_control_loop(pid_definition("raw_heater", 1, 1))
             .unwrap();
 
         handle
-            .add_pid_loop(pid_definition("filtered_heater", 2, 2))
+            .add_control_loop(pid_definition("filtered_heater", 2, 2))
             .unwrap();
 
         let removed = handle.remove_from(1).unwrap();
@@ -1142,11 +1155,11 @@ mod tests {
             .unwrap();
 
         handle
-            .add_pid_loop(pid_definition("removed_heater", 2, 1))
+            .add_control_loop(pid_definition("removed_heater", 2, 1))
             .unwrap();
 
         handle
-            .add_pid_loop(pid_definition("unrelated_heater", 3, 2))
+            .add_control_loop(pid_definition("unrelated_heater", 3, 2))
             .unwrap();
 
         handle.remove_from(1).unwrap();
@@ -1185,8 +1198,8 @@ mod tests {
         );
 
         assert_eq!(
-            handle.add_pid_loop(pid_definition("heater", 1, 1,),),
-            Err(AddPidLoopError::Disconnected),
+            handle.add_control_loop(pid_definition("heater", 1, 1,),),
+            Err(AddControlLoopError::Disconnected),
         );
     }
 
@@ -1198,7 +1211,7 @@ mod tests {
         );
 
         assert_eq!(
-            AddPidLoopError::Disconnected.to_string(),
+            AddControlLoopError::Disconnected.to_string(),
             "Processing service is disconnected",
         );
 

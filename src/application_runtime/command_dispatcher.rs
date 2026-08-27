@@ -463,7 +463,7 @@ impl CommandDispatcher {
                 }
             };
 
-        match self.processing.add_pid_loop(definition) {
+        match self.processing.add_control_loop(definition) {
             Ok(()) => {
                 self.log.info(format!(
                     "PID loop '{name}' \
