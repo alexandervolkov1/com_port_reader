@@ -17,9 +17,7 @@ pub struct SignalFilterDefinition {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum SignalFilterParameters {
     Exponential { time_constant_seconds: f64 },
-
     MovingAverage { window_size: usize },
-
     Median { window_size: usize },
 }
 

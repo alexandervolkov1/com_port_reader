@@ -64,48 +64,57 @@ impl<SignalId, OutputTarget> PidLoopDefinition<SignalId, OutputTarget> {
 
 #[derive(Debug)]
 pub struct PidLoop<SignalId, OutputTarget> {
-    definition: PidLoopDefinition<SignalId, OutputTarget>,
-
+    name: String,
+    input: SignalId,
+    output_target: OutputTarget,
+    setpoint: f64,
     controller: PidController,
 }
 
 impl<SignalId, OutputTarget> PidLoop<SignalId, OutputTarget> {
     pub fn new(definition: PidLoopDefinition<SignalId, OutputTarget>) -> Self {
-        let controller =
-            PidController::with_output_limits(definition.gains(), definition.output_limits());
+        let PidLoopDefinition {
+            name,
+            input,
+            output_target,
+            setpoint,
+            gains,
+            output_limits,
+        } = definition;
+
+        let controller = PidController::with_output_limits(gains, output_limits);
 
         Self {
-            definition,
+            name,
+            input,
+            output_target,
+            setpoint,
             controller,
         }
     }
 
-    pub const fn definition(&self) -> &PidLoopDefinition<SignalId, OutputTarget> {
-        &self.definition
-    }
-
     pub fn name(&self) -> &str {
-        self.definition.name()
+        &self.name
     }
 
     pub const fn input(&self) -> &SignalId {
-        self.definition.input()
+        &self.input
     }
 
     pub const fn output_target(&self) -> &OutputTarget {
-        self.definition.output_target()
+        &self.output_target
     }
 
     pub const fn setpoint(&self) -> f64 {
-        self.definition.setpoint()
+        self.setpoint
     }
 
     pub const fn gains(&self) -> PidGains {
-        self.definition.gains()
+        self.controller.gains()
     }
 
     pub const fn output_limits(&self) -> PidOutputLimits {
-        self.definition.output_limits()
+        self.controller.output_limits()
     }
 
     pub const fn integral(&self) -> f64 {
@@ -115,20 +124,16 @@ impl<SignalId, OutputTarget> PidLoop<SignalId, OutputTarget> {
     pub fn set_setpoint(&mut self, setpoint: f64) -> Result<(), PidLoopDefinitionError> {
         validate_setpoint(setpoint)?;
 
-        self.definition.setpoint = setpoint;
+        self.setpoint = setpoint;
 
         Ok(())
     }
 
     pub fn set_gains(&mut self, gains: PidGains) {
-        self.definition.gains = gains;
-
         self.controller.set_gains(gains);
     }
 
     pub fn set_output_limits(&mut self, output_limits: PidOutputLimits) {
-        self.definition.output_limits = output_limits;
-
         self.controller.set_output_limits(output_limits);
     }
 
@@ -138,7 +143,7 @@ impl<SignalId, OutputTarget> PidLoop<SignalId, OutputTarget> {
         measurement: f64,
     ) -> Result<PidOutput, PidControllerError> {
         self.controller
-            .update(timestamp, self.definition.setpoint, measurement)
+            .update(timestamp, self.setpoint, measurement)
     }
 
     pub fn reset(&mut self) {
@@ -373,8 +378,6 @@ mod tests {
 
         assert_eq!(control_loop.gains(), gains,);
 
-        assert_eq!(control_loop.definition().gains(), gains,);
-
         assert_close(output.integral(), 2.0);
 
         assert_close(output.value(), 6.0);
@@ -401,8 +404,6 @@ mod tests {
         let limited = control_loop.update(1.0, 0.0).unwrap();
 
         assert_eq!(control_loop.output_limits(), limits,);
-
-        assert_eq!(control_loop.definition().output_limits(), limits,);
 
         assert_close(limited.value(), 100.0);
 

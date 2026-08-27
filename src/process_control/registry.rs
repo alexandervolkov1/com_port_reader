@@ -41,11 +41,9 @@ where
         let target = definition.output_target();
 
         for existing in &self.loops {
-            let existing_definition = existing.definition();
-
-            if output_targets_overlap(existing_definition.output_target(), target) {
+            if output_targets_overlap(existing.output_target(), target) {
                 return Err(PidLoopRegistryError::OutputAlreadyControlled {
-                    existing_loop: existing_definition.name().to_owned(),
+                    existing_loop: existing.name().to_owned(),
 
                     target: *target,
                 });
@@ -62,7 +60,7 @@ where
     pub fn contains(&self, name: &str) -> bool {
         self.loops
             .iter()
-            .any(|control_loop| control_loop.definition().name() == name)
+            .any(|control_loop| control_loop.name() == name)
     }
 
     pub fn set_setpoint(
@@ -73,7 +71,7 @@ where
         let Some(control_loop) = self
             .loops
             .iter_mut()
-            .find(|control_loop| control_loop.definition().name() == name)
+            .find(|control_loop| control_loop.name() == name)
         else {
             return Ok(false);
         };
@@ -95,7 +93,7 @@ where
         let Some(index) = self
             .loops
             .iter()
-            .position(|control_loop| control_loop.definition().name() == name)
+            .position(|control_loop| control_loop.name() == name)
         else {
             return false;
         };
@@ -109,10 +107,8 @@ where
         let mut removed = Vec::new();
 
         self.loops.retain(|control_loop| {
-            let definition = control_loop.definition();
-
-            if *definition.input() == signal_id {
-                removed.push(definition.name().to_owned());
+            if *control_loop.input() == signal_id {
+                removed.push(control_loop.name().to_owned());
 
                 false
             } else {
@@ -127,7 +123,7 @@ where
         let mut reset_count = 0;
 
         for control_loop in &mut self.loops {
-            if *control_loop.definition().input() == signal_id {
+            if *control_loop.input() == signal_id {
                 control_loop.reset();
 
                 reset_count += 1;
@@ -150,15 +146,15 @@ where
         let mut events = Vec::new();
 
         for control_loop in &mut self.loops {
-            if *control_loop.definition().input() != signal_id {
+            if *control_loop.input() != signal_id {
                 continue;
             }
 
-            let loop_name = control_loop.definition().name().to_owned();
+            let loop_name = control_loop.name().to_owned();
 
-            let target = *control_loop.definition().output_target();
+            let target = *control_loop.output_target();
 
-            let setpoint = control_loop.definition().setpoint();
+            let setpoint = control_loop.setpoint();
 
             let output = match control_loop.update(timestamp, measurement) {
                 Ok(output) => output,
