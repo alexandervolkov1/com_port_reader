@@ -714,23 +714,29 @@ struct LuaControllerHandle {
     command_sender: Sender<UserCommand>,
 }
 
-fn receive_controller_response<T>(
-    receiver: Receiver<Result<T, ControllerRequestError>>,
+fn receive_controller_response<T, E>(
+    receiver: Receiver<Result<T, E>>,
     operation: &str,
-) -> mlua::Result<T> {
+) -> mlua::Result<T>
+where
+    E: std::fmt::Display,
+{
     match receiver.recv_timeout(CONTROLLER_REQUEST_TIMEOUT) {
         Ok(Ok(value)) => Ok(value),
 
         Ok(Err(error)) => Err(mlua::Error::RuntimeError(format!(
-            "Controller {operation} failed: {error}",
+            "Controller {operation} failed: \
+                     {error}",
         ))),
 
         Err(RecvTimeoutError::Timeout) => Err(mlua::Error::RuntimeError(format!(
-            "Timed out waiting for controller {operation}",
+            "Timed out waiting for \
+                     controller {operation}",
         ))),
 
         Err(RecvTimeoutError::Disconnected) => Err(mlua::Error::RuntimeError(format!(
-            "Controller {operation} response channel is disconnected",
+            "Controller {operation} response \
+                     channel is disconnected",
         ))),
     }
 }
@@ -912,6 +918,21 @@ impl LuaControllerHandle {
         )?;
 
         receive_controller_response(response_receiver, "configuration")
+    }
+
+    fn set_input(&self, input_name: &str) -> mlua::Result<()> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::SetControllerInput {
+                name: self.name.clone(),
+                input_name: input_name.to_owned(),
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "input change")
     }
 
     fn reset(&self) -> mlua::Result<()> {
@@ -1579,6 +1600,10 @@ impl UserData for LuaControllerHandle {
             controller.configure(lua, updates)
         });
 
+        methods.add_method("set_input", |_, controller, input_name: String| {
+            controller.set_input(&input_name)
+        });
+
         methods.add_method("reset", |_, controller, ()| controller.reset());
     }
 }
@@ -2006,5 +2031,56 @@ mod controller_handle_tests {
         );
 
         assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn changes_controller_input() {
+        let lua = Lua::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        let userdata = lua
+            .create_userdata(LuaControllerHandle {
+                name: "heater".to_owned(),
+                connection_id: ConnectionId::PRIMARY,
+                command_sender,
+            })
+            .unwrap();
+
+        lua.globals().set("controller", userdata).unwrap();
+
+        let responder = std::thread::spawn(move || {
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::SetControllerInput {
+                name,
+                input_name,
+                response_sender,
+            } = command
+            else {
+                panic!(
+                    "expected SetControllerInput \
+                         command"
+                );
+            };
+
+            assert_eq!(name, "heater");
+
+            assert_eq!(input_name, "temperature_filtered",);
+
+            response_sender.send(Ok(())).unwrap();
+        });
+
+        lua.load(
+            r#"
+                controller:set_input(
+                    "temperature_filtered"
+                )
+            "#,
+        )
+        .exec()
+        .unwrap();
+
+        responder.join().unwrap();
     }
 }

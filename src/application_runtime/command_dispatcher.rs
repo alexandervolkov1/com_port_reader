@@ -12,7 +12,7 @@ use crate::{
     },
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
     signal_processing::{ProcessingHandle, SignalFilterDefinition},
-    user_command::UserCommand,
+    user_command::{SetControllerInputError, UserCommand},
     worker::{
         ConnectionRouter, ConnectionWorkerEvent, WorkerEvent, WorkerHandle, WorkerHandleError,
     },
@@ -200,6 +200,23 @@ impl CommandDispatcher {
                 response_sender,
             } => {
                 let result = self.processing.reset_controller(&name);
+
+                let _ = response_sender.send(result);
+            }
+
+            UserCommand::SetControllerInput {
+                name,
+                input_name,
+                response_sender,
+            } => {
+                let result = match self.series.id_by_name(&input_name) {
+                    Some(input_id) => self
+                        .processing
+                        .set_controller_input(&name, input_id)
+                        .map_err(Into::into),
+
+                    None => Err(SetControllerInputError::SeriesNotFound(input_name)),
+                };
 
                 let _ = response_sender.send(result);
             }

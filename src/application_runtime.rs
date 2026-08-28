@@ -692,6 +692,7 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
         | UserCommand::ControllerParameters { .. }
         | UserCommand::ReadControllerParameter { .. }
         | UserCommand::ConfigureController { .. }
+        | UserCommand::SetControllerInput { .. }
         | UserCommand::ResetController { .. } => None,
 
         UserCommand::SetFilter { name, definition } => Some(ProcessAction::SetFilter {

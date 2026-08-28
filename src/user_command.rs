@@ -1,3 +1,5 @@
+use std::{error::Error, fmt};
+
 use crossbeam_channel::Sender;
 
 use crate::{
@@ -10,6 +12,39 @@ use crate::{
     process_control::{ControlOutputTarget, NewPidLoop},
     signal_processing::{ControllerRequestError, SignalFilterDefinition},
 };
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum SetControllerInputError {
+    SeriesNotFound(String),
+    Controller(ControllerRequestError),
+}
+
+impl fmt::Display for SetControllerInputError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SeriesNotFound(name) => {
+                write!(formatter, "Controller input series '{name}' was not found",)
+            }
+
+            Self::Controller(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for SetControllerInputError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::SeriesNotFound(_) => None,
+            Self::Controller(error) => Some(error),
+        }
+    }
+}
+
+impl From<ControllerRequestError> for SetControllerInputError {
+    fn from(error: ControllerRequestError) -> Self {
+        Self::Controller(error)
+    }
+}
 
 #[derive(Debug)]
 pub enum UserCommand {
@@ -40,6 +75,12 @@ pub enum UserCommand {
         name: String,
         updates: Vec<(String, InstrumentValue)>,
         response_sender: Sender<Result<(), ControllerRequestError>>,
+    },
+
+    SetControllerInput {
+        name: String,
+        input_name: String,
+        response_sender: Sender<Result<(), SetControllerInputError>>,
     },
 
     ResetController {
@@ -104,4 +145,18 @@ pub enum UserCommand {
         connection_id: ConnectionId,
         response_sender: Sender<VirtualInstrumentDescribeResult>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SetControllerInputError;
+
+    #[test]
+    fn describes_missing_controller_input_series() {
+        assert_eq!(
+            SetControllerInputError::SeriesNotFound("temperature_filtered".to_owned(),).to_string(),
+            "Controller input series \
+             'temperature_filtered' was not found",
+        );
+    }
 }
