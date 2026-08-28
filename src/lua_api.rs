@@ -20,7 +20,8 @@ use crate::{
     },
     lua_application_script::LuaApplicationEvent,
     process_control::{
-        ControlOutputTarget, ControllerDiagnostic, NewPidLoop, PidGains, PidOutputLimits,
+        ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewPidLoop, PidGains,
+        PidOutputLimits,
     },
     signal_processing::{ControllerRequestError, SignalFilterDefinition},
     user_command::UserCommand,
@@ -935,6 +936,62 @@ impl LuaControllerHandle {
         receive_controller_response(response_receiver, "input change")
     }
 
+    fn state(&self) -> mlua::Result<ControlLoopState> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::ControllerState {
+                name: self.name.clone(),
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "state read")
+    }
+
+    fn pause(&self) -> mlua::Result<()> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::PauseController {
+                name: self.name.clone(),
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "pause")
+    }
+
+    fn resume(&self) -> mlua::Result<()> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::ResumeController {
+                name: self.name.clone(),
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "resume")
+    }
+
+    fn reset_integral(&self) -> mlua::Result<()> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::ResetControllerIntegral {
+                name: self.name.clone(),
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "integral reset")
+    }
+
     fn reset(&self) -> mlua::Result<()> {
         let (response_sender, response_receiver) = bounded(1);
 
@@ -1604,6 +1661,18 @@ impl UserData for LuaControllerHandle {
             controller.set_input(&input_name)
         });
 
+        methods.add_method("state", |_, controller, ()| {
+            Ok(controller.state()?.as_str().to_owned())
+        });
+
+        methods.add_method("pause", |_, controller, ()| controller.pause());
+
+        methods.add_method("resume", |_, controller, ()| controller.resume());
+
+        methods.add_method("reset_integral", |_, controller, ()| {
+            controller.reset_integral()
+        });
+
         methods.add_method("reset", |_, controller, ()| controller.reset());
     }
 }
@@ -1891,7 +1960,9 @@ mod controller_handle_tests {
     use super::LuaControllerHandle;
 
     use crate::{
-        connection::ConnectionId, data::SeriesColor, process_control::ControllerDiagnostic,
+        connection::ConnectionId,
+        data::SeriesColor,
+        process_control::{ControlLoopState, ControllerDiagnostic},
         user_command::UserCommand,
     };
 
@@ -2076,6 +2147,101 @@ mod controller_handle_tests {
                 controller:set_input(
                     "temperature_filtered"
                 )
+            "#,
+        )
+        .exec()
+        .unwrap();
+
+        responder.join().unwrap();
+    }
+
+    #[test]
+    fn controls_controller_lifecycle() {
+        let lua = Lua::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        let userdata = lua
+            .create_userdata(LuaControllerHandle {
+                name: "heater".to_owned(),
+                connection_id: ConnectionId::PRIMARY,
+                command_sender,
+            })
+            .unwrap();
+
+        lua.globals().set("controller", userdata).unwrap();
+
+        let responder = std::thread::spawn(move || {
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::ControllerState {
+                name,
+                response_sender,
+            } = command
+            else {
+                panic!("expected ControllerState command");
+            };
+
+            assert_eq!(name, "heater");
+
+            response_sender.send(Ok(ControlLoopState::Running)).unwrap();
+
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::PauseController {
+                name,
+                response_sender,
+            } = command
+            else {
+                panic!("expected PauseController command");
+            };
+
+            assert_eq!(name, "heater");
+
+            response_sender.send(Ok(())).unwrap();
+
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::ResumeController {
+                name,
+                response_sender,
+            } = command
+            else {
+                panic!("expected ResumeController command");
+            };
+
+            assert_eq!(name, "heater");
+
+            response_sender.send(Ok(())).unwrap();
+
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::ResetControllerIntegral {
+                name,
+                response_sender,
+            } = command
+            else {
+                panic!(
+                    "expected \
+                         ResetControllerIntegral command"
+                );
+            };
+
+            assert_eq!(name, "heater");
+
+            response_sender.send(Ok(())).unwrap();
+        });
+
+        lua.load(
+            r#"
+                assert(
+                    controller:state()
+                        == "running"
+                )
+
+                controller:pause()
+                controller:resume()
+                controller:reset_integral()
             "#,
         )
         .exec()

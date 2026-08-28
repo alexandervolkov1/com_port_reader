@@ -9,7 +9,7 @@ use crate::{
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterDescriptor,
     },
-    process_control::{ControlOutputTarget, NewPidLoop},
+    process_control::{ControlLoopState, ControlOutputTarget, NewPidLoop},
     signal_processing::{ControllerRequestError, SignalFilterDefinition},
 };
 
@@ -81,6 +81,26 @@ pub enum UserCommand {
         name: String,
         input_name: String,
         response_sender: Sender<Result<(), SetControllerInputError>>,
+    },
+
+    ControllerState {
+        name: String,
+        response_sender: Sender<Result<ControlLoopState, ControllerRequestError>>,
+    },
+
+    PauseController {
+        name: String,
+        response_sender: Sender<Result<(), ControllerRequestError>>,
+    },
+
+    ResumeController {
+        name: String,
+        response_sender: Sender<Result<(), ControllerRequestError>>,
+    },
+
+    ResetControllerIntegral {
+        name: String,
+        response_sender: Sender<Result<(), ControllerRequestError>>,
     },
 
     ResetController {

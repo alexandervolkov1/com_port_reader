@@ -221,6 +221,42 @@ impl CommandDispatcher {
                 let _ = response_sender.send(result);
             }
 
+            UserCommand::ControllerState {
+                name,
+                response_sender,
+            } => {
+                let result = self.processing.controller_state(&name);
+
+                let _ = response_sender.send(result);
+            }
+
+            UserCommand::PauseController {
+                name,
+                response_sender,
+            } => {
+                let result = self.processing.pause_controller(&name);
+
+                let _ = response_sender.send(result);
+            }
+
+            UserCommand::ResumeController {
+                name,
+                response_sender,
+            } => {
+                let result = self.processing.resume_controller(&name);
+
+                let _ = response_sender.send(result);
+            }
+
+            UserCommand::ResetControllerIntegral {
+                name,
+                response_sender,
+            } => {
+                let result = self.processing.reset_controller_integral(&name);
+
+                let _ = response_sender.send(result);
+            }
+
             UserCommand::SetFilter { name, definition } => {
                 self.set_filter(name, definition);
             }
