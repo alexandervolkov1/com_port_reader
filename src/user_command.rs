@@ -3,7 +3,7 @@ use crossbeam_channel::Sender;
 use crate::{
     acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
     connection::ConnectionId,
-    data::{NewFilteredSeries, NewSeries, SeriesColor},
+    data::{NewControllerDiagnosticSeries, NewFilteredSeries, NewSeries, SeriesColor},
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterDescriptor,
     },
@@ -15,6 +15,7 @@ use crate::{
 pub enum UserCommand {
     Add(NewSeries),
     AddFilter(NewFilteredSeries),
+    AddControllerDiagnostic(NewControllerDiagnosticSeries),
     AddPidLoop(NewPidLoop<ControlOutputTarget>),
 
     ControllerParameters {

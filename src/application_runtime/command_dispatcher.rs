@@ -6,7 +6,7 @@ use crate::{
     app_log::LogHandle,
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
-    data::{NewFilteredSeries, NewSeries, SeriesId, SeriesStore},
+    data::{NewControllerDiagnosticSeries, NewFilteredSeries, NewSeries, SeriesId, SeriesStore},
     process_control::{
         ControlLoopDefinition, ControlOutputTarget, Controller, NewPidLoop, PidController,
     },
@@ -143,6 +143,10 @@ impl CommandDispatcher {
 
             UserCommand::AddFilter(filter) => {
                 self.add_filter(filter);
+            }
+
+            UserCommand::AddControllerDiagnostic(diagnostic) => {
+                self.add_controller_diagnostic(diagnostic);
             }
 
             UserCommand::AddPidLoop(pid_loop) => {
@@ -595,6 +599,57 @@ impl CommandDispatcher {
         }
 
         self.log.info(format!("Series {output_id} added.",));
+    }
+
+    fn add_controller_diagnostic(&self, diagnostic_series: NewControllerDiagnosticSeries) {
+        let (controller, diagnostic, name, connection_id, color) = diagnostic_series.into_parts();
+
+        let mut new_series =
+            NewSeries::named_controller_diagnostic(controller.clone(), diagnostic, name.clone())
+                .with_connection(connection_id);
+
+        if let Some(color) = color {
+            new_series = new_series.with_color(color);
+        }
+
+        let output_id = match self.series.add_series(new_series) {
+            Ok(output_id) => output_id,
+
+            Err(error) => {
+                self.log.error(format!(
+                    "Failed to add controller \
+                             diagnostic series \
+                             '{name}': {error}",
+                ));
+
+                return;
+            }
+        };
+
+        if let Err(error) =
+            self.processing
+                .add_controller_diagnostic(controller.clone(), diagnostic, output_id)
+        {
+            self.series.remove_series(output_id);
+
+            self.log.error(format!(
+                "Signal processing failed: \
+                     cannot add diagnostic \
+                     series '{name}' for \
+                     controller '{controller}': \
+                     {error}",
+            ));
+
+            return;
+        }
+
+        self.log.info(format!(
+            "Controller diagnostic \
+                 series '{name}' \
+                 ({output_id}) added for \
+                 controller '{controller}' \
+                 diagnostic '{diagnostic}'.",
+        ));
     }
 
     fn set_filter(&self, name: String, definition: SignalFilterDefinition) {

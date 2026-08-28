@@ -688,7 +688,8 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             }
         }
 
-        UserCommand::ControllerParameters { .. }
+        UserCommand::AddControllerDiagnostic(_)
+        | UserCommand::ControllerParameters { .. }
         | UserCommand::ReadControllerParameter { .. }
         | UserCommand::ConfigureController { .. }
         | UserCommand::ResetController { .. } => None,

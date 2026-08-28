@@ -283,6 +283,7 @@ pub struct NewControllerDiagnosticSeries {
     controller: String,
     diagnostic: ControllerDiagnostic,
     name: String,
+    connection_id: ConnectionId,
     color: Option<SeriesColor>,
 }
 
@@ -294,13 +295,20 @@ impl NewControllerDiagnosticSeries {
     ) -> Self {
         Self {
             controller: controller.into(),
-
             diagnostic,
-
             name: name.into(),
-
+            connection_id: ConnectionId::PRIMARY,
             color: None,
         }
+    }
+
+    pub fn with_connection(mut self, connection_id: ConnectionId) -> Self {
+        self.connection_id = connection_id;
+        self
+    }
+
+    pub const fn connection_id(&self) -> ConnectionId {
+        self.connection_id
     }
 
     pub fn with_color(mut self, color: SeriesColor) -> Self {
@@ -324,8 +332,22 @@ impl NewControllerDiagnosticSeries {
         self.color
     }
 
-    pub fn into_parts(self) -> (String, ControllerDiagnostic, String, Option<SeriesColor>) {
-        (self.controller, self.diagnostic, self.name, self.color)
+    pub fn into_parts(
+        self,
+    ) -> (
+        String,
+        ControllerDiagnostic,
+        String,
+        ConnectionId,
+        Option<SeriesColor>,
+    ) {
+        (
+            self.controller,
+            self.diagnostic,
+            self.name,
+            self.connection_id,
+            self.color,
+        )
     }
 }
 
