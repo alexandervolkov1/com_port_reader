@@ -513,8 +513,8 @@ mod tests {
             },
         },
         process_control::{
-            ControlLoopDefinition, ControlOutputTarget, ControllerError, PidController,
-            PidControllerError, PidGains, PidOutputLimits,
+            ControlLoopDefinition, ControlOutputTarget, ControllerError, ControllerKind,
+            OnOffController, PidController, PidControllerError, PidGains, PidOutputLimits,
         },
     };
 
@@ -559,6 +559,20 @@ mod tests {
         .into();
 
         ControlLoopDefinition::new(name, input, target, controller).unwrap()
+    }
+
+    fn on_off_definition(
+        name: &str,
+        input: u64,
+        target: ControlOutputTarget,
+    ) -> ControlLoopDefinition<u64, ControlOutputTarget> {
+        ControlLoopDefinition::new(
+            name,
+            input,
+            target,
+            OnOffController::new(100.0, 2.0, 0.0, 100.0).unwrap().into(),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1046,5 +1060,65 @@ mod tests {
         assert_eq!(output.loop_name, "heater",);
 
         assert_eq!(output.input, 2,);
+    }
+
+    #[test]
+    fn processes_on_off_controller() {
+        let mut registry = ControllerRegistry::new();
+
+        registry
+            .add(on_off_definition("thermostat", 5, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        let events = registry.process(5, 0.0, 97.0);
+
+        let [ControlEvent::Output(output)] = events.as_slice() else {
+            panic!("expected one control output");
+        };
+
+        assert_eq!(output.loop_name, "thermostat",);
+
+        assert_eq!(output.input, 5);
+
+        assert_eq!(output.output.kind(), ControllerKind::OnOff,);
+
+        assert_eq!(output.output.value(), 100.0,);
+
+        let events = registry.process(5, 1.0, 100.0);
+
+        let [ControlEvent::Output(output)] = events.as_slice() else {
+            panic!("expected one control output");
+        };
+
+        assert_eq!(output.output.value(), 100.0,);
+
+        let events = registry.process(5, 2.0, 103.0);
+
+        let [ControlEvent::Output(output)] = events.as_slice() else {
+            panic!("expected one control output");
+        };
+
+        assert_eq!(output.output.value(), 0.0,);
+    }
+
+    #[test]
+    fn rejects_on_off_output_outside_target_range() {
+        let controller = OnOffController::new(100.0, 2.0, 0.0, 120.0).unwrap().into();
+
+        let definition =
+            ControlLoopDefinition::new("thermostat", 1, virtual_target(1, 1, 1), controller)
+                .unwrap();
+
+        let mut registry = ControllerRegistry::new();
+
+        assert_eq!(
+            registry.add(definition),
+            Err(ControllerRegistryError::OutputRangeOutsideTargetRange {
+                minimum: 0.0,
+                maximum: 120.0,
+                target_minimum: 0.0,
+                target_maximum: 100.0,
+            },),
+        );
     }
 }

@@ -224,13 +224,31 @@ mod tests {
     use super::{ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError, ControlLoopState};
 
     use crate::instrument::InstrumentValue;
-    use crate::process_control::{PidController, PidGains, PidOutputLimits};
+    use crate::process_control::{
+        ControllerKind, OnOffController, PidController, PidGains, PidOutputLimits,
+    };
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct TestOutputTarget {
         connection: u64,
         instrument: u16,
         parameter: u16,
+    }
+
+    fn on_off_definition() -> ControlLoopDefinition<u64, TestOutputTarget> {
+        let controller = OnOffController::new(100.0, 2.0, 0.0, 100.0).unwrap().into();
+
+        ControlLoopDefinition::new(
+            "thermostat",
+            1_u64,
+            TestOutputTarget {
+                connection: 2,
+                instrument: 7,
+                parameter: 3,
+            },
+            controller,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -526,5 +544,50 @@ mod tests {
         assert_eq!(switched.integral(), Some(10.0),);
 
         assert_eq!(switched.derivative(), Some(0.0),);
+    }
+
+    #[test]
+    fn runs_on_off_controller() {
+        let mut control_loop = ControlLoop::new(on_off_definition());
+
+        let on = control_loop.update(0.0, 97.0).unwrap();
+
+        assert_eq!(on.kind(), ControllerKind::OnOff,);
+
+        assert_eq!(on.value(), 100.0);
+
+        let inside = control_loop.update(1.0, 100.0).unwrap();
+
+        assert_eq!(inside.value(), 100.0);
+
+        let off = control_loop.update(2.0, 103.0).unwrap();
+
+        assert_eq!(off.value(), 0.0);
+    }
+
+    #[test]
+    fn exposes_on_off_parameters() {
+        let mut control_loop = ControlLoop::new(on_off_definition());
+
+        let keys = control_loop
+            .parameters()
+            .into_iter()
+            .map(|parameter| parameter.key)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            keys,
+            vec!["setpoint", "hysteresis", "output_off", "output_on",],
+        );
+
+        assert_eq!(
+            control_loop.read_parameter("hysteresis"),
+            Ok(InstrumentValue::Number(2.0)),
+        );
+
+        assert_eq!(
+            control_loop.write_parameter("hysteresis", InstrumentValue::Number(5.0),),
+            Ok(InstrumentValue::Number(5.0)),
+        );
     }
 }
