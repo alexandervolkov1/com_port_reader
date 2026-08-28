@@ -1,8 +1,8 @@
 use std::{error::Error, fmt};
 
 use super::{
-    ControllerDiagnostic, PidController, PidControllerError, PidGains, PidGainsError, PidOutput,
-    PidOutputLimits, PidOutputLimitsError,
+    ControllerDiagnostic, OnOffController, OnOffControllerError, OnOffOutput, PidController,
+    PidControllerError, PidGains, PidGainsError, PidOutput, PidOutputLimits, PidOutputLimitsError,
 };
 
 use crate::instrument::{
@@ -12,12 +12,14 @@ use crate::instrument::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControllerKind {
     Pid,
+    OnOff,
 }
 
 impl ControllerKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Pid => "pid",
+            Self::OnOff => "on_off",
         }
     }
 }
@@ -31,21 +33,31 @@ impl fmt::Display for ControllerKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControllerParameter {
     Setpoint,
+
     ProportionalGain,
     IntegralGain,
     DerivativeGain,
+
+    Hysteresis,
+
     OutputMinimum,
     OutputMaximum,
+
+    OutputOff,
+    OutputOn,
 }
 
 impl ControllerParameter {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 9] = [
         Self::Setpoint,
         Self::ProportionalGain,
         Self::IntegralGain,
         Self::DerivativeGain,
+        Self::Hysteresis,
         Self::OutputMinimum,
         Self::OutputMaximum,
+        Self::OutputOff,
+        Self::OutputOn,
     ];
 
     pub const fn key(self) -> &'static str {
@@ -125,29 +137,86 @@ impl ControllerParameter {
                     maximum: f64::MAX,
                 },
             },
+
+            Self::Hysteresis => ParameterDescriptor {
+                key: "hysteresis",
+                name: "hysteresis",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+
+            Self::OutputOff => ParameterDescriptor {
+                key: "output_off",
+                name: "output off",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -f64::MAX,
+                    maximum: f64::MAX,
+                },
+            },
+
+            Self::OutputOn => ParameterDescriptor {
+                key: "output_on",
+                name: "output on",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -f64::MAX,
+                    maximum: f64::MAX,
+                },
+            },
         }
     }
 }
 
+const PID_PARAMETERS: [ControllerParameter; 6] = [
+    ControllerParameter::Setpoint,
+    ControllerParameter::ProportionalGain,
+    ControllerParameter::IntegralGain,
+    ControllerParameter::DerivativeGain,
+    ControllerParameter::OutputMinimum,
+    ControllerParameter::OutputMaximum,
+];
+
+const ON_OFF_PARAMETERS: [ControllerParameter; 4] = [
+    ControllerParameter::Setpoint,
+    ControllerParameter::Hysteresis,
+    ControllerParameter::OutputOff,
+    ControllerParameter::OutputOn,
+];
+
 #[derive(Debug)]
 pub enum Controller {
     Pid(PidController),
+    OnOff(OnOffController),
 }
 
 impl Controller {
     pub const fn kind(&self) -> ControllerKind {
         match self {
             Self::Pid(_) => ControllerKind::Pid,
+            Self::OnOff(_) => ControllerKind::OnOff,
+        }
+    }
+
+    fn supported_parameters(&self) -> &'static [ControllerParameter] {
+        match self {
+            Self::Pid(_) => &PID_PARAMETERS,
+            Self::OnOff(_) => &ON_OFF_PARAMETERS,
         }
     }
 
     pub fn parameters(&self) -> Vec<ParameterDescriptor> {
-        match self {
-            Self::Pid(_) => ControllerParameter::ALL
-                .into_iter()
-                .map(ControllerParameter::descriptor)
-                .collect(),
-        }
+        self.supported_parameters()
+            .iter()
+            .copied()
+            .map(ControllerParameter::descriptor)
+            .collect()
     }
 
     pub fn read(&self, key: &str) -> Result<InstrumentValue, ControllerParameterError> {
@@ -169,6 +238,8 @@ impl Controller {
 
         match self {
             Self::Pid(controller) => Ok(read_pid_parameter(controller, parameter)),
+
+            Self::OnOff(controller) => Ok(read_on_off_parameter(controller, parameter)),
         }
     }
 
@@ -212,6 +283,8 @@ impl Controller {
 
         match self {
             Self::Pid(controller) => configure_pid(controller, &resolved),
+
+            Self::OnOff(controller) => configure_on_off(controller, &resolved),
         }
     }
 
@@ -226,17 +299,7 @@ impl Controller {
     }
 
     fn supports_parameter(&self, parameter: ControllerParameter) -> bool {
-        match self {
-            Self::Pid(_) => matches!(
-                parameter,
-                ControllerParameter::Setpoint
-                    | ControllerParameter::ProportionalGain
-                    | ControllerParameter::IntegralGain
-                    | ControllerParameter::DerivativeGain
-                    | ControllerParameter::OutputMinimum
-                    | ControllerParameter::OutputMaximum
-            ),
-        }
+        self.supported_parameters().contains(&parameter)
     }
 
     pub fn output_range(&self) -> ParameterRange {
@@ -247,6 +310,17 @@ impl Controller {
                 ParameterRange::Number {
                     minimum: limits.minimum(),
                     maximum: limits.maximum(),
+                }
+            }
+
+            Self::OnOff(controller) => {
+                let output_off = controller.output_off();
+
+                let output_on = controller.output_on();
+
+                ParameterRange::Number {
+                    minimum: output_off.min(output_on),
+                    maximum: output_off.max(output_on),
                 }
             }
         }
@@ -267,6 +341,16 @@ impl Controller {
 
                 Ok(ControllerOutput::Pid { setpoint, output })
             }
+
+            Self::OnOff(controller) => {
+                let setpoint = controller.setpoint();
+
+                let output = controller
+                    .update(timestamp, measurement)
+                    .map_err(ControllerError::OnOff)?;
+
+                Ok(ControllerOutput::OnOff { setpoint, output })
+            }
         }
     }
 
@@ -275,6 +359,8 @@ impl Controller {
             Self::Pid(controller) => {
                 controller.reset_integral();
             }
+
+            Self::OnOff(_) => {}
         }
     }
 
@@ -283,12 +369,20 @@ impl Controller {
             Self::Pid(controller) => {
                 controller.resynchronize();
             }
+
+            Self::OnOff(controller) => {
+                controller.resynchronize();
+            }
         }
     }
 
     pub fn reset(&mut self) {
         match self {
             Self::Pid(controller) => {
+                controller.reset();
+            }
+
+            Self::OnOff(controller) => {
                 controller.reset();
             }
         }
@@ -311,6 +405,31 @@ fn read_pid_parameter(
         ControllerParameter::OutputMinimum => controller.output_limits().minimum(),
 
         ControllerParameter::OutputMaximum => controller.output_limits().maximum(),
+
+        _ => {
+            unreachable!("unsupported PID controller parameter")
+        }
+    };
+
+    InstrumentValue::Number(value)
+}
+
+fn read_on_off_parameter(
+    controller: &OnOffController,
+    parameter: ControllerParameter,
+) -> InstrumentValue {
+    let value = match parameter {
+        ControllerParameter::Setpoint => controller.setpoint(),
+
+        ControllerParameter::Hysteresis => controller.hysteresis(),
+
+        ControllerParameter::OutputOff => controller.output_off(),
+
+        ControllerParameter::OutputOn => controller.output_on(),
+
+        _ => {
+            unreachable!("unsupported on/off controller parameter")
+        }
     };
 
     InstrumentValue::Number(value)
@@ -361,6 +480,12 @@ fn configure_pid(
             ControllerParameter::OutputMaximum => {
                 output_maximum = *value;
             }
+
+            ControllerParameter::Hysteresis
+            | ControllerParameter::OutputOff
+            | ControllerParameter::OutputOn => {
+                unreachable!("unsupported PID controller parameter");
+            }
         }
     }
 
@@ -372,7 +497,48 @@ fn configure_pid(
 
     controller
         .configure(setpoint, gains, output_limits)
-        .map_err(ControllerParameterError::Controller)
+        .map_err(ControllerParameterError::Pid)
+}
+
+fn configure_on_off(
+    controller: &mut OnOffController,
+    updates: &[(ControllerParameter, f64)],
+) -> Result<(), ControllerParameterError> {
+    let mut setpoint = controller.setpoint();
+
+    let mut hysteresis = controller.hysteresis();
+
+    let mut output_off = controller.output_off();
+
+    let mut output_on = controller.output_on();
+
+    for (parameter, value) in updates {
+        match parameter {
+            ControllerParameter::Setpoint => {
+                setpoint = *value;
+            }
+
+            ControllerParameter::Hysteresis => {
+                hysteresis = *value;
+            }
+
+            ControllerParameter::OutputOff => {
+                output_off = *value;
+            }
+
+            ControllerParameter::OutputOn => {
+                output_on = *value;
+            }
+
+            _ => {
+                unreachable!("unsupported on/off controller parameter");
+            }
+        }
+    }
+
+    controller
+        .configure(setpoint, hysteresis, output_off, output_on)
+        .map_err(ControllerParameterError::OnOff)
 }
 
 fn expect_number(
@@ -406,21 +572,33 @@ impl From<PidController> for Controller {
     }
 }
 
+impl From<OnOffController> for Controller {
+    fn from(controller: OnOffController) -> Self {
+        Self::OnOff(controller)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ControllerOutput {
     Pid { setpoint: f64, output: PidOutput },
+
+    OnOff { setpoint: f64, output: OnOffOutput },
 }
 
 impl ControllerOutput {
     pub const fn kind(&self) -> ControllerKind {
         match self {
             Self::Pid { .. } => ControllerKind::Pid,
+
+            Self::OnOff { .. } => ControllerKind::OnOff,
         }
     }
 
     pub const fn value(&self) -> f64 {
         match self {
             Self::Pid { output, .. } => output.value(),
+
+            Self::OnOff { output, .. } => output.value(),
         }
     }
 
@@ -442,37 +620,47 @@ impl ControllerOutput {
 
     pub const fn setpoint(&self) -> Option<f64> {
         match self {
-            Self::Pid { setpoint, .. } => Some(*setpoint),
+            Self::Pid { setpoint, .. } | Self::OnOff { setpoint, .. } => Some(*setpoint),
         }
     }
 
     pub const fn unconstrained_value(&self) -> Option<f64> {
         match self {
             Self::Pid { output, .. } => Some(output.unconstrained_value()),
+
+            Self::OnOff { .. } => None,
         }
     }
 
     pub const fn proportional(&self) -> Option<f64> {
         match self {
             Self::Pid { output, .. } => Some(output.proportional()),
+
+            Self::OnOff { .. } => None,
         }
     }
 
     pub const fn integral(&self) -> Option<f64> {
         match self {
             Self::Pid { output, .. } => Some(output.integral()),
+
+            Self::OnOff { .. } => None,
         }
     }
 
     pub const fn derivative(&self) -> Option<f64> {
         match self {
             Self::Pid { output, .. } => Some(output.derivative()),
+
+            Self::OnOff { .. } => None,
         }
     }
 
     pub const fn saturated(&self) -> Option<bool> {
         match self {
             Self::Pid { output, .. } => Some(output.saturated()),
+
+            Self::OnOff { .. } => None,
         }
     }
 }
@@ -498,7 +686,9 @@ pub enum ControllerParameterError {
         actual: ParameterValueType,
     },
 
-    Controller(PidControllerError),
+    Pid(PidControllerError),
+
+    OnOff(OnOffControllerError),
 
     Gains(PidGainsError),
 
@@ -567,7 +757,9 @@ impl fmt::Display for ControllerParameterError {
                 )
             }
 
-            Self::Controller(error) => error.fmt(formatter),
+            Self::Pid(error) => error.fmt(formatter),
+
+            Self::OnOff(error) => error.fmt(formatter),
 
             Self::Gains(error) => error.fmt(formatter),
 
@@ -579,7 +771,9 @@ impl fmt::Display for ControllerParameterError {
 impl Error for ControllerParameterError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Controller(error) => Some(error),
+            Self::Pid(error) => Some(error),
+
+            Self::OnOff(error) => Some(error),
 
             Self::Gains(error) => Some(error),
 
@@ -598,12 +792,15 @@ impl Error for ControllerParameterError {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ControllerError {
     Pid(PidControllerError),
+    OnOff(OnOffControllerError),
 }
 
 impl fmt::Display for ControllerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Pid(error) => error.fmt(formatter),
+
+            Self::OnOff(error) => error.fmt(formatter),
         }
     }
 }
@@ -612,6 +809,7 @@ impl Error for ControllerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Pid(error) => Some(error),
+            Self::OnOff(error) => Some(error),
         }
     }
 }
@@ -625,7 +823,10 @@ mod tests {
 
     use crate::{
         instrument::{InstrumentValue, ParameterAccess, ParameterRange, ParameterValueType},
-        process_control::{PidController, PidControllerError, PidGains, PidOutputLimits},
+        process_control::{
+            OnOffController, OnOffControllerError, PidController, PidControllerError, PidGains,
+            PidOutputLimits,
+        },
     };
 
     fn controller() -> Controller {
@@ -636,6 +837,10 @@ mod tests {
         )
         .unwrap()
         .into()
+    }
+
+    fn on_off_controller() -> Controller {
+        OnOffController::new(100.0, 2.0, 0.0, 100.0).unwrap().into()
     }
 
     #[test]
@@ -672,7 +877,9 @@ mod tests {
 
         assert_eq!(output.value(), 40.0,);
 
-        let ControllerOutput::Pid { setpoint, output } = output;
+        let ControllerOutput::Pid { setpoint, output } = output else {
+            panic!("expected PID output");
+        };
 
         assert_eq!(setpoint, 100.0,);
 
@@ -744,7 +951,9 @@ mod tests {
 
         let output = controller.update(0.0, 90.0).unwrap();
 
-        let ControllerOutput::Pid { output, .. } = output;
+        let ControllerOutput::Pid { output, .. } = output else {
+            panic!("expected PID output");
+        };
 
         assert_eq!(output.integral(), 0.0,);
     }
@@ -1009,6 +1218,160 @@ mod tests {
         assert_eq!(
             controller.read("setpoint"),
             Ok(InstrumentValue::Number(100.0,),),
+        );
+    }
+
+    #[test]
+    fn describes_on_off_controller() {
+        let controller = on_off_controller();
+
+        assert_eq!(controller.kind(), ControllerKind::OnOff,);
+
+        assert_eq!(controller.kind().as_str(), "on_off",);
+
+        let keys = controller
+            .parameters()
+            .into_iter()
+            .map(|parameter| parameter.key)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            keys,
+            vec!["setpoint", "hysteresis", "output_off", "output_on",],
+        );
+    }
+
+    #[test]
+    fn exposes_on_off_output_range() {
+        let controller = on_off_controller();
+
+        assert_eq!(
+            controller.output_range(),
+            ParameterRange::Number {
+                minimum: 0.0,
+                maximum: 100.0,
+            },
+        );
+    }
+
+    #[test]
+    fn updates_on_off_through_controller_api() {
+        let mut controller = on_off_controller();
+
+        let on = controller.update(0.0, 97.0).unwrap();
+
+        assert_eq!(on.kind(), ControllerKind::OnOff,);
+
+        assert_eq!(on.setpoint(), Some(100.0),);
+
+        assert_eq!(on.value(), 100.0,);
+
+        let inside = controller.update(1.0, 100.0).unwrap();
+
+        assert_eq!(inside.value(), 100.0,);
+
+        let off = controller.update(2.0, 103.0).unwrap();
+
+        assert_eq!(off.value(), 0.0,);
+    }
+
+    #[test]
+    fn exposes_on_off_diagnostics() {
+        let mut controller = on_off_controller();
+
+        let output = controller.update(0.0, 97.0).unwrap();
+
+        assert_eq!(
+            output.diagnostic(ControllerDiagnostic::Setpoint,),
+            Some(100.0),
+        );
+
+        assert_eq!(
+            output.diagnostic(ControllerDiagnostic::Output,),
+            Some(100.0),
+        );
+
+        assert_eq!(output.diagnostic(ControllerDiagnostic::Proportional,), None,);
+
+        assert_eq!(output.diagnostic(ControllerDiagnostic::Integral,), None,);
+
+        assert_eq!(output.diagnostic(ControllerDiagnostic::Derivative,), None,);
+
+        assert_eq!(
+            output.diagnostic(ControllerDiagnostic::UnconstrainedOutput,),
+            None,
+        );
+    }
+
+    #[test]
+    fn configures_on_off_parameters() {
+        let mut controller = on_off_controller();
+
+        controller
+            .configure([
+                ("setpoint", InstrumentValue::Number(150.0)),
+                ("hysteresis", InstrumentValue::Number(5.0)),
+                ("output_off", InstrumentValue::Number(10.0)),
+                ("output_on", InstrumentValue::Number(80.0)),
+            ])
+            .unwrap();
+
+        assert_eq!(
+            controller.read("setpoint"),
+            Ok(InstrumentValue::Number(150.0)),
+        );
+
+        assert_eq!(
+            controller.read("hysteresis"),
+            Ok(InstrumentValue::Number(5.0)),
+        );
+
+        assert_eq!(
+            controller.read("output_off"),
+            Ok(InstrumentValue::Number(10.0)),
+        );
+
+        assert_eq!(
+            controller.read("output_on"),
+            Ok(InstrumentValue::Number(80.0)),
+        );
+    }
+
+    #[test]
+    fn rejects_pid_parameter_for_on_off_controller() {
+        let controller = on_off_controller();
+
+        assert_eq!(
+            controller.read("kp"),
+            Err(ControllerParameterError::UnsupportedParameter {
+                kind: ControllerKind::OnOff,
+                parameter: ControllerParameter::ProportionalGain,
+            },),
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_on_off_configuration_atomically() {
+        let mut controller = on_off_controller();
+
+        assert_eq!(
+            controller.configure([
+                ("setpoint", InstrumentValue::Number(150.0),),
+                ("hysteresis", InstrumentValue::Number(-1.0),),
+            ]),
+            Err(ControllerParameterError::OnOff(
+                OnOffControllerError::NegativeHysteresis,
+            ),),
+        );
+
+        assert_eq!(
+            controller.read("setpoint"),
+            Ok(InstrumentValue::Number(100.0)),
+        );
+
+        assert_eq!(
+            controller.read("hysteresis"),
+            Ok(InstrumentValue::Number(2.0)),
         );
     }
 }
