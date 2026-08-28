@@ -23,7 +23,7 @@ use crate::{
         ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewPidLoop, PidGains,
         PidOutputLimits,
     },
-    signal_processing::{ControllerRequestError, SignalFilterDefinition},
+    signal_processing::SignalFilterDefinition,
     user_command::UserCommand,
 };
 

@@ -56,6 +56,15 @@ local script = {
               min = 1.0, max = 1000.0, step = 1.0,
               on_change = "set_moving_average_window" },
 
+            { kind = "button", id = "pause_pid", label = "Pause PID",
+              on_click = "pause_pid" },
+
+            { kind = "button", id = "resume_pid", label = "Resume PID",
+              on_click = "resume_pid" },
+
+            { kind = "button", id = "reset_integral", label = "Reset integral",
+              on_click = "reset_integral" },
+
             { kind = "button", id = "restart", label = "Restart demo",
               on_click = "run" },
 
@@ -94,8 +103,15 @@ local function set_status(message)
 end
 
 local function show_status()
+    local state = "stopped"
+
+    if controller ~= nil then
+        state = controller:state()
+    end
+
     set_status(string.format(
-        "PID: SP=%.1f °C, Kp=%.3g, Ki=%.3g, Kd=%.3g; MA=%s, window=%d",
+        "PID: %s; SP=%.1f °C, Kp=%.3g, Ki=%.3g, Kd=%.3g; MA=%s, window=%d",
+        state,
         setpoint, kp, ki, kd,
         moving_average_enabled and "on" or "off",
         moving_average_window
@@ -228,6 +244,36 @@ function script.set_moving_average_window(value)
         })
     end
 
+    show_status()
+end
+
+function script.pause_pid()
+    if controller == nil then
+        set_status("PID is not running.")
+        return
+    end
+
+    controller:pause()
+    show_status()
+end
+
+function script.resume_pid()
+    if controller == nil then
+        set_status("PID is not running.")
+        return
+    end
+
+    controller:resume()
+    show_status()
+end
+
+function script.reset_integral()
+    if controller == nil then
+        set_status("PID is not running.")
+        return
+    end
+
+    controller:reset_integral()
     show_status()
 end
 
