@@ -7,7 +7,9 @@ mod output_target;
 mod pid;
 mod registry;
 
-pub use control_loop::{ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError};
+pub use control_loop::{
+    ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError, ControlLoopState,
+};
 pub use controller::{
     Controller, ControllerError, ControllerKind, ControllerOutput, ControllerParameter,
     ControllerParameterError,

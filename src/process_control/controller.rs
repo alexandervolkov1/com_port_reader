@@ -270,6 +270,22 @@ impl Controller {
         }
     }
 
+    pub fn reset_integral(&mut self) {
+        match self {
+            Self::Pid(controller) => {
+                controller.reset_integral();
+            }
+        }
+    }
+
+    pub fn resynchronize(&mut self) {
+        match self {
+            Self::Pid(controller) => {
+                controller.resynchronize();
+            }
+        }
+    }
+
     pub fn reset(&mut self) {
         match self {
             Self::Pid(controller) => {

@@ -6,8 +6,9 @@ use crate::{
 };
 
 use super::{
-    ControlLoop, ControlLoopDefinition, ControlOutputConversionError, ControlOutputParameter,
-    ControlOutputTarget, Controller, ControllerError, ControllerOutput, ControllerParameterError,
+    ControlLoop, ControlLoopDefinition, ControlLoopState, ControlOutputConversionError,
+    ControlOutputParameter, ControlOutputTarget, Controller, ControllerError, ControllerOutput,
+    ControllerParameterError,
 };
 
 pub struct ControllerRegistry<SignalId> {
@@ -121,6 +122,28 @@ where
             .map_err(Into::into)
     }
 
+    pub fn state(&self, name: &str) -> Result<ControlLoopState, ControllerAccessError> {
+        Ok(self.control_loop(name)?.state())
+    }
+
+    pub fn pause(&mut self, name: &str) -> Result<(), ControllerAccessError> {
+        self.control_loop_mut(name)?.pause();
+
+        Ok(())
+    }
+
+    pub fn resume(&mut self, name: &str) -> Result<(), ControllerAccessError> {
+        self.control_loop_mut(name)?.resume();
+
+        Ok(())
+    }
+
+    pub fn reset_integral(&mut self, name: &str) -> Result<(), ControllerAccessError> {
+        self.control_loop_mut(name)?.reset_integral();
+
+        Ok(())
+    }
+
     pub fn reset(&mut self, name: &str) -> Result<(), ControllerAccessError> {
         self.control_loop_mut(name)?.reset();
 
@@ -200,8 +223,12 @@ where
 
             let target = *control_loop.output_target();
 
-            let output = match control_loop.update(timestamp, measurement) {
-                Ok(output) => output,
+            let output = match control_loop.process(timestamp, measurement) {
+                Ok(Some(output)) => output,
+
+                Ok(None) => {
+                    continue;
+                }
 
                 Err(source) => {
                     events.push(ControlEvent::Error(ControlExecutionError::Controller {

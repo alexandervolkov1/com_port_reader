@@ -10,8 +10,8 @@ use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 
 use crate::instrument::{InstrumentValue, ParameterDescriptor};
 use crate::process_control::{
-    ControlEvent, ControlLoopDefinition, ControlOutputTarget, ControllerAccessError,
-    ControllerDiagnostic, ControllerRegistry, ControllerRegistryError,
+    ControlEvent, ControlLoopDefinition, ControlLoopState, ControlOutputTarget,
+    ControllerAccessError, ControllerDiagnostic, ControllerRegistry, ControllerRegistryError,
 };
 
 use super::{
@@ -96,6 +96,26 @@ enum ProcessingCommand<SignalId> {
     ConfigureController {
         name: String,
         updates: Vec<(String, InstrumentValue)>,
+        response_sender: Sender<Result<(), ControllerAccessError>>,
+    },
+
+    ControllerState {
+        name: String,
+        response_sender: Sender<Result<ControlLoopState, ControllerAccessError>>,
+    },
+
+    PauseController {
+        name: String,
+        response_sender: Sender<Result<(), ControllerAccessError>>,
+    },
+
+    ResumeController {
+        name: String,
+        response_sender: Sender<Result<(), ControllerAccessError>>,
+    },
+
+    ResetControllerIntegral {
+        name: String,
         response_sender: Sender<Result<(), ControllerAccessError>>,
     },
 
@@ -304,6 +324,76 @@ impl<SignalId> ProcessingHandle<SignalId> {
             .send(ProcessingCommand::ConfigureController {
                 name: name.into(),
                 updates,
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn controller_state(
+        &self,
+        name: impl Into<String>,
+    ) -> Result<ControlLoopState, ControllerRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::ControllerState {
+                name: name.into(),
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn pause_controller(&self, name: impl Into<String>) -> Result<(), ControllerRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::PauseController {
+                name: name.into(),
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn resume_controller(&self, name: impl Into<String>) -> Result<(), ControllerRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::ResumeController {
+                name: name.into(),
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn reset_controller_integral(
+        &self,
+        name: impl Into<String>,
+    ) -> Result<(), ControllerRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::ResetControllerIntegral {
+                name: name.into(),
                 response_sender,
             })
             .map_err(|_| ControllerRequestError::Disconnected)?;
@@ -572,6 +662,42 @@ fn run_processing<SignalId>(
                 response_sender,
             } => {
                 let result = registry.configure(&name, updates);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::ControllerState {
+                name,
+                response_sender,
+            } => {
+                let result = registry.state(&name);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::PauseController {
+                name,
+                response_sender,
+            } => {
+                let result = registry.pause(&name);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::ResumeController {
+                name,
+                response_sender,
+            } => {
+                let result = registry.resume(&name);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::ResetControllerIntegral {
+                name,
+                response_sender,
+            } => {
+                let result = registry.reset_integral(&name);
 
                 let _ = response_sender.send(result);
             }
@@ -919,7 +1045,7 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AddControlLoopError, AddControllerDiagnosticError, AddSignalFilterError,
+        AddControlLoopError, AddControllerDiagnosticError, AddSignalFilterError, ControlLoopState,
         ControllerRequestError, ProcessingEvent, ProcessingInput, ProcessingService,
         ProcessingServiceDisconnected, ReplaceSignalFilterError,
     };
@@ -1709,5 +1835,57 @@ mod tests {
             .unwrap();
 
         assert_eq!(handle.remove_from(1), Ok(vec![10]),);
+    }
+
+    #[test]
+    fn pauses_and_resumes_controller_without_losing_state() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+        let control_events = service.control_event_receiver();
+
+        handle
+            .add_control_loop(pid_definition("heater", 1, 1))
+            .unwrap();
+
+        handle
+            .write_controller_parameter("heater", "ki", InstrumentValue::Number(1.0))
+            .unwrap();
+
+        handle.process(1, 0.0, 90.0).unwrap();
+        let _ = receive_pid_output(&control_events);
+
+        handle.process(1, 1.0, 90.0).unwrap();
+
+        let accumulated = receive_pid_output(&control_events);
+
+        assert_eq!(accumulated.output.integral(), Some(10.0),);
+
+        handle.pause_controller("heater").unwrap();
+
+        assert_eq!(
+            handle.controller_state("heater"),
+            Ok(ControlLoopState::Paused),
+        );
+
+        handle.process(1, 100.0, 90.0).unwrap();
+
+        assert!(matches!(
+            control_events.recv_timeout(NO_EVENT_TIMEOUT),
+            Err(crossbeam_channel::RecvTimeoutError::Timeout),
+        ));
+
+        handle.resume_controller("heater").unwrap();
+
+        assert_eq!(
+            handle.controller_state("heater"),
+            Ok(ControlLoopState::Running),
+        );
+
+        handle.process(1, 101.0, 90.0).unwrap();
+
+        let resumed = receive_pid_output(&control_events);
+
+        assert_eq!(resumed.output.integral(), Some(10.0),);
     }
 }

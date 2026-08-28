@@ -378,9 +378,17 @@ impl PidController {
         Ok(output)
     }
 
-    pub fn reset(&mut self) {
+    pub fn reset_integral(&mut self) {
         self.integral = 0.0;
+    }
+
+    pub fn resynchronize(&mut self) {
         self.previous_sample = None;
+    }
+
+    pub fn reset(&mut self) {
+        self.reset_integral();
+        self.resynchronize();
     }
 }
 
@@ -681,6 +689,49 @@ mod tests {
         assert_close(restarted.integral(), 0.0);
 
         assert_close(restarted.derivative(), 0.0);
+    }
+
+    #[test]
+    fn reset_integral_preserves_sample_history() {
+        let gains = PidGains::new(0.0, 1.0, 1.0).unwrap();
+
+        let mut controller = PidController::new(10.0, gains).unwrap();
+
+        controller.update(10.0, 5.0).unwrap();
+
+        let accumulated = controller.update(11.0, 4.0).unwrap();
+
+        assert_close(accumulated.integral(), 6.0);
+        assert_close(accumulated.derivative(), 1.0);
+
+        controller.reset_integral();
+
+        assert_close(controller.integral(), 0.0);
+
+        let updated = controller.update(12.0, 3.0).unwrap();
+
+        assert_close(updated.integral(), 7.0);
+        assert_close(updated.derivative(), 1.0);
+    }
+
+    #[test]
+    fn resynchronize_preserves_integral_and_discards_elapsed_time() {
+        let gains = PidGains::new(0.0, 1.0, 1.0).unwrap();
+
+        let mut controller = PidController::new(10.0, gains).unwrap();
+
+        controller.update(10.0, 5.0).unwrap();
+
+        let accumulated = controller.update(11.0, 4.0).unwrap();
+
+        assert_close(accumulated.integral(), 6.0);
+
+        controller.resynchronize();
+
+        let resumed = controller.update(1_000.0, 3.0).unwrap();
+
+        assert_close(resumed.integral(), 6.0);
+        assert_close(resumed.derivative(), 0.0);
     }
 
     #[test]

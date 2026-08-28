@@ -51,12 +51,29 @@ impl<SignalId, OutputTarget> ControlLoopDefinition<SignalId, OutputTarget> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ControlLoopState {
+    #[default]
+    Running,
+    Paused,
+}
+
+impl ControlLoopState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Paused => "paused",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ControlLoop<SignalId, OutputTarget> {
     name: String,
     input: SignalId,
     output_target: OutputTarget,
     controller: Controller,
+    state: ControlLoopState,
 }
 
 impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
@@ -68,6 +85,7 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
             input,
             output_target,
             controller,
+            state: ControlLoopState::Running,
         }
     }
 
@@ -81,6 +99,14 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
 
     pub const fn output_target(&self) -> &OutputTarget {
         &self.output_target
+    }
+
+    pub const fn state(&self) -> ControlLoopState {
+        self.state
+    }
+
+    pub const fn is_running(&self) -> bool {
+        matches!(self.state, ControlLoopState::Running)
     }
 
     pub fn parameters(&self) -> Vec<ParameterDescriptor> {
@@ -113,6 +139,33 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         measurement: f64,
     ) -> Result<ControllerOutput, ControllerError> {
         self.controller.update(timestamp, measurement)
+    }
+
+    pub fn process(
+        &mut self,
+        timestamp: f64,
+        measurement: f64,
+    ) -> Result<Option<ControllerOutput>, ControllerError> {
+        if !self.is_running() {
+            return Ok(None);
+        }
+
+        self.update(timestamp, measurement).map(Some)
+    }
+
+    pub fn pause(&mut self) {
+        self.state = ControlLoopState::Paused;
+    }
+
+    pub fn resume(&mut self) {
+        if self.state == ControlLoopState::Paused {
+            self.controller.resynchronize();
+            self.state = ControlLoopState::Running;
+        }
+    }
+
+    pub fn reset_integral(&mut self) {
+        self.controller.reset_integral();
     }
 
     pub fn reset(&mut self) {
@@ -156,7 +209,7 @@ impl Error for ControlLoopDefinitionError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError};
+    use super::{ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError, ControlLoopState};
 
     use crate::instrument::InstrumentValue;
     use crate::process_control::{PidController, PidGains, PidOutputLimits};
@@ -401,5 +454,38 @@ mod tests {
             keys,
             vec!["setpoint", "kp", "ki", "kd", "output_min", "output_max",],
         );
+    }
+
+    #[test]
+    fn pauses_and_resumes_without_losing_integral() {
+        let definition = definition_with(
+            100.0,
+            PidGains::new(0.0, 1.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        );
+
+        let mut control_loop = ControlLoop::new(definition);
+
+        assert_eq!(control_loop.state(), ControlLoopState::Running,);
+
+        control_loop.process(0.0, 90.0).unwrap();
+
+        let accumulated = control_loop.process(1.0, 90.0).unwrap().unwrap();
+
+        assert_eq!(accumulated.integral(), Some(10.0),);
+
+        control_loop.pause();
+
+        assert_eq!(control_loop.state(), ControlLoopState::Paused,);
+
+        assert_eq!(control_loop.process(100.0, 90.0).unwrap(), None,);
+
+        control_loop.resume();
+
+        assert_eq!(control_loop.state(), ControlLoopState::Running,);
+
+        let resumed = control_loop.process(101.0, 90.0).unwrap().unwrap();
+
+        assert_eq!(resumed.integral(), Some(10.0),);
     }
 }
