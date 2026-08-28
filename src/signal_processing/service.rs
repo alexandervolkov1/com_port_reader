@@ -11,7 +11,7 @@ use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use crate::instrument::{InstrumentValue, ParameterDescriptor};
 use crate::process_control::{
     ControlEvent, ControlLoopDefinition, ControlOutputTarget, ControllerAccessError,
-    ControllerRegistry, ControllerRegistryError,
+    ControllerDiagnostic, ControllerRegistry, ControllerRegistryError,
 };
 
 use super::{
@@ -37,6 +37,13 @@ impl<SignalId> ProcessingInput<SignalId> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+struct ControllerDiagnosticBinding<SignalId> {
+    controller: String,
+    diagnostic: ControllerDiagnostic,
+    output: SignalId,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum ProcessingEvent<SignalId> {
     Samples(Vec<ProcessedSignal<SignalId>>),
     Error(SignalProcessingError<SignalId>),
@@ -59,6 +66,13 @@ enum ProcessingCommand<SignalId> {
     AddControlLoop {
         definition: ControlLoopDefinition<SignalId, ControlOutputTarget>,
         response_sender: Sender<Result<(), ControllerRegistryError>>,
+    },
+
+    AddControllerDiagnostic {
+        controller: String,
+        diagnostic: ControllerDiagnostic,
+        output: SignalId,
+        response_sender: Sender<Result<(), AddControllerDiagnosticError<SignalId>>>,
     },
 
     ControllerParameters {
@@ -183,6 +197,28 @@ impl<SignalId> ProcessingHandle<SignalId> {
             .map_err(|_| AddControlLoopError::Disconnected)?;
 
         result.map_err(AddControlLoopError::Definition)
+    }
+
+    pub fn add_controller_diagnostic(
+        &self,
+        controller: impl Into<String>,
+        diagnostic: ControllerDiagnostic,
+        output: SignalId,
+    ) -> Result<(), AddControllerDiagnosticError<SignalId>> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::AddControllerDiagnostic {
+                controller: controller.into(),
+                diagnostic,
+                output,
+                response_sender,
+            })
+            .map_err(|_| AddControllerDiagnosticError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| AddControllerDiagnosticError::Disconnected)?
     }
 
     pub fn controller_parameters(
@@ -411,6 +447,34 @@ impl<SignalId> Drop for ProcessingService<SignalId> {
     }
 }
 
+fn add_controller_diagnostic<SignalId>(
+    graph: &SignalProcessingGraph<SignalId>,
+    registry: &ControllerRegistry<SignalId>,
+    bindings: &mut Vec<ControllerDiagnosticBinding<SignalId>>,
+    controller: String,
+    diagnostic: ControllerDiagnostic,
+    output: SignalId,
+) -> Result<(), AddControllerDiagnosticError<SignalId>>
+where
+    SignalId: Copy + Eq + Hash,
+{
+    if !registry.contains(&controller) {
+        return Err(AddControllerDiagnosticError::ControllerNotFound(controller));
+    }
+
+    if graph.contains_output(output) || bindings.iter().any(|binding| binding.output == output) {
+        return Err(AddControllerDiagnosticError::DuplicateOutput { output });
+    }
+
+    bindings.push(ControllerDiagnosticBinding {
+        controller,
+        diagnostic,
+        output,
+    });
+
+    Ok(())
+}
+
 fn run_processing<SignalId>(
     command_receiver: Receiver<ProcessingCommand<SignalId>>,
     event_sender: Sender<ProcessingEvent<SignalId>>,
@@ -419,8 +483,8 @@ fn run_processing<SignalId>(
     SignalId: Copy + Eq + Hash,
 {
     let mut graph = SignalProcessingGraph::new();
-
     let mut registry = ControllerRegistry::new();
+    let mut controller_diagnostics = Vec::new();
 
     while let Ok(command) = command_receiver.recv() {
         match command {
@@ -450,6 +514,24 @@ fn run_processing<SignalId>(
                 response_sender,
             } => {
                 let result = registry.add(definition);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::AddControllerDiagnostic {
+                controller,
+                diagnostic,
+                output,
+                response_sender,
+            } => {
+                let result = add_controller_diagnostic(
+                    &graph,
+                    &registry,
+                    &mut controller_diagnostics,
+                    controller,
+                    diagnostic,
+                    output,
+                );
 
                 let _ = response_sender.send(result);
             }
@@ -507,6 +589,7 @@ fn run_processing<SignalId>(
                 process_inputs(
                     &mut graph,
                     &mut registry,
+                    &controller_diagnostics,
                     inputs,
                     &event_sender,
                     &control_event_sender,
@@ -523,22 +606,41 @@ fn run_processing<SignalId>(
                 signal_id,
                 response_sender,
             } => {
-                let removed = graph.remove_from(signal_id);
+                let mut removed = graph.remove_from(signal_id);
 
-                registry.remove_from(signal_id);
+                controller_diagnostics.retain(|binding| binding.output != signal_id);
 
-                for dependent_id in removed
-                    .iter()
-                    .copied()
+                let mut removed_controllers = registry.remove_from(signal_id);
+
+                let dependent_ids = removed.clone();
+
+                for dependent_id in dependent_ids
+                    .into_iter()
                     .filter(|removed_id| *removed_id != signal_id)
                 {
-                    registry.remove_from(dependent_id);
+                    removed_controllers.extend(registry.remove_from(dependent_id));
+                }
+
+                if !removed_controllers.is_empty() {
+                    controller_diagnostics.retain(|binding| {
+                        if removed_controllers
+                            .iter()
+                            .any(|controller| controller == &binding.controller)
+                        {
+                            removed.push(binding.output);
+
+                            false
+                        } else {
+                            true
+                        }
+                    });
                 }
 
                 let _ = response_sender.send(removed);
             }
 
             ProcessingCommand::Clear => {
+                controller_diagnostics.clear();
                 registry.clear();
                 graph.clear();
             }
@@ -552,13 +654,10 @@ fn run_processing<SignalId>(
 
 fn process_inputs<SignalId>(
     graph: &mut SignalProcessingGraph<SignalId>,
-
     registry: &mut ControllerRegistry<SignalId>,
-
+    controller_diagnostics: &[ControllerDiagnosticBinding<SignalId>],
     inputs: Vec<ProcessingInput<SignalId>>,
-
     event_sender: &Sender<ProcessingEvent<SignalId>>,
-
     control_event_sender: &Sender<ControlEvent<SignalId>>,
 ) where
     SignalId: Copy + Eq + Hash,
@@ -566,16 +665,20 @@ fn process_inputs<SignalId>(
     let mut output_samples = Vec::new();
 
     for input in inputs {
-        send_control_events(
+        process_control_events(
             registry.process(input.signal_id, input.timestamp, input.value),
+            controller_diagnostics,
+            &mut output_samples,
             control_event_sender,
         );
 
         match graph.process(input.signal_id, input.timestamp, input.value) {
             Ok(mut processed) => {
                 for signal in &processed {
-                    send_control_events(
+                    process_control_events(
                         registry.process(signal.signal_id, signal.timestamp, signal.value),
+                        controller_diagnostics,
+                        &mut output_samples,
                         control_event_sender,
                     );
                 }
@@ -594,12 +697,33 @@ fn process_inputs<SignalId>(
     }
 }
 
-fn send_control_events<SignalId>(
+fn process_control_events<SignalId>(
     events: Vec<ControlEvent<SignalId>>,
-
+    bindings: &[ControllerDiagnosticBinding<SignalId>],
+    output_samples: &mut Vec<ProcessedSignal<SignalId>>,
     sender: &Sender<ControlEvent<SignalId>>,
-) {
+) where
+    SignalId: Copy + Eq,
+{
     for event in events {
+        if let ControlEvent::Output(control_output) = &event {
+            for binding in bindings {
+                if binding.controller != control_output.loop_name {
+                    continue;
+                }
+
+                let Some(value) = control_output.output.diagnostic(binding.diagnostic) else {
+                    continue;
+                };
+
+                output_samples.push(ProcessedSignal {
+                    signal_id: binding.output,
+                    timestamp: control_output.timestamp,
+                    value,
+                });
+            }
+        }
+
         let _ = sender.send(event);
     }
 }
@@ -664,6 +788,48 @@ impl Error for AddControlLoopError {
             Self::Disconnected => None,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AddControllerDiagnosticError<SignalId> {
+    ControllerNotFound(String),
+    DuplicateOutput { output: SignalId },
+    Disconnected,
+}
+
+impl<SignalId> fmt::Display for AddControllerDiagnosticError<SignalId>
+where
+    SignalId: fmt::Display,
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ControllerNotFound(controller) => {
+                write!(
+                    formatter,
+                    "Controller '{controller}' \
+                     was not found",
+                )
+            }
+
+            Self::DuplicateOutput { output } => {
+                write!(
+                    formatter,
+                    "Processing output {output} \
+                     is already registered",
+                )
+            }
+
+            Self::Disconnected => formatter.write_str(
+                "Processing service is \
+                     disconnected",
+            ),
+        }
+    }
+}
+
+impl<SignalId> Error for AddControllerDiagnosticError<SignalId> where
+    SignalId: fmt::Debug + fmt::Display + 'static
+{
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -753,9 +919,9 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        AddControlLoopError, AddSignalFilterError, ControllerRequestError, ProcessingEvent,
-        ProcessingInput, ProcessingService, ProcessingServiceDisconnected,
-        ReplaceSignalFilterError,
+        AddControlLoopError, AddControllerDiagnosticError, AddSignalFilterError,
+        ControllerRequestError, ProcessingEvent, ProcessingInput, ProcessingService,
+        ProcessingServiceDisconnected, ReplaceSignalFilterError,
     };
 
     use crate::{
@@ -767,8 +933,8 @@ mod tests {
             },
         },
         process_control::{
-            ControlEvent, ControlLoopDefinition, ControlOutput, ControlOutputTarget, PidController,
-            PidGains, PidOutputLimits,
+            ControlEvent, ControlLoopDefinition, ControlOutput, ControlOutputTarget,
+            ControllerDiagnostic, PidController, PidGains, PidOutputLimits,
         },
         signal_processing::{
             ProcessedSignal, SignalFilterDefinition, SignalFilterError,
@@ -1478,5 +1644,70 @@ mod tests {
         let restarted = receive_pid_output(&control_events);
 
         assert_eq!(restarted.output.integral(), Some(0.0),);
+    }
+
+    #[test]
+    fn emits_controller_diagnostic_sample() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        let events = service.event_receiver();
+
+        let control_events = service.control_event_receiver();
+
+        handle
+            .add_control_loop(pid_definition("heater", 1, 1))
+            .unwrap();
+
+        handle
+            .add_controller_diagnostic("heater", ControllerDiagnostic::Proportional, 10)
+            .unwrap();
+
+        handle.process(1, 1_000.0, 80.0).unwrap();
+
+        let control = receive_pid_output(&control_events);
+
+        assert_eq!(control.output.proportional(), Some(40.0),);
+
+        assert_eq!(
+            events.recv_timeout(EVENT_TIMEOUT,),
+            Ok(ProcessingEvent::Samples(vec![ProcessedSignal {
+                signal_id: 10,
+                timestamp: 1_000.0,
+                value: 40.0,
+            },],),),
+        );
+    }
+
+    #[test]
+    fn rejects_diagnostic_for_missing_controller() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        assert_eq!(
+            handle.add_controller_diagnostic("missing", ControllerDiagnostic::Integral, 10,),
+            Err(AddControllerDiagnosticError::ControllerNotFound(
+                "missing".to_owned(),
+            ),),
+        );
+    }
+
+    #[test]
+    fn removes_diagnostics_with_controller_input() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        handle
+            .add_control_loop(pid_definition("heater", 1, 1))
+            .unwrap();
+
+        handle
+            .add_controller_diagnostic("heater", ControllerDiagnostic::Integral, 10)
+            .unwrap();
+
+        assert_eq!(handle.remove_from(1), Ok(vec![10]),);
     }
 }
