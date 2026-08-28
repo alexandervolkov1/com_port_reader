@@ -1,14 +1,14 @@
 local SCRIPT_ID, PANEL_ID = "pid_thermal_demo", "controls"
 local PLANT_ID = 1
 
-local RAW = "thermal_temperature"
-local FILTERED = "thermal_temperature_ma"
-local POWER = "thermal_heater_power"
-local PID = "thermal_temperature_pid"
+local RAW = "temperature"
+local FILTERED = "temperature_ma"
+local POWER = "heater_power"
+local PID = "pid"
 
-local PID_P = "thermal_pid_p"
-local PID_I = "thermal_pid_i"
-local PID_D = "thermal_pid_d"
+local PID_P = "pid_p"
+local PID_I = "pid_i"
+local PID_D = "pid_d"
 
 local POLL_INTERVAL = 0.5
 local OUTPUT_MIN, OUTPUT_MAX = 0.0, 100.0
@@ -105,8 +105,8 @@ end
 local function add_diagnostics()
     local diagnostics = {
         { "proportional", PID_P, "#F57C00" },
-        { "integral", PID_I, "#7B1FA2" },
-        { "derivative", PID_D, "#388E3C" },
+        { "integral",     PID_I, "#7B1FA2" },
+        { "derivative",   PID_D, "#388E3C" },
     }
 
     for _, d in ipairs(diagnostics) do
@@ -114,28 +114,34 @@ local function add_diagnostics()
     end
 end
 
-local function rebuild_processing()
-    app.stop()
+local function add_moving_average_filter()
+    app.filter(RAW, {
+        name = FILTERED,
+        kind = "moving_average",
+        window = moving_average_window,
+        color = "#00897B",
+    })
+end
+
+local function build_processing()
     app.clear()
-    controller = nil
 
     plant:add("temperature", {
-        name = RAW, interval = POLL_INTERVAL, color = "#D32F2F",
+        name = RAW,
+        interval = POLL_INTERVAL,
+        color = "#D32F2F",
     })
 
     plant:add("heater_power", {
-        name = POWER, interval = POLL_INTERVAL, color = "#1976D2",
+        name = POWER,
+        interval = POLL_INTERVAL,
+        color = "#1976D2",
     })
 
     local input = RAW
 
     if moving_average_enabled then
-        app.filter(RAW, {
-            name = FILTERED,
-            kind = "moving_average",
-            window = moving_average_window,
-            color = "#00897B",
-        })
+        add_moving_average_filter()
         input = FILTERED
     end
 
@@ -143,13 +149,14 @@ local function rebuild_processing()
         name = PID,
         input = input,
         setpoint = setpoint,
-        kp = kp, ki = ki, kd = kd,
+        kp = kp,
+        ki = ki,
+        kd = kd,
         output_min = OUTPUT_MIN,
         output_max = OUTPUT_MAX,
     })
 
     add_diagnostics()
-    app.start()
 end
 
 local function set_gain(key, name, value)
@@ -185,11 +192,29 @@ function script.set_kd(value)
 end
 
 function script.set_moving_average_enabled(value)
-    if type(value) ~= "boolean" then error("moving-average enabled must be boolean") end
-    if value == moving_average_enabled then return end
+    if type(value) ~= "boolean" then
+        error("moving-average enabled must be boolean")
+    end
+
+    if value == moving_average_enabled then
+        return
+    end
+
+    if plant == nil or controller == nil then
+        moving_average_enabled = value
+        show_status()
+        return
+    end
+
+    if value then
+        add_moving_average_filter()
+        controller:set_input(FILTERED)
+    else
+        controller:set_input(RAW)
+        app.delete(FILTERED)
+    end
 
     moving_average_enabled = value
-    if plant ~= nil then rebuild_processing() end
     show_status()
 end
 
@@ -215,7 +240,9 @@ function script.run()
     app.start_emu()
     plant = app.virtual_instrument({ id = PLANT_ID })
 
-    rebuild_processing()
+    build_processing()
+    app.start()
+
     show_status()
 end
 
