@@ -2,6 +2,7 @@ mod control_loop;
 mod controller;
 mod diagnostic;
 mod new_loop;
+mod on_off;
 mod output_conversion;
 mod output_target;
 mod pid;
@@ -16,6 +17,7 @@ pub use controller::{
 };
 pub use diagnostic::ControllerDiagnostic;
 pub use new_loop::{NewPidLoop, NewPidLoopError};
+pub use on_off::{OnOffController, OnOffControllerError, OnOffOutput};
 pub use output_conversion::ControlOutputConversionError;
 pub use output_target::{ControlOutputParameter, ControlOutputTarget, ControlOutputTargetError};
 pub use pid::{
