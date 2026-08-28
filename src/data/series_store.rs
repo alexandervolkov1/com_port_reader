@@ -26,6 +26,7 @@ pub enum AddSeriesError {
     InvalidInstrumentScale,
     MissingFilteredInput(SeriesId),
     FilteredSeriesHasSamplingInterval,
+    ControllerDiagnosticSeriesHasSamplingInterval,
 }
 
 impl std::fmt::Display for AddSeriesError {
@@ -51,6 +52,11 @@ impl std::fmt::Display for AddSeriesError {
             Self::FilteredSeriesHasSamplingInterval => {
                 formatter.write_str("Filtered series cannot have a polling interval")
             }
+
+            Self::ControllerDiagnosticSeriesHasSamplingInterval => formatter.write_str(
+                "Controller diagnostic series \
+                     cannot have a polling interval",
+            ),
         }
     }
 }
@@ -64,7 +70,8 @@ impl std::error::Error for AddSeriesError {
             | Self::SerialCommandContainsLineBreak
             | Self::InvalidInstrumentScale
             | Self::MissingFilteredInput(_)
-            | Self::FilteredSeriesHasSamplingInterval => None,
+            | Self::FilteredSeriesHasSamplingInterval
+            | Self::ControllerDiagnosticSeriesHasSamplingInterval => None,
         }
     }
 }
@@ -176,6 +183,14 @@ impl SeriesStore {
                         .find(|series| series.id == *input)
                         .map(|series| series.connection_id)
                         .ok_or(AddSeriesError::MissingFilteredInput(*input))?
+                }
+
+                SeriesSource::ControllerDiagnostic { .. } => {
+                    if sampling_interval.is_some() {
+                        return Err(AddSeriesError::ControllerDiagnosticSeriesHasSamplingInterval);
+                    }
+
+                    requested_connection_id
                 }
 
                 _ => requested_connection_id,
@@ -489,6 +504,14 @@ fn normalize_series_source(source: SeriesSource) -> Result<SeriesSource, AddSeri
         SeriesSource::Filtered { input, definition } => {
             Ok(SeriesSource::Filtered { input, definition })
         }
+
+        SeriesSource::ControllerDiagnostic {
+            controller,
+            diagnostic,
+        } => Ok(SeriesSource::ControllerDiagnostic {
+            controller,
+            diagnostic,
+        }),
     }
 }
 
@@ -531,6 +554,7 @@ mod tests {
             metakon_5x3::{Metakon5x3, Metakon5x3Register},
             virtual_instrument::{VirtualInstrumentId, VirtualParameterId},
         },
+        process_control::ControllerDiagnostic,
         signal_processing::SignalFilterDefinition,
     };
 
@@ -1332,5 +1356,67 @@ mod tests {
             SeriesId::new(999),
             SignalFilterDefinition::median(3).unwrap(),
         ));
+    }
+
+    #[test]
+    fn stores_controller_diagnostic_series() {
+        let store = SeriesStore::new();
+
+        let connection_id = ConnectionId::new(2);
+
+        let id = store
+            .add_series(
+                NewSeries::named_controller_diagnostic(
+                    "heater",
+                    ControllerDiagnostic::Integral,
+                    "heater_i",
+                )
+                .with_connection(connection_id),
+            )
+            .unwrap();
+
+        let metadata = store.metadata();
+
+        assert_eq!(metadata.len(), 1,);
+
+        assert_eq!(metadata[0].id, id,);
+
+        assert_eq!(metadata[0].name, "heater_i",);
+
+        assert_eq!(metadata[0].connection_id, connection_id,);
+
+        assert_eq!(
+            metadata[0].source,
+            SeriesSource::ControllerDiagnostic {
+                controller: "heater".to_owned(),
+
+                diagnostic: ControllerDiagnostic::Integral,
+            },
+        );
+
+        assert_eq!(metadata[0].sampling_interval, None,);
+
+        assert!(!metadata[0].source.is_polled());
+    }
+
+    #[test]
+    fn rejects_polling_interval_for_controller_diagnostic_series() {
+        let store = SeriesStore::new();
+
+        let interval = SamplingInterval::from_secs_f64(1.0).unwrap();
+
+        let result = store.add_series(
+            NewSeries::named_controller_diagnostic(
+                "heater",
+                ControllerDiagnostic::Proportional,
+                "heater_p",
+            )
+            .with_sampling_interval(interval),
+        );
+
+        assert_eq!(
+            result,
+            Err(AddSeriesError::ControllerDiagnosticSeriesHasSamplingInterval,),
+        );
     }
 }

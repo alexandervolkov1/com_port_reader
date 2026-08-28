@@ -1,6 +1,6 @@
 use crate::{
     connection::ConnectionId, instrument::InstrumentReadRequest,
-    signal_processing::SignalFilterDefinition,
+    process_control::ControllerDiagnostic, signal_processing::SignalFilterDefinition,
 };
 
 use super::{Sample, SamplingInterval, SeriesColor};
@@ -36,10 +36,17 @@ pub enum SeriesSource {
     SerialCommand {
         command: String,
     },
+
     Instrument(InstrumentReadRequest),
+
     Filtered {
         input: SeriesId,
         definition: SignalFilterDefinition,
+    },
+
+    ControllerDiagnostic {
+        controller: String,
+        diagnostic: ControllerDiagnostic,
     },
 }
 
@@ -51,11 +58,17 @@ impl SeriesSource {
             Self::Instrument(request) => request.default_name_prefix(),
 
             Self::Filtered { .. } => "filtered",
+
+            Self::ControllerDiagnostic { .. } => "controller",
         }
     }
 
     pub(crate) const fn is_polled(&self) -> bool {
-        !matches!(self, Self::Filtered { .. })
+        match self {
+            Self::SerialCommand { .. } | Self::Instrument(_) => true,
+
+            Self::Filtered { .. } | Self::ControllerDiagnostic { .. } => false,
+        }
     }
 }
 
@@ -70,6 +83,17 @@ impl std::fmt::Display for SeriesSource {
 
             Self::Filtered { input, definition } => {
                 write!(formatter, "Filtered series {input}: {definition}",)
+            }
+
+            Self::ControllerDiagnostic {
+                controller,
+                diagnostic,
+            } => {
+                write!(
+                    formatter,
+                    "Controller '{controller}' \
+                     diagnostic: {diagnostic}",
+                )
             }
         }
     }
@@ -139,6 +163,27 @@ impl NewSeries {
             name: Some(name.into()),
             sampling_interval: None,
             connection_id: ConnectionId::PRIMARY,
+            color: None,
+        }
+    }
+
+    pub fn named_controller_diagnostic(
+        controller: impl Into<String>,
+        diagnostic: ControllerDiagnostic,
+        name: impl Into<String>,
+    ) -> Self {
+        Self {
+            source: SeriesSource::ControllerDiagnostic {
+                controller: controller.into(),
+                diagnostic,
+            },
+
+            name: Some(name.into()),
+
+            sampling_interval: None,
+
+            connection_id: ConnectionId::PRIMARY,
+
             color: None,
         }
     }
@@ -230,6 +275,57 @@ impl NewFilteredSeries {
         self,
     ) -> (String, String, SignalFilterDefinition, Option<SeriesColor>) {
         (self.input_name, self.name, self.definition, self.color)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewControllerDiagnosticSeries {
+    controller: String,
+    diagnostic: ControllerDiagnostic,
+    name: String,
+    color: Option<SeriesColor>,
+}
+
+impl NewControllerDiagnosticSeries {
+    pub fn new(
+        controller: impl Into<String>,
+        diagnostic: ControllerDiagnostic,
+        name: impl Into<String>,
+    ) -> Self {
+        Self {
+            controller: controller.into(),
+
+            diagnostic,
+
+            name: name.into(),
+
+            color: None,
+        }
+    }
+
+    pub fn with_color(mut self, color: SeriesColor) -> Self {
+        self.color = Some(color);
+        self
+    }
+
+    pub fn controller(&self) -> &str {
+        &self.controller
+    }
+
+    pub const fn diagnostic(&self) -> ControllerDiagnostic {
+        self.diagnostic
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn color(&self) -> Option<SeriesColor> {
+        self.color
+    }
+
+    pub fn into_parts(self) -> (String, ControllerDiagnostic, String, Option<SeriesColor>) {
+        (self.controller, self.diagnostic, self.name, self.color)
     }
 }
 

@@ -291,7 +291,7 @@ impl AcquisitionSource for SerialCommandSource {
                 value.as_f64()
             }
 
-            SeriesSource::Filtered { .. } => {
+            SeriesSource::Filtered { .. } | SeriesSource::ControllerDiagnostic { .. } => {
                 return Ok(None);
             }
         };
