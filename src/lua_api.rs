@@ -7,8 +7,8 @@ use crate::{
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
     data::{
-        DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE, NewFilteredSeries,
-        NewSeries, SamplingInterval, SeriesColor,
+        DEFAULT_METAKON_CHANNEL, DEFAULT_METAKON_DEVICE, DEFAULT_METAKON_SCALE,
+        NewControllerDiagnosticSeries, NewFilteredSeries, NewSeries, SamplingInterval, SeriesColor,
     },
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterDescriptor,
@@ -19,7 +19,9 @@ use crate::{
         },
     },
     lua_application_script::LuaApplicationEvent,
-    process_control::{ControlOutputTarget, NewPidLoop, PidGains, PidOutputLimits},
+    process_control::{
+        ControlOutputTarget, ControllerDiagnostic, NewPidLoop, PidGains, PidOutputLimits,
+    },
     signal_processing::{ControllerRequestError, SignalFilterDefinition},
     user_command::UserCommand,
 };
@@ -456,6 +458,8 @@ fn add_pid_loop(
 ) -> mlua::Result<LuaControllerHandle> {
     validate_pid_options(options)?;
 
+    let connection_id = output_target.connection_id();
+
     let name = options
         .get::<Option<String>>("name")?
         .ok_or_else(|| mlua::Error::RuntimeError("PID option 'name' is required".to_owned()))?;
@@ -512,6 +516,7 @@ fn add_pid_loop(
 
     Ok(LuaControllerHandle {
         name,
+        connection_id,
         command_sender: command_sender.clone(),
     })
 }
@@ -705,6 +710,7 @@ fn validate_metakon_controller_options(options: &Table) -> mlua::Result<()> {
 #[derive(Clone)]
 struct LuaControllerHandle {
     name: String,
+    connection_id: ConnectionId,
     command_sender: Sender<UserCommand>,
 }
 
@@ -773,6 +779,47 @@ impl LuaControllerHandle {
         }
 
         Ok(parameters)
+    }
+
+    fn add_diagnostic_series(
+        &self,
+        diagnostic_key: &str,
+        options: Option<Value>,
+    ) -> mlua::Result<()> {
+        let diagnostic = ControllerDiagnostic::from_key(diagnostic_key).ok_or_else(|| {
+            mlua::Error::RuntimeError(format!(
+                "Unknown controller \
+                         diagnostic \
+                         '{diagnostic_key}'",
+            ))
+        })?;
+
+        let options = parse_series_options(options)?;
+
+        if options.sampling_interval.is_some() {
+            return Err(mlua::Error::RuntimeError(
+                "Controller diagnostic \
+                     series cannot have \
+                     'interval'"
+                    .to_owned(),
+            ));
+        }
+
+        let name = options
+            .name
+            .unwrap_or_else(|| format!("{}_{}", self.name, diagnostic.key(),));
+
+        let mut series = NewControllerDiagnosticSeries::new(self.name.clone(), diagnostic, name)
+            .with_connection(self.connection_id);
+
+        if let Some(color) = options.color {
+            series = series.with_color(color);
+        }
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::AddControllerDiagnostic(series),
+        )
     }
 
     fn parameter_descriptor(&self, key: &str) -> mlua::Result<ParameterDescriptor> {
@@ -1494,6 +1541,13 @@ impl UserData for LuaControllerHandle {
     {
         methods.add_method("name", |_, controller, ()| Ok(controller.name.clone()));
 
+        methods.add_method(
+            "add",
+            |_, controller, (diagnostic_key, options): (String, Option<Value>)| {
+                controller.add_diagnostic_series(&diagnostic_key, options)
+            },
+        );
+
         methods.add_method("parameters", |lua, controller, ()| {
             controller.parameters(lua)
         });
@@ -1802,4 +1856,155 @@ fn stop_emulator_command() -> UserCommand {
 
 fn retry_all_command() -> UserCommand {
     UserCommand::RetryAll
+}
+
+#[cfg(test)]
+mod controller_handle_tests {
+    use crossbeam_channel::unbounded;
+    use mlua::Lua;
+
+    use super::LuaControllerHandle;
+
+    use crate::{
+        connection::ConnectionId, data::SeriesColor, process_control::ControllerDiagnostic,
+        user_command::UserCommand,
+    };
+
+    #[test]
+    fn adds_controller_diagnostic_series() {
+        let lua = Lua::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        let controller = LuaControllerHandle {
+            name: "heater".to_owned(),
+            connection_id: ConnectionId::new(2),
+            command_sender,
+        };
+
+        let userdata = lua.create_userdata(controller).unwrap();
+
+        lua.globals().set("controller", userdata).unwrap();
+
+        lua.load(
+            r##"
+                controller:add(
+                    "integral",
+                    {
+                        name = "heater_i",
+                        color = "#112233",
+                    }
+                )
+            "##,
+        )
+        .exec()
+        .unwrap();
+
+        let UserCommand::AddControllerDiagnostic(series) = command_receiver.try_recv().unwrap()
+        else {
+            panic!("expected AddControllerDiagnostic command");
+        };
+
+        let (controller, diagnostic, name, connection_id, color) = series.into_parts();
+
+        assert_eq!(controller, "heater");
+
+        assert_eq!(diagnostic, ControllerDiagnostic::Integral,);
+
+        assert_eq!(name, "heater_i");
+
+        assert_eq!(connection_id, ConnectionId::new(2),);
+
+        assert_eq!(color, Some(SeriesColor::new(0x11, 0x22, 0x33,),),);
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn generates_controller_diagnostic_series_name() {
+        let lua = Lua::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        let userdata = lua
+            .create_userdata(LuaControllerHandle {
+                name: "heater".to_owned(),
+                connection_id: ConnectionId::PRIMARY,
+                command_sender,
+            })
+            .unwrap();
+
+        lua.globals().set("controller", userdata).unwrap();
+
+        lua.load(
+            r#"
+                controller:add(
+                    "proportional"
+                )
+            "#,
+        )
+        .exec()
+        .unwrap();
+
+        let UserCommand::AddControllerDiagnostic(series) = command_receiver.try_recv().unwrap()
+        else {
+            panic!("expected AddControllerDiagnostic command");
+        };
+
+        let (controller, diagnostic, name, connection_id, color) = series.into_parts();
+
+        assert_eq!(controller, "heater");
+
+        assert_eq!(diagnostic, ControllerDiagnostic::Proportional,);
+
+        assert_eq!(name, "heater_proportional",);
+
+        assert_eq!(connection_id, ConnectionId::PRIMARY,);
+
+        assert_eq!(color, None);
+
+        assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn rejects_controller_diagnostic_interval() {
+        let lua = Lua::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        let userdata = lua
+            .create_userdata(LuaControllerHandle {
+                name: "heater".to_owned(),
+
+                connection_id: ConnectionId::PRIMARY,
+
+                command_sender,
+            })
+            .unwrap();
+
+        lua.globals().set("controller", userdata).unwrap();
+
+        let error = lua
+            .load(
+                r#"
+                    controller:add(
+                        "integral",
+                        {
+                            interval = 1.0,
+                        }
+                    )
+                "#,
+            )
+            .exec()
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains("cannot have 'interval'",),
+            "unexpected Lua error: \
+             {error}",
+        );
+
+        assert!(command_receiver.try_recv().is_err());
+    }
 }

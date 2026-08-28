@@ -307,29 +307,9 @@ impl NewControllerDiagnosticSeries {
         self
     }
 
-    pub const fn connection_id(&self) -> ConnectionId {
-        self.connection_id
-    }
-
     pub fn with_color(mut self, color: SeriesColor) -> Self {
         self.color = Some(color);
         self
-    }
-
-    pub fn controller(&self) -> &str {
-        &self.controller
-    }
-
-    pub const fn diagnostic(&self) -> ControllerDiagnostic {
-        self.diagnostic
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub const fn color(&self) -> Option<SeriesColor> {
-        self.color
     }
 
     pub fn into_parts(
