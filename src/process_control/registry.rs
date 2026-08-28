@@ -122,6 +122,12 @@ where
             .map_err(Into::into)
     }
 
+    pub fn set_input(&mut self, name: &str, input: SignalId) -> Result<(), ControllerAccessError> {
+        self.control_loop_mut(name)?.set_input(input);
+
+        Ok(())
+    }
+
     pub fn state(&self, name: &str) -> Result<ControlLoopState, ControllerAccessError> {
         Ok(self.control_loop(name)?.state())
     }
@@ -1013,5 +1019,32 @@ mod tests {
         };
 
         assert_eq!(output.output.integral(), Some(0.0),);
+    }
+
+    #[test]
+    fn changes_registered_controller_input() {
+        let mut registry = ControllerRegistry::new();
+
+        registry
+            .add(definition("heater", 1, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        let first = registry.process(1, 0.0, 80.0);
+
+        assert_eq!(first.len(), 1);
+
+        registry.set_input("heater", 2).unwrap();
+
+        assert!(registry.process(1, 1.0, 80.0).is_empty());
+
+        let second = registry.process(2, 100.0, 80.0);
+
+        let [ControlEvent::Output(output)] = second.as_slice() else {
+            panic!("expected one control output");
+        };
+
+        assert_eq!(output.loop_name, "heater",);
+
+        assert_eq!(output.input, 2,);
     }
 }

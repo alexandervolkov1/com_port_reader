@@ -97,6 +97,18 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         &self.input
     }
 
+    pub fn set_input(&mut self, input: SignalId)
+    where
+        SignalId: PartialEq,
+    {
+        if self.input == input {
+            return;
+        }
+
+        self.input = input;
+        self.controller.resynchronize();
+    }
+
     pub const fn output_target(&self) -> &OutputTarget {
         &self.output_target
     }
@@ -487,5 +499,32 @@ mod tests {
         let resumed = control_loop.process(101.0, 90.0).unwrap().unwrap();
 
         assert_eq!(resumed.integral(), Some(10.0),);
+    }
+
+    #[test]
+    fn changes_input_without_losing_integral() {
+        let definition = definition_with(
+            100.0,
+            PidGains::new(0.0, 1.0, 1.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        );
+
+        let mut control_loop = ControlLoop::new(definition);
+
+        control_loop.update(0.0, 90.0).unwrap();
+
+        let accumulated = control_loop.update(1.0, 90.0).unwrap();
+
+        assert_eq!(accumulated.integral(), Some(10.0),);
+
+        control_loop.set_input(2);
+
+        assert_eq!(*control_loop.input(), 2,);
+
+        let switched = control_loop.update(100.0, 80.0).unwrap();
+
+        assert_eq!(switched.integral(), Some(10.0),);
+
+        assert_eq!(switched.derivative(), Some(0.0),);
     }
 }

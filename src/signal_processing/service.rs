@@ -99,6 +99,12 @@ enum ProcessingCommand<SignalId> {
         response_sender: Sender<Result<(), ControllerAccessError>>,
     },
 
+    SetControllerInput {
+        name: String,
+        input: SignalId,
+        response_sender: Sender<Result<(), ControllerAccessError>>,
+    },
+
     ControllerState {
         name: String,
         response_sender: Sender<Result<ControlLoopState, ControllerAccessError>>,
@@ -324,6 +330,27 @@ impl<SignalId> ProcessingHandle<SignalId> {
             .send(ProcessingCommand::ConfigureController {
                 name: name.into(),
                 updates,
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn set_controller_input(
+        &self,
+        name: impl Into<String>,
+        input: SignalId,
+    ) -> Result<(), ControllerRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::SetControllerInput {
+                name: name.into(),
+                input,
                 response_sender,
             })
             .map_err(|_| ControllerRequestError::Disconnected)?;
@@ -662,6 +689,16 @@ fn run_processing<SignalId>(
                 response_sender,
             } => {
                 let result = registry.configure(&name, updates);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::SetControllerInput {
+                name,
+                input,
+                response_sender,
+            } => {
+                let result = registry.set_input(&name, input);
 
                 let _ = response_sender.send(result);
             }
@@ -1887,5 +1924,52 @@ mod tests {
         let resumed = receive_pid_output(&control_events);
 
         assert_eq!(resumed.output.integral(), Some(10.0),);
+    }
+
+    #[test]
+    fn changes_controller_input_without_stopping_processing() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        let control_events = service.control_event_receiver();
+
+        handle
+            .add_filter(1, 2, SignalFilterDefinition::moving_average(2).unwrap())
+            .unwrap();
+
+        handle
+            .add_control_loop(pid_definition("heater", 1, 1))
+            .unwrap();
+
+        handle
+            .write_controller_parameter("heater", "ki", InstrumentValue::Number(1.0))
+            .unwrap();
+
+        handle.process(1, 0.0, 90.0).unwrap();
+
+        let _ = receive_pid_output(&control_events);
+
+        handle.process(1, 1.0, 90.0).unwrap();
+
+        let accumulated = receive_pid_output(&control_events);
+
+        assert_eq!(accumulated.input, 1,);
+
+        assert!(accumulated.output.integral().unwrap() > 0.0);
+
+        let integral = accumulated.output.integral().unwrap();
+
+        handle.set_controller_input("heater", 2).unwrap();
+
+        handle.process(1, 100.0, 90.0).unwrap();
+
+        let filtered = receive_pid_output(&control_events);
+
+        assert_eq!(filtered.input, 2,);
+
+        assert_eq!(filtered.output.integral(), Some(integral),);
+
+        assert_eq!(filtered.output.derivative(), Some(0.0),);
     }
 }
