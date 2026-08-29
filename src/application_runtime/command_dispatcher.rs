@@ -8,7 +8,8 @@ use crate::{
     connection::ConnectionId,
     data::{NewControllerDiagnosticSeries, NewFilteredSeries, NewSeries, SeriesId, SeriesStore},
     process_control::{
-        ControlLoopDefinition, ControlOutputTarget, Controller, NewPidLoop, PidController,
+        ControlLoopDefinition, ControlOutputTarget, Controller, NewOnOffLoop, NewPidLoop,
+        OnOffController, PidController,
     },
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
     signal_processing::{ProcessingHandle, SignalFilterDefinition},
@@ -151,6 +152,10 @@ impl CommandDispatcher {
 
             UserCommand::AddPidLoop(pid_loop) => {
                 self.add_pid_loop(pid_loop);
+            }
+
+            UserCommand::AddOnOffLoop(on_off_loop) => {
+                self.add_on_off_loop(on_off_loop);
             }
 
             UserCommand::ControllerParameters {
@@ -581,6 +586,65 @@ impl CommandDispatcher {
                 self.log.error(format!(
                     "Failed to add PID loop \
                          '{name}': {error}",
+                ));
+            }
+        }
+    }
+
+    fn add_on_off_loop(&self, on_off_loop: NewOnOffLoop<ControlOutputTarget>) {
+        let (name, input_name, output_target, setpoint, hysteresis, output_off, output_on) =
+            on_off_loop.into_parts();
+
+        let Some(input_id) = self.series.id_by_name(&input_name) else {
+            self.log.error(format!(
+                "Failed to add on/off loop \
+                 '{name}': input series \
+                 '{input_name}' was not found",
+            ));
+
+            return;
+        };
+
+        let controller = match OnOffController::new(setpoint, hysteresis, output_off, output_on) {
+            Ok(controller) => Controller::OnOff(controller),
+
+            Err(error) => {
+                self.log.error(format!(
+                    "Failed to add on/off loop \
+                         '{name}': {error}",
+                ));
+
+                return;
+            }
+        };
+
+        let definition =
+            match ControlLoopDefinition::new(name.clone(), input_id, output_target, controller) {
+                Ok(definition) => definition,
+
+                Err(error) => {
+                    self.log.error(format!(
+                        "Failed to add on/off loop \
+                         '{name}': {error}",
+                    ));
+
+                    return;
+                }
+            };
+
+        match self.processing.add_control_loop(definition) {
+            Ok(()) => {
+                self.log.info(format!(
+                    "On/off loop '{name}' \
+                     added for input series \
+                     '{input_name}' ({input_id}).",
+                ));
+            }
+
+            Err(error) => {
+                self.log.error(format!(
+                    "Failed to add on/off loop \
+                     '{name}': {error}",
                 ));
             }
         }

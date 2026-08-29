@@ -689,6 +689,7 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
         }
 
         UserCommand::AddControllerDiagnostic(_)
+        | UserCommand::AddOnOffLoop(_)
         | UserCommand::ControllerParameters { .. }
         | UserCommand::ReadControllerParameter { .. }
         | UserCommand::ConfigureController { .. }

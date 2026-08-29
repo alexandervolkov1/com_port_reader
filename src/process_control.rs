@@ -16,7 +16,7 @@ pub use controller::{
     ControllerParameterError,
 };
 pub use diagnostic::ControllerDiagnostic;
-pub use new_loop::{NewPidLoop, NewPidLoopError};
+pub use new_loop::{NewOnOffLoop, NewOnOffLoopError, NewPidLoop, NewPidLoopError};
 pub use on_off::{OnOffController, OnOffControllerError, OnOffOutput};
 pub use output_conversion::ControlOutputConversionError;
 pub use output_target::{ControlOutputParameter, ControlOutputTarget, ControlOutputTargetError};

@@ -9,7 +9,7 @@ use crate::{
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterDescriptor,
     },
-    process_control::{ControlLoopState, ControlOutputTarget, NewPidLoop},
+    process_control::{ControlLoopState, ControlOutputTarget, NewOnOffLoop, NewPidLoop},
     signal_processing::{ControllerRequestError, SignalFilterDefinition},
 };
 
@@ -52,6 +52,7 @@ pub enum UserCommand {
     AddFilter(NewFilteredSeries),
     AddControllerDiagnostic(NewControllerDiagnosticSeries),
     AddPidLoop(NewPidLoop<ControlOutputTarget>),
+    AddOnOffLoop(NewOnOffLoop<ControlOutputTarget>),
 
     ControllerParameters {
         name: String,
