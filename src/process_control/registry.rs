@@ -7,8 +7,8 @@ use crate::{
 
 use super::{
     ControlLoop, ControlLoopDefinition, ControlLoopState, ControlOutputConversionError,
-    ControlOutputParameter, ControlOutputTarget, Controller, ControllerError, ControllerOutput,
-    ControllerParameterError,
+    ControlOutputParameter, ControlOutputTarget, Controller, ControllerError,
+    ControllerOperationError, ControllerOutput, ControllerParameterError,
 };
 
 pub struct ControllerRegistry<SignalId> {
@@ -145,9 +145,9 @@ where
     }
 
     pub fn reset_integral(&mut self, name: &str) -> Result<(), ControllerAccessError> {
-        self.control_loop_mut(name)?.reset_integral();
-
-        Ok(())
+        self.control_loop_mut(name)?
+            .reset_integral()
+            .map_err(Into::into)
     }
 
     pub fn reset(&mut self, name: &str) -> Result<(), ControllerAccessError> {
@@ -424,8 +424,8 @@ impl std::error::Error for ControllerRegistryError {}
 #[derive(Clone, Debug, PartialEq)]
 pub enum ControllerAccessError {
     ControlLoopNotFound(String),
-
     Parameter(ControllerParameterError),
+    Operation(ControllerOperationError),
 }
 
 impl fmt::Display for ControllerAccessError {
@@ -440,6 +440,8 @@ impl fmt::Display for ControllerAccessError {
             }
 
             Self::Parameter(error) => error.fmt(formatter),
+
+            Self::Operation(error) => error.fmt(formatter),
         }
     }
 }
@@ -450,7 +452,15 @@ impl std::error::Error for ControllerAccessError {
             Self::ControlLoopNotFound(_) => None,
 
             Self::Parameter(error) => Some(error),
+
+            Self::Operation(error) => Some(error),
         }
+    }
+}
+
+impl From<ControllerOperationError> for ControllerAccessError {
+    fn from(error: ControllerOperationError) -> Self {
+        Self::Operation(error)
     }
 }
 
@@ -514,7 +524,8 @@ mod tests {
         },
         process_control::{
             ControlLoopDefinition, ControlOutputTarget, ControllerError, ControllerKind,
-            OnOffController, PidController, PidControllerError, PidGains, PidOutputLimits,
+            ControllerOperation, ControllerOperationError, OnOffController, PidController,
+            PidControllerError, PidGains, PidOutputLimits,
         },
     };
 
@@ -1119,6 +1130,25 @@ mod tests {
                 target_minimum: 0.0,
                 target_maximum: 100.0,
             },),
+        );
+    }
+
+    #[test]
+    fn rejects_integral_reset_for_on_off_loop() {
+        let mut registry = ControllerRegistry::new();
+
+        registry
+            .add(on_off_definition("thermostat", 5, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        assert_eq!(
+            registry.reset_integral("thermostat",),
+            Err(ControllerAccessError::Operation(
+                ControllerOperationError::Unsupported {
+                    kind: ControllerKind::OnOff,
+                    operation: ControllerOperation::ResetIntegral,
+                },
+            ),),
         );
     }
 }

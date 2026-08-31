@@ -31,6 +31,44 @@ impl fmt::Display for ControllerKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ControllerOperation {
+    ResetIntegral,
+}
+
+impl ControllerOperation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ResetIntegral => "reset_integral",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ControllerOperationError {
+    Unsupported {
+        kind: ControllerKind,
+        operation: ControllerOperation,
+    },
+}
+
+impl fmt::Display for ControllerOperationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unsupported { kind, operation } => {
+                write!(
+                    formatter,
+                    "Controller type '{kind}' does not \
+                     support operation '{}'",
+                    operation.as_str(),
+                )
+            }
+        }
+    }
+}
+
+impl Error for ControllerOperationError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControllerParameter {
     Setpoint,
 
@@ -354,13 +392,17 @@ impl Controller {
         }
     }
 
-    pub fn reset_integral(&mut self) {
+    pub fn reset_integral(&mut self) -> Result<(), ControllerOperationError> {
         match self {
             Self::Pid(controller) => {
                 controller.reset_integral();
+                Ok(())
             }
 
-            Self::OnOff(_) => {}
+            Self::OnOff(_) => Err(ControllerOperationError::Unsupported {
+                kind: ControllerKind::OnOff,
+                operation: ControllerOperation::ResetIntegral,
+            }),
         }
     }
 
@@ -817,8 +859,8 @@ impl Error for ControllerError {
 #[cfg(test)]
 mod tests {
     use super::{
-        Controller, ControllerDiagnostic, ControllerError, ControllerKind, ControllerOutput,
-        ControllerParameter, ControllerParameterError,
+        Controller, ControllerDiagnostic, ControllerError, ControllerKind, ControllerOperation,
+        ControllerOperationError, ControllerOutput, ControllerParameter, ControllerParameterError,
     };
 
     use crate::{
@@ -1373,5 +1415,43 @@ mod tests {
             controller.read("hysteresis"),
             Ok(InstrumentValue::Number(2.0)),
         );
+    }
+
+    #[test]
+    fn rejects_integral_reset_for_on_off_controller() {
+        let mut controller = on_off_controller();
+
+        assert_eq!(
+            controller.reset_integral(),
+            Err(ControllerOperationError::Unsupported {
+                kind: ControllerKind::OnOff,
+                operation: ControllerOperation::ResetIntegral,
+            },),
+        );
+    }
+
+    #[test]
+    fn resets_pid_integral_through_controller_api() {
+        let mut pid = PidController::with_output_limits(
+            100.0,
+            PidGains::new(0.0, 1.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        )
+        .unwrap();
+
+        pid.update(0.0, 90.0).unwrap();
+        pid.update(1.0, 90.0).unwrap();
+
+        assert_eq!(pid.integral(), 10.0);
+
+        let mut controller: Controller = pid.into();
+
+        assert_eq!(controller.reset_integral(), Ok(()),);
+
+        let Controller::Pid(pid) = controller else {
+            panic!("expected PID controller");
+        };
+
+        assert_eq!(pid.integral(), 0.0);
     }
 }

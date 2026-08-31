@@ -2,7 +2,10 @@ use std::{error::Error, fmt};
 
 use crate::instrument::{InstrumentValue, ParameterDescriptor};
 
-use super::{Controller, ControllerError, ControllerOutput, ControllerParameterError};
+use super::{
+    Controller, ControllerError, ControllerOperationError, ControllerOutput,
+    ControllerParameterError,
+};
 
 #[derive(Debug)]
 pub struct ControlLoopDefinition<SignalId, OutputTarget> {
@@ -176,8 +179,8 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         }
     }
 
-    pub fn reset_integral(&mut self) {
-        self.controller.reset_integral();
+    pub fn reset_integral(&mut self) -> Result<(), ControllerOperationError> {
+        self.controller.reset_integral()
     }
 
     pub fn reset(&mut self) {

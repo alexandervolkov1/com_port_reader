@@ -12,8 +12,8 @@ pub use control_loop::{
     ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError, ControlLoopState,
 };
 pub use controller::{
-    Controller, ControllerError, ControllerKind, ControllerOutput, ControllerParameter,
-    ControllerParameterError,
+    Controller, ControllerError, ControllerKind, ControllerOperation, ControllerOperationError,
+    ControllerOutput, ControllerParameter, ControllerParameterError,
 };
 pub use diagnostic::ControllerDiagnostic;
 pub use new_loop::{NewOnOffLoop, NewOnOffLoopError, NewPidLoop, NewPidLoopError};
