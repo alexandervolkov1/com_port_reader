@@ -7,6 +7,7 @@ mod output_conversion;
 mod output_target;
 mod pid;
 mod reference;
+mod reference_runtime;
 mod registry;
 
 pub use control_loop::{
@@ -28,6 +29,7 @@ pub use pid::{
 pub use reference::{
     FixedReference, RampReference, ReferenceKind, ReferenceSource, ReferenceSourceError,
 };
+pub use reference_runtime::{ReferenceRuntime, ReferenceRuntimeError};
 pub use registry::{
     ControlEvent, ControlExecutionError, ControlOutput, ControllerAccessError, ControllerRegistry,
     ControllerRegistryError,
