@@ -80,6 +80,11 @@ enum ProcessingCommand<SignalId> {
         response_sender: Sender<Result<Vec<ParameterDescriptor>, ControllerAccessError>>,
     },
 
+    ControllerDiagnostics {
+        name: String,
+        response_sender: Sender<Result<Vec<ControllerDiagnostic>, ControllerAccessError>>,
+    },
+
     ReadControllerParameter {
         name: String,
         key: String,
@@ -255,6 +260,25 @@ impl<SignalId> ProcessingHandle<SignalId> {
 
         self.command_sender
             .send(ProcessingCommand::ControllerParameters {
+                name: name.into(),
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn controller_diagnostics(
+        &self,
+        name: impl Into<String>,
+    ) -> Result<Vec<ControllerDiagnostic>, ControllerRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::ControllerDiagnostics {
                 name: name.into(),
                 response_sender,
             })
@@ -575,9 +599,9 @@ fn add_controller_diagnostic<SignalId>(
 where
     SignalId: Copy + Eq + Hash,
 {
-    if !registry.contains(&controller) {
-        return Err(AddControllerDiagnosticError::ControllerNotFound(controller));
-    }
+    registry
+        .validate_diagnostic(&controller, diagnostic)
+        .map_err(AddControllerDiagnosticError::Controller)?;
 
     if graph.contains_output(output) || bindings.iter().any(|binding| binding.output == output) {
         return Err(AddControllerDiagnosticError::DuplicateOutput { output });
@@ -658,6 +682,15 @@ fn run_processing<SignalId>(
                 response_sender,
             } => {
                 let result = registry.parameters(&name);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::ControllerDiagnostics {
+                name,
+                response_sender,
+            } => {
+                let result = registry.diagnostics(&name);
 
                 let _ = response_sender.send(result);
             }
@@ -955,7 +988,7 @@ impl Error for AddControlLoopError {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AddControllerDiagnosticError<SignalId> {
-    ControllerNotFound(String),
+    Controller(ControllerAccessError),
     DuplicateOutput { output: SignalId },
     Disconnected,
 }
@@ -966,13 +999,7 @@ where
 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ControllerNotFound(controller) => {
-                write!(
-                    formatter,
-                    "Controller '{controller}' \
-                     was not found",
-                )
-            }
+            Self::Controller(error) => error.fmt(formatter),
 
             Self::DuplicateOutput { output } => {
                 write!(
@@ -990,9 +1017,17 @@ where
     }
 }
 
-impl<SignalId> Error for AddControllerDiagnosticError<SignalId> where
-    SignalId: fmt::Debug + fmt::Display + 'static
+impl<SignalId> Error for AddControllerDiagnosticError<SignalId>
+where
+    SignalId: fmt::Debug + fmt::Display + 'static,
 {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Controller(error) => Some(error),
+
+            Self::DuplicateOutput { .. } | Self::Disconnected => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1097,7 +1132,7 @@ mod tests {
         },
         process_control::{
             ControlEvent, ControlLoopDefinition, ControlOutput, ControlOutputTarget,
-            ControllerDiagnostic, PidController, PidGains, PidOutputLimits,
+            ControllerAccessError, ControllerDiagnostic, PidController, PidGains, PidOutputLimits,
         },
         signal_processing::{
             ProcessedSignal, SignalFilterDefinition, SignalFilterError,
@@ -1851,9 +1886,9 @@ mod tests {
 
         assert_eq!(
             handle.add_controller_diagnostic("missing", ControllerDiagnostic::Integral, 10,),
-            Err(AddControllerDiagnosticError::ControllerNotFound(
-                "missing".to_owned(),
-            ),),
+            Err(AddControllerDiagnosticError::Controller(
+                ControllerAccessError::ControlLoopNotFound("missing".to_owned(),),
+            )),
         );
     }
 

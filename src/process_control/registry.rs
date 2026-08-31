@@ -7,8 +7,9 @@ use crate::{
 
 use super::{
     ControlLoop, ControlLoopDefinition, ControlLoopState, ControlOutputConversionError,
-    ControlOutputParameter, ControlOutputTarget, Controller, ControllerError,
-    ControllerOperationError, ControllerOutput, ControllerParameterError,
+    ControlOutputParameter, ControlOutputTarget, Controller, ControllerDiagnostic,
+    ControllerDiagnosticError, ControllerError, ControllerOperationError, ControllerOutput,
+    ControllerParameterError,
 };
 
 pub struct ControllerRegistry<SignalId> {
@@ -272,6 +273,23 @@ where
 
         events
     }
+
+    pub fn diagnostics(
+        &self,
+        name: &str,
+    ) -> Result<Vec<ControllerDiagnostic>, ControllerAccessError> {
+        Ok(self.control_loop(name)?.diagnostics().to_vec())
+    }
+
+    pub fn validate_diagnostic(
+        &self,
+        name: &str,
+        diagnostic: ControllerDiagnostic,
+    ) -> Result<(), ControllerAccessError> {
+        self.control_loop(name)?
+            .validate_diagnostic(diagnostic)
+            .map_err(Into::into)
+    }
 }
 
 fn output_targets_overlap(left: &ControlOutputTarget, right: &ControlOutputTarget) -> bool {
@@ -426,6 +444,7 @@ pub enum ControllerAccessError {
     ControlLoopNotFound(String),
     Parameter(ControllerParameterError),
     Operation(ControllerOperationError),
+    Diagnostic(ControllerDiagnosticError),
 }
 
 impl fmt::Display for ControllerAccessError {
@@ -442,6 +461,8 @@ impl fmt::Display for ControllerAccessError {
             Self::Parameter(error) => error.fmt(formatter),
 
             Self::Operation(error) => error.fmt(formatter),
+
+            Self::Diagnostic(error) => error.fmt(formatter),
         }
     }
 }
@@ -454,6 +475,8 @@ impl std::error::Error for ControllerAccessError {
             Self::Parameter(error) => Some(error),
 
             Self::Operation(error) => Some(error),
+
+            Self::Diagnostic(error) => Some(error),
         }
     }
 }
@@ -467,6 +490,12 @@ impl From<ControllerOperationError> for ControllerAccessError {
 impl From<ControllerParameterError> for ControllerAccessError {
     fn from(error: ControllerParameterError) -> Self {
         Self::Parameter(error)
+    }
+}
+
+impl From<ControllerDiagnosticError> for ControllerAccessError {
+    fn from(error: ControllerDiagnosticError) -> Self {
+        Self::Diagnostic(error)
     }
 }
 

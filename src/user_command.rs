@@ -9,7 +9,9 @@ use crate::{
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterDescriptor,
     },
-    process_control::{ControlLoopState, ControlOutputTarget, NewOnOffLoop, NewPidLoop},
+    process_control::{
+        ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewOnOffLoop, NewPidLoop,
+    },
     signal_processing::{ControllerRequestError, SignalFilterDefinition},
 };
 
@@ -57,6 +59,11 @@ pub enum UserCommand {
     ControllerParameters {
         name: String,
         response_sender: Sender<Result<Vec<ParameterDescriptor>, ControllerRequestError>>,
+    },
+
+    ControllerDiagnostics {
+        name: String,
+        response_sender: Sender<Result<Vec<ControllerDiagnostic>, ControllerRequestError>>,
     },
 
     ReadControllerParameter {

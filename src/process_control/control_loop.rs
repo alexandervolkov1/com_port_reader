@@ -3,8 +3,8 @@ use std::{error::Error, fmt};
 use crate::instrument::{InstrumentValue, ParameterDescriptor};
 
 use super::{
-    Controller, ControllerError, ControllerOperationError, ControllerOutput,
-    ControllerParameterError,
+    Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerError,
+    ControllerOperationError, ControllerOutput, ControllerParameterError,
 };
 
 #[derive(Debug)]
@@ -185,6 +185,17 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
 
     pub fn reset(&mut self) {
         self.controller.reset();
+    }
+
+    pub fn diagnostics(&self) -> &'static [ControllerDiagnostic] {
+        self.controller.diagnostics()
+    }
+
+    pub fn validate_diagnostic(
+        &self,
+        diagnostic: ControllerDiagnostic,
+    ) -> Result<(), ControllerDiagnosticError> {
+        self.controller.validate_diagnostic(diagnostic)
     }
 }
 

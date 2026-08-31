@@ -883,6 +883,16 @@ impl LuaControllerHandle {
             ));
         }
 
+        let supported = self.controller_diagnostics()?;
+
+        if !supported.contains(&diagnostic) {
+            return Err(mlua::Error::RuntimeError(format!(
+                "Controller '{}' does not \
+                         support diagnostic '{}'",
+                self.name, diagnostic,
+            )));
+        }
+
         let name = options
             .name
             .unwrap_or_else(|| format!("{}_{}", self.name, diagnostic.key(),));
@@ -898,6 +908,32 @@ impl LuaControllerHandle {
             &self.command_sender,
             UserCommand::AddControllerDiagnostic(series),
         )
+    }
+
+    fn controller_diagnostics(&self) -> mlua::Result<Vec<ControllerDiagnostic>> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::ControllerDiagnostics {
+                name: self.name.clone(),
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "diagnostic discovery")
+    }
+
+    fn diagnostics(&self, lua: &Lua) -> mlua::Result<Table> {
+        let diagnostics = self.controller_diagnostics()?;
+
+        let table = lua.create_table_with_capacity(diagnostics.len(), 0)?;
+
+        for (index, diagnostic) in diagnostics.into_iter().enumerate() {
+            table.raw_set((index + 1) as i64, diagnostic.key())?;
+        }
+
+        Ok(table)
     }
 
     fn parameter_descriptor(&self, key: &str) -> mlua::Result<ParameterDescriptor> {
@@ -1701,6 +1737,10 @@ impl UserData for LuaControllerHandle {
             controller.parameters(lua)
         });
 
+        methods.add_method("diagnostics", |lua, controller, ()| {
+            controller.diagnostics(lua)
+        });
+
         methods.add_method("read", |_, controller, key: String| {
             let value = controller.read_parameter(&key)?;
 
@@ -2067,6 +2107,7 @@ fn retry_all_command() -> UserCommand {
 mod controller_handle_tests {
     use crossbeam_channel::unbounded;
     use mlua::Lua;
+    use std::thread;
 
     use super::{LuaControllerHandle, validate_on_off_options};
 
@@ -2093,6 +2134,34 @@ mod controller_handle_tests {
 
         lua.globals().set("controller", userdata).unwrap();
 
+        let responder = thread::spawn(move || {
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::ControllerDiagnostics {
+                name,
+                response_sender,
+            } = command
+            else {
+                panic!("expected ControllerDiagnostics command");
+            };
+
+            assert_eq!(name, "heater");
+
+            response_sender
+                .send(Ok(ControllerDiagnostic::ALL.to_vec()))
+                .unwrap();
+
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::AddControllerDiagnostic(series) = command else {
+                panic!("expected AddControllerDiagnostic command");
+            };
+
+            assert!(command_receiver.try_recv().is_err());
+
+            series
+        });
+
         lua.load(
             r##"
                 controller:add(
@@ -2107,10 +2176,7 @@ mod controller_handle_tests {
         .exec()
         .unwrap();
 
-        let UserCommand::AddControllerDiagnostic(series) = command_receiver.try_recv().unwrap()
-        else {
-            panic!("expected AddControllerDiagnostic command");
-        };
+        let series = responder.join().unwrap();
 
         let (controller, diagnostic, name, connection_id, color) = series.into_parts();
 
@@ -2123,8 +2189,6 @@ mod controller_handle_tests {
         assert_eq!(connection_id, ConnectionId::new(2),);
 
         assert_eq!(color, Some(SeriesColor::new(0x11, 0x22, 0x33,),),);
-
-        assert!(command_receiver.try_recv().is_err());
     }
 
     #[test]
@@ -2143,6 +2207,34 @@ mod controller_handle_tests {
 
         lua.globals().set("controller", userdata).unwrap();
 
+        let responder = thread::spawn(move || {
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::ControllerDiagnostics {
+                name,
+                response_sender,
+            } = command
+            else {
+                panic!("expected ControllerDiagnostics command");
+            };
+
+            assert_eq!(name, "heater");
+
+            response_sender
+                .send(Ok(ControllerDiagnostic::ALL.to_vec()))
+                .unwrap();
+
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::AddControllerDiagnostic(series) = command else {
+                panic!("expected AddControllerDiagnostic command");
+            };
+
+            assert!(command_receiver.try_recv().is_err());
+
+            series
+        });
+
         lua.load(
             r#"
                 controller:add(
@@ -2153,10 +2245,7 @@ mod controller_handle_tests {
         .exec()
         .unwrap();
 
-        let UserCommand::AddControllerDiagnostic(series) = command_receiver.try_recv().unwrap()
-        else {
-            panic!("expected AddControllerDiagnostic command");
-        };
+        let series = responder.join().unwrap();
 
         let (controller, diagnostic, name, connection_id, color) = series.into_parts();
 
@@ -2169,8 +2258,6 @@ mod controller_handle_tests {
         assert_eq!(connection_id, ConnectionId::PRIMARY,);
 
         assert_eq!(color, None);
-
-        assert!(command_receiver.try_recv().is_err());
     }
 
     #[test]
@@ -2375,5 +2462,72 @@ mod controller_handle_tests {
             error.contains("Unknown on/off option 'banana'",),
             "unexpected Lua error: {error}",
         );
+    }
+
+    #[test]
+    fn rejects_unsupported_controller_diagnostic() {
+        let lua = Lua::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        let userdata = lua
+            .create_userdata(LuaControllerHandle {
+                name: "thermostat".to_owned(),
+                connection_id: ConnectionId::PRIMARY,
+                command_sender,
+            })
+            .unwrap();
+
+        lua.globals().set("controller", userdata).unwrap();
+
+        let responder = thread::spawn(move || {
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::ControllerDiagnostics {
+                name,
+                response_sender,
+            } = command
+            else {
+                panic!(
+                    "expected \
+                         ControllerDiagnostics"
+                );
+            };
+
+            assert_eq!(name, "thermostat",);
+
+            response_sender
+                .send(Ok(vec![
+                    ControllerDiagnostic::Setpoint,
+                    ControllerDiagnostic::Output,
+                ]))
+                .unwrap();
+
+            command_receiver
+        });
+
+        let error = lua
+            .load(
+                r#"
+                    controller:add(
+                        "integral"
+                    )
+                "#,
+            )
+            .exec()
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains(
+                "does not support diagnostic \
+                 'integral'",
+            ),
+            "unexpected Lua error: {error}",
+        );
+
+        let command_receiver = responder.join().unwrap();
+
+        assert!(command_receiver.try_recv().is_err());
     }
 }

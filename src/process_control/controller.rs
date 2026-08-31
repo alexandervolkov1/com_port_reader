@@ -228,6 +228,18 @@ const ON_OFF_PARAMETERS: [ControllerParameter; 4] = [
     ControllerParameter::OutputOn,
 ];
 
+const PID_DIAGNOSTICS: &[ControllerDiagnostic] = &[
+    ControllerDiagnostic::Setpoint,
+    ControllerDiagnostic::Proportional,
+    ControllerDiagnostic::Integral,
+    ControllerDiagnostic::Derivative,
+    ControllerDiagnostic::Output,
+    ControllerDiagnostic::UnconstrainedOutput,
+];
+
+const ON_OFF_DIAGNOSTICS: &[ControllerDiagnostic] =
+    &[ControllerDiagnostic::Setpoint, ControllerDiagnostic::Output];
+
 #[derive(Debug)]
 pub enum Controller {
     Pid(PidController),
@@ -429,6 +441,27 @@ impl Controller {
             }
         }
     }
+
+    pub fn diagnostics(&self) -> &'static [ControllerDiagnostic] {
+        match self {
+            Self::Pid(_) => PID_DIAGNOSTICS,
+            Self::OnOff(_) => ON_OFF_DIAGNOSTICS,
+        }
+    }
+
+    pub fn validate_diagnostic(
+        &self,
+        diagnostic: ControllerDiagnostic,
+    ) -> Result<(), ControllerDiagnosticError> {
+        if self.diagnostics().contains(&diagnostic) {
+            return Ok(());
+        }
+
+        Err(ControllerDiagnosticError::Unsupported {
+            kind: self.kind(),
+            diagnostic,
+        })
+    }
 }
 
 fn read_pid_parameter(
@@ -623,7 +656,6 @@ impl From<OnOffController> for Controller {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ControllerOutput {
     Pid { setpoint: f64, output: PidOutput },
-
     OnOff { setpoint: f64, output: OnOffOutput },
 }
 
@@ -710,30 +742,21 @@ impl ControllerOutput {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ControllerParameterError {
     UnknownParameter(String),
-
     DuplicateParameter(ControllerParameter),
-
     UnsupportedParameter {
         kind: ControllerKind,
         parameter: ControllerParameter,
     },
-
     NotReadable(ControllerParameter),
-
     NotWritable(ControllerParameter),
-
     TypeMismatch {
         parameter: ControllerParameter,
         expected: ParameterValueType,
         actual: ParameterValueType,
     },
-
     Pid(PidControllerError),
-
     OnOff(OnOffControllerError),
-
     Gains(PidGainsError),
-
     OutputLimits(PidOutputLimitsError),
 }
 
@@ -856,11 +879,36 @@ impl Error for ControllerError {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ControllerDiagnosticError {
+    Unsupported {
+        kind: ControllerKind,
+        diagnostic: ControllerDiagnostic,
+    },
+}
+
+impl fmt::Display for ControllerDiagnosticError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unsupported { kind, diagnostic } => {
+                write!(
+                    formatter,
+                    "Controller type '{kind}' does not \
+                     support diagnostic '{diagnostic}'",
+                )
+            }
+        }
+    }
+}
+
+impl Error for ControllerDiagnosticError {}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Controller, ControllerDiagnostic, ControllerError, ControllerKind, ControllerOperation,
-        ControllerOperationError, ControllerOutput, ControllerParameter, ControllerParameterError,
+        Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerError,
+        ControllerKind, ControllerOperation, ControllerOperationError, ControllerOutput,
+        ControllerParameter, ControllerParameterError,
     };
 
     use crate::{
@@ -1453,5 +1501,28 @@ mod tests {
         };
 
         assert_eq!(pid.integral(), 0.0);
+    }
+
+    #[test]
+    fn describes_on_off_diagnostics() {
+        let controller = on_off_controller();
+
+        assert_eq!(
+            controller.diagnostics(),
+            &[ControllerDiagnostic::Setpoint, ControllerDiagnostic::Output,],
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_on_off_diagnostic() {
+        let controller = on_off_controller();
+
+        assert_eq!(
+            controller.validate_diagnostic(ControllerDiagnostic::Integral,),
+            Err(ControllerDiagnosticError::Unsupported {
+                kind: ControllerKind::OnOff,
+                diagnostic: ControllerDiagnostic::Integral,
+            },),
+        );
     }
 }

@@ -167,6 +167,15 @@ impl CommandDispatcher {
                 let _ = response_sender.send(result);
             }
 
+            UserCommand::ControllerDiagnostics {
+                name,
+                response_sender,
+            } => {
+                let result = self.processing.controller_diagnostics(&name);
+
+                let _ = response_sender.send(result);
+            }
+
             UserCommand::ReadControllerParameter {
                 name,
                 key,
