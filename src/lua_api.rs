@@ -2109,12 +2109,18 @@ mod controller_handle_tests {
     use mlua::Lua;
     use std::thread;
 
-    use super::{LuaControllerHandle, validate_on_off_options};
+    use super::{LuaControllerHandle, add_on_off_loop, validate_on_off_options};
 
     use crate::{
         connection::ConnectionId,
         data::SeriesColor,
-        process_control::{ControlLoopState, ControllerDiagnostic},
+        instrument::{
+            ParameterAccess, ParameterValueType,
+            virtual_instrument::{
+                VirtualInstrumentId, VirtualParameterDescriptor, VirtualParameterId,
+            },
+        },
+        process_control::{ControlLoopState, ControlOutputTarget, ControllerDiagnostic},
         user_command::UserCommand,
     };
 
@@ -2462,6 +2468,73 @@ mod controller_handle_tests {
             error.contains("Unknown on/off option 'banana'",),
             "unexpected Lua error: {error}",
         );
+    }
+
+    #[test]
+    fn creates_on_off_controller_request() {
+        let lua = Lua::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        let parameter = VirtualParameterDescriptor::new(
+            VirtualParameterId::new(2),
+            "heater_power",
+            "Heater power",
+            ParameterAccess::ReadWrite,
+            ParameterValueType::Number,
+        );
+
+        let output_target = ControlOutputTarget::virtual_instrument(
+            ConnectionId::new(3),
+            VirtualInstrumentId::new(1),
+            &parameter,
+        )
+        .unwrap();
+
+        let options = lua.create_table().unwrap();
+
+        options.set("name", "thermostat").unwrap();
+
+        options.set("input", "temperature").unwrap();
+
+        options.set("setpoint", 150.0).unwrap();
+
+        options.set("hysteresis", 2.0).unwrap();
+
+        options.set("output_off", 0.0).unwrap();
+
+        options.set("output_on", 100.0).unwrap();
+
+        let handle = add_on_off_loop(&command_sender, output_target, &options).unwrap();
+
+        assert_eq!(handle.name, "thermostat",);
+
+        assert_eq!(handle.connection_id, ConnectionId::new(3),);
+
+        let command = command_receiver.try_recv().unwrap();
+
+        let UserCommand::AddOnOffLoop(on_off_loop) = command else {
+            panic!("expected AddOnOffLoop command");
+        };
+
+        assert_eq!(on_off_loop.name(), "thermostat",);
+
+        assert_eq!(on_off_loop.input_name(), "temperature",);
+
+        assert_eq!(on_off_loop.setpoint(), 150.0,);
+
+        assert_eq!(on_off_loop.hysteresis(), 2.0,);
+
+        assert_eq!(on_off_loop.output_off(), 0.0,);
+
+        assert_eq!(on_off_loop.output_on(), 100.0,);
+
+        assert_eq!(
+            on_off_loop.output_target().connection_id(),
+            ConnectionId::new(3),
+        );
+
+        assert!(command_receiver.try_recv().is_err());
     }
 
     #[test]
