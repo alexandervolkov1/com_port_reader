@@ -1,1 +1,1 @@
-D:\rust_projects\com_port_reader\profiles\pid_thermal.lua
+D:\rust_projects\com_port_reader\profiles\on_off_thermal.lua
