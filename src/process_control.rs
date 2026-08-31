@@ -11,7 +11,8 @@ mod reference_runtime;
 mod registry;
 
 pub use control_loop::{
-    ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError, ControlLoopState,
+    ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError, ControlLoopExecutionError,
+    ControlLoopState,
 };
 pub use controller::{
     Controller, ControllerDiagnosticError, ControllerError, ControllerKind, ControllerOperation,

@@ -4,7 +4,8 @@ use crate::instrument::{InstrumentValue, ParameterDescriptor};
 
 use super::{
     Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerError,
-    ControllerOperationError, ControllerOutput, ControllerParameterError,
+    ControllerOperationError, ControllerOutput, ControllerParameterError, ReferenceRuntime,
+    ReferenceRuntimeError, ReferenceSource,
 };
 
 #[derive(Debug)]
@@ -13,6 +14,7 @@ pub struct ControlLoopDefinition<SignalId, OutputTarget> {
     input: SignalId,
     output_target: OutputTarget,
     controller: Controller,
+    reference: Option<ReferenceSource>,
 }
 
 impl<SignalId, OutputTarget> ControlLoopDefinition<SignalId, OutputTarget> {
@@ -30,7 +32,13 @@ impl<SignalId, OutputTarget> ControlLoopDefinition<SignalId, OutputTarget> {
             input,
             output_target,
             controller,
+            reference: None,
         })
+    }
+
+    pub fn with_reference(mut self, reference: ReferenceSource) -> Self {
+        self.reference = Some(reference);
+        self
     }
 
     pub fn name(&self) -> &str {
@@ -49,8 +57,26 @@ impl<SignalId, OutputTarget> ControlLoopDefinition<SignalId, OutputTarget> {
         &self.controller
     }
 
-    fn into_parts(self) -> (String, SignalId, OutputTarget, Controller) {
-        (self.name, self.input, self.output_target, self.controller)
+    pub const fn reference(&self) -> Option<ReferenceSource> {
+        self.reference
+    }
+
+    fn into_parts(
+        self,
+    ) -> (
+        String,
+        SignalId,
+        OutputTarget,
+        Controller,
+        Option<ReferenceSource>,
+    ) {
+        (
+            self.name,
+            self.input,
+            self.output_target,
+            self.controller,
+            self.reference,
+        )
     }
 }
 
@@ -76,18 +102,20 @@ pub struct ControlLoop<SignalId, OutputTarget> {
     input: SignalId,
     output_target: OutputTarget,
     controller: Controller,
+    reference: Option<ReferenceRuntime>,
     state: ControlLoopState,
 }
 
 impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
     pub fn new(definition: ControlLoopDefinition<SignalId, OutputTarget>) -> Self {
-        let (name, input, output_target, controller) = definition.into_parts();
+        let (name, input, output_target, controller, reference) = definition.into_parts();
 
         Self {
             name,
             input,
             output_target,
             controller,
+            reference: reference.map(ReferenceRuntime::new),
             state: ControlLoopState::Running,
         }
     }
@@ -114,6 +142,10 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
 
     pub const fn output_target(&self) -> &OutputTarget {
         &self.output_target
+    }
+
+    pub fn reference_source(&self) -> Option<ReferenceSource> {
+        self.reference.as_ref().map(ReferenceRuntime::source)
     }
 
     pub const fn state(&self) -> ControlLoopState {
@@ -152,15 +184,27 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         &mut self,
         timestamp: f64,
         measurement: f64,
-    ) -> Result<ControllerOutput, ControllerError> {
-        self.controller.update(timestamp, measurement)
+    ) -> Result<ControllerOutput, ControlLoopExecutionError> {
+        if let Some(reference) = &mut self.reference {
+            let setpoint = reference
+                .update(timestamp)
+                .map_err(ControlLoopExecutionError::Reference)?;
+
+            self.controller
+                .write("setpoint", InstrumentValue::Number(setpoint))
+                .map_err(ControlLoopExecutionError::ReferenceApplication)?;
+        }
+
+        self.controller
+            .update(timestamp, measurement)
+            .map_err(ControlLoopExecutionError::Controller)
     }
 
     pub fn process(
         &mut self,
         timestamp: f64,
         measurement: f64,
-    ) -> Result<Option<ControllerOutput>, ControllerError> {
+    ) -> Result<Option<ControllerOutput>, ControlLoopExecutionError> {
         if !self.is_running() {
             return Ok(None);
         }
@@ -175,6 +219,11 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
     pub fn resume(&mut self) {
         if self.state == ControlLoopState::Paused {
             self.controller.resynchronize();
+
+            if let Some(reference) = &mut self.reference {
+                reference.resynchronize();
+            }
+
             self.state = ControlLoopState::Running;
         }
     }
@@ -185,6 +234,10 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
 
     pub fn reset(&mut self) {
         self.controller.reset();
+
+        if let Some(reference) = &mut self.reference {
+            reference.reset();
+        }
     }
 
     pub fn diagnostics(&self) -> &'static [ControllerDiagnostic] {
@@ -196,6 +249,52 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         diagnostic: ControllerDiagnostic,
     ) -> Result<(), ControllerDiagnosticError> {
         self.controller.validate_diagnostic(diagnostic)
+    }
+}
+
+#[derive(Debug)]
+pub enum ControlLoopExecutionError {
+    Reference(ReferenceRuntimeError),
+
+    ReferenceApplication(ControllerParameterError),
+
+    Controller(ControllerError),
+}
+
+impl fmt::Display for ControlLoopExecutionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Reference(error) => {
+                write!(
+                    formatter,
+                    "Reference update failed: \
+                     {error}",
+                )
+            }
+
+            Self::ReferenceApplication(error) => {
+                write!(
+                    formatter,
+                    "Reference value could not \
+                     be applied to controller: \
+                     {error}",
+                )
+            }
+
+            Self::Controller(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for ControlLoopExecutionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Reference(error) => Some(error),
+
+            Self::ReferenceApplication(error) => Some(error),
+
+            Self::Controller(error) => Some(error),
+        }
     }
 }
 
@@ -238,8 +337,10 @@ mod tests {
     use super::{ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError, ControlLoopState};
 
     use crate::instrument::InstrumentValue;
+
     use crate::process_control::{
-        ControllerKind, OnOffController, PidController, PidGains, PidOutputLimits,
+        ControllerKind, OnOffController, PidController, PidGains, PidOutputLimits, ReferenceKind,
+        ReferenceSource,
     };
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -289,6 +390,20 @@ mod tests {
         assert_eq!(*definition.input(), 11,);
 
         assert_eq!(*definition.output_target(), output_target,);
+    }
+
+    #[test]
+    fn stores_control_loop_reference() {
+        let reference = ReferenceSource::ramp(20.0, 100.0, 10.0).unwrap();
+
+        let definition = definition_with(
+            100.0,
+            PidGains::new(1.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        )
+        .with_reference(reference);
+
+        assert_eq!(definition.reference().unwrap().kind(), ReferenceKind::Ramp,);
     }
 
     #[test]
@@ -347,6 +462,35 @@ mod tests {
         assert_close(second.integral().unwrap(), 20.0);
 
         assert_eq!(second.saturated(), Some(true),);
+    }
+
+    #[test]
+    fn updates_controller_setpoint_from_ramp_reference() {
+        let definition = definition_with(
+            999.0,
+            PidGains::new(1.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 200.0).unwrap(),
+        )
+        .with_reference(ReferenceSource::ramp(20.0, 100.0, 10.0).unwrap());
+
+        let mut control_loop = ControlLoop::new(definition);
+
+        let first = control_loop.update(10.0, 0.0).unwrap();
+
+        assert_eq!(first.setpoint(), Some(20.0),);
+
+        let second = control_loop.update(12.0, 0.0).unwrap();
+
+        assert_eq!(second.setpoint(), Some(40.0),);
+
+        let third = control_loop.update(18.0, 0.0).unwrap();
+
+        assert_eq!(third.setpoint(), Some(100.0),);
+
+        assert_eq!(
+            control_loop.read_parameter("setpoint"),
+            Ok(InstrumentValue::Number(100.0,),),
+        );
     }
 
     #[test]
@@ -531,6 +675,40 @@ mod tests {
         let resumed = control_loop.process(101.0, 90.0).unwrap().unwrap();
 
         assert_eq!(resumed.integral(), Some(10.0),);
+    }
+
+    #[test]
+    fn pause_does_not_advance_ramp_reference() {
+        let definition = definition_with(
+            100.0,
+            PidGains::new(1.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 200.0).unwrap(),
+        )
+        .with_reference(ReferenceSource::ramp(20.0, 100.0, 10.0).unwrap());
+
+        let mut control_loop = ControlLoop::new(definition);
+
+        let first = control_loop.process(10.0, 0.0).unwrap().unwrap();
+
+        assert_eq!(first.setpoint(), Some(20.0),);
+
+        let second = control_loop.process(12.0, 0.0).unwrap().unwrap();
+
+        assert_eq!(second.setpoint(), Some(40.0),);
+
+        control_loop.pause();
+
+        assert_eq!(control_loop.process(1_000.0, 0.0).unwrap(), None,);
+
+        control_loop.resume();
+
+        let resumed = control_loop.process(2_000.0, 0.0).unwrap().unwrap();
+
+        assert_eq!(resumed.setpoint(), Some(40.0),);
+
+        let next = control_loop.process(2_001.0, 0.0).unwrap().unwrap();
+
+        assert_eq!(next.setpoint(), Some(50.0),);
     }
 
     #[test]

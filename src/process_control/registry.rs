@@ -6,9 +6,9 @@ use crate::{
 };
 
 use super::{
-    ControlLoop, ControlLoopDefinition, ControlLoopState, ControlOutputConversionError,
-    ControlOutputParameter, ControlOutputTarget, Controller, ControllerDiagnostic,
-    ControllerDiagnosticError, ControllerError, ControllerOperationError, ControllerOutput,
+    ControlLoop, ControlLoopDefinition, ControlLoopExecutionError, ControlLoopState,
+    ControlOutputConversionError, ControlOutputParameter, ControlOutputTarget, Controller,
+    ControllerDiagnostic, ControllerDiagnosticError, ControllerOperationError, ControllerOutput,
     ControllerParameterError,
 };
 
@@ -238,7 +238,7 @@ where
                 }
 
                 Err(source) => {
-                    events.push(ControlEvent::Error(ControlExecutionError::Controller {
+                    events.push(ControlEvent::Error(ControlExecutionError::Loop {
                         loop_name,
                         source,
                     }));
@@ -501,9 +501,9 @@ impl From<ControllerDiagnosticError> for ControllerAccessError {
 
 #[derive(Debug)]
 pub enum ControlExecutionError {
-    Controller {
+    Loop {
         loop_name: String,
-        source: ControllerError,
+        source: ControlLoopExecutionError,
     },
 
     Output {
@@ -515,8 +515,12 @@ pub enum ControlExecutionError {
 impl fmt::Display for ControlExecutionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Controller { loop_name, source } => {
-                write!(formatter, "Control loop '{loop_name}' failed: {source}")
+            Self::Loop { loop_name, source } => {
+                write!(
+                    formatter,
+                    "Control loop '{loop_name}' \
+                     failed: {source}",
+                )
             }
 
             Self::Output { loop_name, source } => {
@@ -532,7 +536,7 @@ impl fmt::Display for ControlExecutionError {
 impl std::error::Error for ControlExecutionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Controller { source, .. } => Some(source),
+            Self::Loop { source, .. } => Some(source),
 
             Self::Output { source, .. } => Some(source),
         }
@@ -552,9 +556,9 @@ mod tests {
             },
         },
         process_control::{
-            ControlLoopDefinition, ControlOutputTarget, ControllerError, ControllerKind,
-            ControllerOperation, ControllerOperationError, OnOffController, PidController,
-            PidControllerError, PidGains, PidOutputLimits,
+            ControlLoopDefinition, ControlLoopExecutionError, ControlOutputTarget, ControllerError,
+            ControllerKind, ControllerOperation, ControllerOperationError, OnOffController,
+            PidController, PidControllerError, PidGains, PidOutputLimits,
         },
     };
 
@@ -866,13 +870,16 @@ mod tests {
         assert!(matches!(
             &events[0],
             ControlEvent::Error(
-                ControlExecutionError::Controller {
+                ControlExecutionError::Loop {
                     loop_name,
                     source:
-                        ControllerError::Pid(
-                            PidControllerError::
-                                NonFiniteTimestamp
-                        ),
+                        ControlLoopExecutionError::
+                            Controller(
+                                ControllerError::Pid(
+                                    PidControllerError::
+                                        NonFiniteTimestamp
+                                )
+                            ),
                 },
             ) if loop_name == "heater"
         ));
