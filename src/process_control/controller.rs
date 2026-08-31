@@ -265,6 +265,7 @@ impl Controller {
         self.supported_parameters()
             .iter()
             .copied()
+            .filter(|parameter| *parameter != ControllerParameter::Setpoint)
             .map(ControllerParameter::descriptor)
             .collect()
     }
@@ -346,6 +347,13 @@ impl Controller {
         self.configure([(key, value)])?;
 
         self.read(key)
+    }
+
+    pub(super) fn apply_reference(
+        &mut self,
+        setpoint: f64,
+    ) -> Result<(), ControllerParameterError> {
+        self.configure([("setpoint", InstrumentValue::Number(setpoint))])
     }
 
     fn supports_parameter(&self, parameter: ControllerParameter) -> bool {
@@ -1059,10 +1067,7 @@ mod tests {
             .map(|parameter| parameter.key)
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            keys,
-            vec!["setpoint", "kp", "ki", "kd", "output_min", "output_max",],
-        );
+        assert_eq!(keys, vec!["kp", "ki", "kd", "output_min", "output_max",],);
     }
 
     #[test]
@@ -1325,10 +1330,7 @@ mod tests {
             .map(|parameter| parameter.key)
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            keys,
-            vec!["setpoint", "hysteresis", "output_off", "output_on",],
-        );
+        assert_eq!(keys, vec!["hysteresis", "output_off", "output_on",],);
     }
 
     #[test]

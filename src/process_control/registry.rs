@@ -6,10 +6,10 @@ use crate::{
 };
 
 use super::{
-    ControlLoop, ControlLoopDefinition, ControlLoopExecutionError, ControlLoopState,
-    ControlOutputConversionError, ControlOutputParameter, ControlOutputTarget, Controller,
-    ControllerDiagnostic, ControllerDiagnosticError, ControllerOperationError, ControllerOutput,
-    ControllerParameterError,
+    ControlLoop, ControlLoopDefinition, ControlLoopExecutionError, ControlLoopParameterError,
+    ControlLoopState, ControlOutputConversionError, ControlOutputParameter, ControlOutputTarget,
+    Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerOperationError,
+    ControllerOutput,
 };
 
 pub struct ControllerRegistry<SignalId> {
@@ -442,7 +442,7 @@ impl std::error::Error for ControllerRegistryError {}
 #[derive(Clone, Debug, PartialEq)]
 pub enum ControllerAccessError {
     ControlLoopNotFound(String),
-    Parameter(ControllerParameterError),
+    Parameter(ControlLoopParameterError),
     Operation(ControllerOperationError),
     Diagnostic(ControllerDiagnosticError),
 }
@@ -487,8 +487,8 @@ impl From<ControllerOperationError> for ControllerAccessError {
     }
 }
 
-impl From<ControllerParameterError> for ControllerAccessError {
-    fn from(error: ControllerParameterError) -> Self {
+impl From<ControlLoopParameterError> for ControllerAccessError {
+    fn from(error: ControlLoopParameterError) -> Self {
         Self::Parameter(error)
     }
 }

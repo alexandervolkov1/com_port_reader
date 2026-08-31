@@ -30,6 +30,10 @@ impl ReferenceRuntime {
         self.previous_timestamp
     }
 
+    pub fn current_value(&self) -> Result<f64, ReferenceSourceError> {
+        self.source.value_at_elapsed(self.elapsed_seconds)
+    }
+
     pub fn update(&mut self, timestamp: f64) -> Result<f64, ReferenceRuntimeError> {
         if !timestamp.is_finite() {
             return Err(ReferenceRuntimeError::NonFiniteTimestamp);

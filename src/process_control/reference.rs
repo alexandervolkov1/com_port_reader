@@ -1,5 +1,41 @@
 use std::{error::Error, fmt};
 
+use crate::instrument::{ParameterAccess, ParameterDescriptor, ParameterRange, ParameterValueType};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReferenceParameter {
+    Setpoint,
+}
+
+impl ReferenceParameter {
+    pub const ALL: [Self; 1] = [Self::Setpoint];
+
+    pub const fn key(self) -> &'static str {
+        self.descriptor().key
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|parameter| parameter.key() == key)
+    }
+
+    pub const fn descriptor(self) -> ParameterDescriptor {
+        match self {
+            Self::Setpoint => ParameterDescriptor {
+                key: "setpoint",
+                name: "setpoint",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -f64::MAX,
+                    maximum: f64::MAX,
+                },
+            },
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReferenceKind {
     Fixed,

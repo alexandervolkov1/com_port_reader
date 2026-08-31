@@ -4,8 +4,8 @@ use crate::instrument::{InstrumentValue, ParameterDescriptor};
 
 use super::{
     Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerError,
-    ControllerOperationError, ControllerOutput, ControllerParameterError, ReferenceRuntime,
-    ReferenceRuntimeError, ReferenceSource,
+    ControllerOperationError, ControllerOutput, ControllerParameterError, ReferenceParameter,
+    ReferenceRuntime, ReferenceRuntimeError, ReferenceSource, ReferenceSourceError,
 };
 
 #[derive(Debug)]
@@ -157,27 +157,64 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
     }
 
     pub fn parameters(&self) -> Vec<ParameterDescriptor> {
-        self.controller.parameters()
+        let mut parameters = vec![ReferenceParameter::Setpoint.descriptor()];
+
+        parameters.extend(self.controller.parameters());
+
+        parameters
     }
 
-    pub fn read_parameter(&self, key: &str) -> Result<InstrumentValue, ControllerParameterError> {
-        self.controller.read(key)
+    pub fn read_parameter(&self, key: &str) -> Result<InstrumentValue, ControlLoopParameterError> {
+        if ReferenceParameter::from_key(key).is_some() {
+            if let Some(reference) = &self.reference {
+                let value = reference
+                    .current_value()
+                    .map_err(ControlLoopParameterError::Reference)?;
+
+                return Ok(InstrumentValue::Number(value));
+            }
+
+            return self.controller.read(key).map_err(Into::into);
+        }
+
+        self.controller.read(key).map_err(Into::into)
     }
 
     pub fn write_parameter(
         &mut self,
         key: &str,
         value: InstrumentValue,
-    ) -> Result<InstrumentValue, ControllerParameterError> {
-        self.controller.write(key, value)
+    ) -> Result<InstrumentValue, ControlLoopParameterError> {
+        if let Some(parameter) = ReferenceParameter::from_key(key) {
+            if self.reference.is_some() {
+                return Err(ControlLoopParameterError::ManagedByReference(parameter));
+            }
+
+            return self.controller.write(key, value).map_err(Into::into);
+        }
+
+        self.controller.write(key, value).map_err(Into::into)
     }
 
-    pub fn configure<I, K>(&mut self, updates: I) -> Result<(), ControllerParameterError>
+    pub fn configure<I, K>(&mut self, updates: I) -> Result<(), ControlLoopParameterError>
     where
         I: IntoIterator<Item = (K, InstrumentValue)>,
         K: AsRef<str>,
     {
-        self.controller.configure(updates)
+        let updates = updates
+            .into_iter()
+            .map(|(key, value)| (key.as_ref().to_owned(), value))
+            .collect::<Vec<_>>();
+
+        if self.reference.is_some() {
+            for (key, _) in &updates {
+                if let Some(parameter) = ReferenceParameter::from_key(key) {
+                    return Err(ControlLoopParameterError::ManagedByReference(parameter));
+                }
+            }
+        }
+
+        self.controller.configure(updates).map_err(Into::into)
     }
 
     pub fn update(
@@ -191,7 +228,7 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
                 .map_err(ControlLoopExecutionError::Reference)?;
 
             self.controller
-                .write("setpoint", InstrumentValue::Number(setpoint))
+                .apply_reference(setpoint)
                 .map_err(ControlLoopExecutionError::ReferenceApplication)?;
         }
 
@@ -249,6 +286,59 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         diagnostic: ControllerDiagnostic,
     ) -> Result<(), ControllerDiagnosticError> {
         self.controller.validate_diagnostic(diagnostic)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ControlLoopParameterError {
+    ManagedByReference(ReferenceParameter),
+
+    Reference(ReferenceSourceError),
+
+    Controller(ControllerParameterError),
+}
+
+impl fmt::Display for ControlLoopParameterError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ManagedByReference(parameter) => {
+                write!(
+                    formatter,
+                    "Reference parameter '{}' \
+                     is managed by an external \
+                     reference source",
+                    parameter.key(),
+                )
+            }
+
+            Self::Reference(error) => error.fmt(formatter),
+
+            Self::Controller(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for ControlLoopParameterError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::ManagedByReference(_) => None,
+
+            Self::Reference(error) => Some(error),
+
+            Self::Controller(error) => Some(error),
+        }
+    }
+}
+
+impl From<ControllerParameterError> for ControlLoopParameterError {
+    fn from(error: ControllerParameterError) -> Self {
+        Self::Controller(error)
+    }
+}
+
+impl From<ReferenceSourceError> for ControlLoopParameterError {
+    fn from(error: ReferenceSourceError) -> Self {
+        Self::Reference(error)
     }
 }
 
@@ -334,13 +424,16 @@ impl Error for ControlLoopDefinitionError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError, ControlLoopState};
+    use super::{
+        ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError, ControlLoopParameterError,
+        ControlLoopState,
+    };
 
     use crate::instrument::InstrumentValue;
 
     use crate::process_control::{
         ControllerKind, OnOffController, PidController, PidGains, PidOutputLimits, ReferenceKind,
-        ReferenceSource,
+        ReferenceParameter, ReferenceSource,
     };
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -593,6 +686,62 @@ mod tests {
         assert_eq!(
             control_loop.read_parameter("setpoint",),
             Ok(InstrumentValue::Number(120.0,),),
+        );
+    }
+
+    #[test]
+    fn rejects_setpoint_write_when_reference_is_active() {
+        let definition = definition_with(
+            100.0,
+            PidGains::new(2.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        )
+        .with_reference(ReferenceSource::ramp(20.0, 100.0, 10.0).unwrap());
+
+        let mut control_loop = ControlLoop::new(definition);
+
+        assert_eq!(
+            control_loop.write_parameter("setpoint", InstrumentValue::Number(120.0,),),
+            Err(ControlLoopParameterError::ManagedByReference(
+                ReferenceParameter::Setpoint,
+            ),),
+        );
+
+        assert_eq!(
+            control_loop.read_parameter("setpoint",),
+            Ok(InstrumentValue::Number(20.0,),),
+        );
+    }
+
+    #[test]
+    fn rejects_mixed_configuration_when_reference_is_active() {
+        let definition = definition_with(
+            100.0,
+            PidGains::new(2.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        )
+        .with_reference(ReferenceSource::fixed(150.0).unwrap());
+
+        let mut control_loop = ControlLoop::new(definition);
+
+        assert_eq!(
+            control_loop.configure([
+                ("kp", InstrumentValue::Number(3.0,),),
+                ("setpoint", InstrumentValue::Number(120.0,),),
+            ]),
+            Err(ControlLoopParameterError::ManagedByReference(
+                ReferenceParameter::Setpoint,
+            ),),
+        );
+
+        assert_eq!(
+            control_loop.read_parameter("kp"),
+            Ok(InstrumentValue::Number(2.0,),),
+        );
+
+        assert_eq!(
+            control_loop.read_parameter("setpoint",),
+            Ok(InstrumentValue::Number(150.0,),),
         );
     }
 

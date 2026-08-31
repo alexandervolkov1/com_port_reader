@@ -12,7 +12,7 @@ mod registry;
 
 pub use control_loop::{
     ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError, ControlLoopExecutionError,
-    ControlLoopState,
+    ControlLoopParameterError, ControlLoopState,
 };
 pub use controller::{
     Controller, ControllerDiagnosticError, ControllerError, ControllerKind, ControllerOperation,
@@ -28,7 +28,8 @@ pub use pid::{
     PidOutputLimitsError,
 };
 pub use reference::{
-    FixedReference, RampReference, ReferenceKind, ReferenceSource, ReferenceSourceError,
+    FixedReference, RampReference, ReferenceKind, ReferenceParameter, ReferenceSource,
+    ReferenceSourceError,
 };
 pub use reference_runtime::{ReferenceRuntime, ReferenceRuntimeError};
 pub use registry::{
