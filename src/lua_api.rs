@@ -20,8 +20,8 @@ use crate::{
     },
     lua_application_script::LuaApplicationEvent,
     process_control::{
-        ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewPidLoop, PidGains,
-        PidOutputLimits,
+        ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewOnOffLoop, NewPidLoop,
+        PidGains, PidOutputLimits,
     },
     signal_processing::SignalFilterDefinition,
     user_command::UserCommand,
@@ -522,6 +522,59 @@ fn add_pid_loop(
     })
 }
 
+fn add_on_off_loop(
+    command_sender: &Sender<UserCommand>,
+    output_target: ControlOutputTarget,
+    options: &Table,
+) -> mlua::Result<LuaControllerHandle> {
+    validate_on_off_options(options)?;
+
+    let connection_id = output_target.connection_id();
+
+    let name = options
+        .get::<Option<String>>("name")?
+        .ok_or_else(|| mlua::Error::RuntimeError("On/off option 'name' is required".to_owned()))?;
+
+    let input_name = options
+        .get::<Option<String>>("input")?
+        .ok_or_else(|| mlua::Error::RuntimeError("On/off option 'input' is required".to_owned()))?;
+
+    let setpoint = options.get::<Option<f64>>("setpoint")?.ok_or_else(|| {
+        mlua::Error::RuntimeError("On/off option 'setpoint' is required".to_owned())
+    })?;
+
+    let hysteresis = options.get::<Option<f64>>("hysteresis")?.ok_or_else(|| {
+        mlua::Error::RuntimeError("On/off option 'hysteresis' is required".to_owned())
+    })?;
+
+    let output_off = options.get::<Option<f64>>("output_off")?.ok_or_else(|| {
+        mlua::Error::RuntimeError("On/off option 'output_off' is required".to_owned())
+    })?;
+
+    let output_on = options.get::<Option<f64>>("output_on")?.ok_or_else(|| {
+        mlua::Error::RuntimeError("On/off option 'output_on' is required".to_owned())
+    })?;
+
+    let on_off_loop = NewOnOffLoop::new(
+        name.clone(),
+        input_name,
+        output_target,
+        setpoint,
+        hysteresis,
+        output_off,
+        output_on,
+    )
+    .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+    send_application_command(command_sender, UserCommand::AddOnOffLoop(on_off_loop))?;
+
+    Ok(LuaControllerHandle {
+        name,
+        connection_id,
+        command_sender: command_sender.clone(),
+    })
+}
+
 fn validate_pid_options(options: &Table) -> mlua::Result<()> {
     for pair in options.pairs::<String, Value>() {
         let (key, _) = pair?;
@@ -532,6 +585,24 @@ fn validate_pid_options(options: &Table) -> mlua::Result<()> {
         ) {
             return Err(mlua::Error::RuntimeError(format!(
                 "Unknown PID option '{key}'",
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_on_off_options(options: &Table) -> mlua::Result<()> {
+    for pair in options.pairs::<String, Value>() {
+        let (key, _) = pair?;
+
+        if !matches!(
+            key.as_str(),
+            "name" | "input" | "setpoint" | "hysteresis" | "output_off" | "output_on"
+        ) {
+            return Err(mlua::Error::RuntimeError(format!(
+                "Unknown on/off option \
+                         '{key}'",
             )));
         }
     }
@@ -1737,6 +1808,25 @@ impl UserData for LuaVirtualInstrument {
                 lua.create_userdata(controller)
             },
         );
+
+        methods.add_method(
+            "on_off",
+            |lua, instrument, (parameter_key, options): (String, Table)| {
+                let parameter = instrument.parameter(&parameter_key)?;
+
+                let output_target = ControlOutputTarget::virtual_instrument(
+                    instrument.connection_id,
+                    instrument.descriptor.id(),
+                    parameter,
+                )
+                .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+                let controller =
+                    add_on_off_loop(&instrument.command_sender, output_target, &options)?;
+
+                lua.create_userdata(controller)
+            },
+        );
     }
 }
 
@@ -1801,6 +1891,27 @@ impl UserData for LuaMetakon5x3 {
                 .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
                 let handle = add_pid_loop(&controller.command_sender, output_target, &options)?;
+
+                lua.create_userdata(handle)
+            },
+        );
+
+        methods.add_method(
+            "on_off",
+            |lua, controller, (parameter_key, options): (String, Table)| {
+                let parameter = metakon_parameter_from_key(&parameter_key)?;
+
+                let scale = controller.parameter_scale(parameter);
+
+                let output_target = ControlOutputTarget::metakon_5x3(
+                    controller.connection_id,
+                    controller.instrument,
+                    parameter,
+                    scale,
+                )
+                .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+                let handle = add_on_off_loop(&controller.command_sender, output_target, &options)?;
 
                 lua.create_userdata(handle)
             },
@@ -1957,7 +2068,7 @@ mod controller_handle_tests {
     use crossbeam_channel::unbounded;
     use mlua::Lua;
 
-    use super::LuaControllerHandle;
+    use super::{LuaControllerHandle, validate_on_off_options};
 
     use crate::{
         connection::ConnectionId,
@@ -2248,5 +2359,21 @@ mod controller_handle_tests {
         .unwrap();
 
         responder.join().unwrap();
+    }
+
+    #[test]
+    fn rejects_unknown_on_off_option() {
+        let lua = Lua::new();
+
+        let options = lua.create_table().unwrap();
+
+        options.set("banana", 42).unwrap();
+
+        let error = validate_on_off_options(&options).unwrap_err().to_string();
+
+        assert!(
+            error.contains("Unknown on/off option 'banana'",),
+            "unexpected Lua error: {error}",
+        );
     }
 }
