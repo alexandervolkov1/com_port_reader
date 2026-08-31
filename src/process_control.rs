@@ -6,6 +6,7 @@ mod on_off;
 mod output_conversion;
 mod output_target;
 mod pid;
+mod reference;
 mod registry;
 
 pub use control_loop::{
@@ -23,6 +24,9 @@ pub use output_target::{ControlOutputParameter, ControlOutputTarget, ControlOutp
 pub use pid::{
     PidController, PidControllerError, PidGains, PidGainsError, PidOutput, PidOutputLimits,
     PidOutputLimitsError,
+};
+pub use reference::{
+    FixedReference, RampReference, ReferenceKind, ReferenceSource, ReferenceSourceError,
 };
 pub use registry::{
     ControlEvent, ControlExecutionError, ControlOutput, ControllerAccessError, ControllerRegistry,
