@@ -3,7 +3,7 @@ use std::fmt;
 use crate::{
     connection::ConnectionId,
     instrument::{
-        ParameterAccess, ParameterRange, ParameterValueType,
+        InstrumentParameterAddress, ParameterAccess, ParameterRange, ParameterValueType,
         metakon_5x3::{Metakon5x3, Metakon5x3Register},
         virtual_instrument::{VirtualInstrumentId, VirtualParameterDescriptor, VirtualParameterId},
     },
@@ -66,6 +66,22 @@ impl ControlOutputTarget {
 
     pub const fn parameter(&self) -> ControlOutputParameter {
         self.parameter
+    }
+
+    pub const fn parameter_address(&self) -> InstrumentParameterAddress {
+        match self.parameter {
+            ControlOutputParameter::Metakon5x3 {
+                instrument,
+                parameter,
+                ..
+            } => InstrumentParameterAddress::metakon_5x3(instrument, parameter),
+
+            ControlOutputParameter::VirtualInstrument {
+                instrument,
+                parameter,
+                ..
+            } => InstrumentParameterAddress::virtual_instrument(instrument, parameter),
+        }
     }
 
     pub fn value_type(&self) -> ParameterValueType {

@@ -165,6 +165,21 @@ impl InstrumentReadRequest {
         }
     }
 
+    pub const fn parameter_address(&self) -> InstrumentParameterAddress {
+        match self {
+            Self::Metakon5x3 {
+                instrument,
+                parameter,
+                ..
+            } => InstrumentParameterAddress::metakon_5x3(*instrument, *parameter),
+
+            Self::VirtualInstrument {
+                instrument,
+                parameter,
+            } => InstrumentParameterAddress::virtual_instrument(*instrument, *parameter),
+        }
+    }
+
     pub const fn scale(&self) -> f64 {
         match self {
             Self::Metakon5x3 { scale, .. } => *scale,
@@ -190,33 +205,7 @@ impl InstrumentReadRequest {
     }
 
     pub fn refers_to_same_parameter(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                Self::Metakon5x3 {
-                    instrument: left_instrument,
-                    parameter: left_parameter,
-                    ..
-                },
-                Self::Metakon5x3 {
-                    instrument: right_instrument,
-                    parameter: right_parameter,
-                    ..
-                },
-            ) => left_instrument == right_instrument && left_parameter == right_parameter,
-
-            (
-                Self::VirtualInstrument {
-                    instrument: left_instrument,
-                    parameter: left_parameter,
-                },
-                Self::VirtualInstrument {
-                    instrument: right_instrument,
-                    parameter: right_parameter,
-                },
-            ) => left_instrument == right_instrument && left_parameter == right_parameter,
-
-            _ => false,
-        }
+        self.parameter_address() == other.parameter_address()
     }
 }
 
@@ -293,6 +282,22 @@ impl InstrumentWriteRequest {
             instrument,
             parameter,
             value,
+        }
+    }
+
+    pub const fn parameter_address(&self) -> InstrumentParameterAddress {
+        match self {
+            Self::Metakon5x3 {
+                instrument,
+                parameter,
+                ..
+            } => InstrumentParameterAddress::metakon_5x3(*instrument, parameter.register()),
+
+            Self::VirtualInstrument {
+                instrument,
+                parameter,
+                ..
+            } => InstrumentParameterAddress::virtual_instrument(*instrument, *parameter),
         }
     }
 

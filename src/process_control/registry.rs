@@ -7,10 +7,9 @@ use crate::{
 
 use super::{
     ControlLoop, ControlLoopDefinition, ControlLoopExecutionError, ControlLoopParameterError,
-    ControlLoopReferenceError, ControlLoopState, ControlOutputConversionError,
-    ControlOutputParameter, ControlOutputTarget, Controller, ControllerDiagnostic,
-    ControllerDiagnosticError, ControllerOperationError, ControllerOutput, ReferenceKind,
-    ReferenceSource,
+    ControlLoopReferenceError, ControlLoopState, ControlOutputConversionError, ControlOutputTarget,
+    Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerOperationError,
+    ControllerOutput, ReferenceKind, ReferenceSource,
 };
 
 pub struct ControllerRegistry<SignalId> {
@@ -353,43 +352,8 @@ where
 }
 
 fn output_targets_overlap(left: &ControlOutputTarget, right: &ControlOutputTarget) -> bool {
-    if left.connection_id() != right.connection_id() {
-        return false;
-    }
-
-    match (left.parameter(), right.parameter()) {
-        (
-            ControlOutputParameter::Metakon5x3 {
-                instrument: left_instrument,
-
-                parameter: left_parameter,
-                ..
-            },
-            ControlOutputParameter::Metakon5x3 {
-                instrument: right_instrument,
-
-                parameter: right_parameter,
-                ..
-            },
-        ) => left_instrument == right_instrument && left_parameter == right_parameter,
-
-        (
-            ControlOutputParameter::VirtualInstrument {
-                instrument: left_instrument,
-
-                parameter: left_parameter,
-                ..
-            },
-            ControlOutputParameter::VirtualInstrument {
-                instrument: right_instrument,
-
-                parameter: right_parameter,
-                ..
-            },
-        ) => left_instrument == right_instrument && left_parameter == right_parameter,
-
-        _ => false,
-    }
+    left.connection_id() == right.connection_id()
+        && left.parameter_address() == right.parameter_address()
 }
 
 fn validate_controller_output(
