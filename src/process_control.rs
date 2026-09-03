@@ -28,8 +28,8 @@ pub use pid::{
     PidOutputLimitsError,
 };
 pub use reference::{
-    FixedReference, RampReference, ReferenceKind, ReferenceParameter, ReferenceSource,
-    ReferenceSourceError,
+    FixedReference, RampReference, ReferenceKind, ReferenceParameter, ReferenceParameterError,
+    ReferenceSource, ReferenceSourceError, ReferenceSourceParameter,
 };
 pub use reference_runtime::{ReferenceRuntime, ReferenceRuntimeError};
 pub use registry::{
