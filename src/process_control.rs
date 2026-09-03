@@ -12,7 +12,7 @@ mod registry;
 
 pub use control_loop::{
     ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError, ControlLoopExecutionError,
-    ControlLoopParameterError, ControlLoopState,
+    ControlLoopParameterError, ControlLoopReferenceError, ControlLoopState,
 };
 pub use controller::{
     Controller, ControllerDiagnosticError, ControllerError, ControllerKind, ControllerOperation,

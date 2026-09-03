@@ -4,8 +4,9 @@ use crate::instrument::{InstrumentValue, ParameterDescriptor};
 
 use super::{
     Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerError,
-    ControllerOperationError, ControllerOutput, ControllerParameterError, ReferenceParameter,
-    ReferenceRuntime, ReferenceRuntimeError, ReferenceSource, ReferenceSourceError,
+    ControllerOperationError, ControllerOutput, ControllerParameterError, ReferenceKind,
+    ReferenceParameter, ReferenceParameterError, ReferenceRuntime, ReferenceRuntimeError,
+    ReferenceSource, ReferenceSourceError,
 };
 
 #[derive(Debug)]
@@ -146,6 +147,68 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
 
     pub fn reference_source(&self) -> Option<ReferenceSource> {
         self.reference.as_ref().map(ReferenceRuntime::source)
+    }
+
+    pub fn reference_kind(&self) -> Option<ReferenceKind> {
+        self.reference
+            .as_ref()
+            .map(|reference| reference.source().kind())
+    }
+
+    pub fn reference_parameters(&self) -> Vec<ParameterDescriptor> {
+        self.reference
+            .as_ref()
+            .map(ReferenceRuntime::parameters)
+            .unwrap_or_default()
+    }
+
+    pub fn read_reference_parameter(
+        &self,
+        key: &str,
+    ) -> Result<InstrumentValue, ControlLoopReferenceError> {
+        self.reference
+            .as_ref()
+            .ok_or(ControlLoopReferenceError::NotConfigured)?
+            .read(key)
+            .map_err(Into::into)
+    }
+
+    pub fn write_reference_parameter(
+        &mut self,
+        key: &str,
+        value: InstrumentValue,
+    ) -> Result<InstrumentValue, ControlLoopReferenceError> {
+        self.reference
+            .as_mut()
+            .ok_or(ControlLoopReferenceError::NotConfigured)?
+            .write(key, value)
+            .map_err(Into::into)
+    }
+
+    pub fn configure_reference<I, K>(&mut self, updates: I) -> Result<(), ControlLoopReferenceError>
+    where
+        I: IntoIterator<Item = (K, InstrumentValue)>,
+        K: AsRef<str>,
+    {
+        self.reference
+            .as_mut()
+            .ok_or(ControlLoopReferenceError::NotConfigured)?
+            .configure(updates)
+            .map_err(Into::into)
+    }
+
+    pub fn set_reference(&mut self, source: ReferenceSource) {
+        match &mut self.reference {
+            Some(reference) => {
+                reference.set_source(source);
+            }
+
+            None => {
+                self.reference = Some(ReferenceRuntime::new(source));
+            }
+        }
+
+        self.controller.resynchronize();
     }
 
     pub const fn state(&self) -> ControlLoopState {
@@ -290,6 +353,42 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum ControlLoopReferenceError {
+    NotConfigured,
+
+    Parameter(ReferenceParameterError),
+}
+
+impl fmt::Display for ControlLoopReferenceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotConfigured => formatter.write_str(
+                "Control loop has no \
+                     reference source",
+            ),
+
+            Self::Parameter(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl Error for ControlLoopReferenceError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::NotConfigured => None,
+
+            Self::Parameter(error) => Some(error),
+        }
+    }
+}
+
+impl From<ReferenceParameterError> for ControlLoopReferenceError {
+    fn from(error: ReferenceParameterError) -> Self {
+        Self::Parameter(error)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum ControlLoopParameterError {
     ManagedByReference(ReferenceParameter),
 
@@ -426,7 +525,7 @@ impl Error for ControlLoopDefinitionError {}
 mod tests {
     use super::{
         ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError, ControlLoopParameterError,
-        ControlLoopState,
+        ControlLoopReferenceError, ControlLoopState,
     };
 
     use crate::instrument::InstrumentValue;
@@ -930,5 +1029,127 @@ mod tests {
             control_loop.write_parameter("hysteresis", InstrumentValue::Number(5.0),),
             Ok(InstrumentValue::Number(5.0)),
         );
+    }
+
+    #[test]
+    fn exposes_control_loop_reference() {
+        let definition = definition_with(
+            100.0,
+            PidGains::new(1.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        )
+        .with_reference(ReferenceSource::ramp(20.0, 150.0, 2.0).unwrap());
+
+        let control_loop = ControlLoop::new(definition);
+
+        assert_eq!(control_loop.reference_kind(), Some(ReferenceKind::Ramp),);
+
+        let keys = control_loop
+            .reference_parameters()
+            .into_iter()
+            .map(|parameter| parameter.key)
+            .collect::<Vec<_>>();
+
+        assert_eq!(keys, vec!["start", "target", "rate",],);
+
+        assert_eq!(
+            control_loop.read_reference_parameter("target",),
+            Ok(InstrumentValue::Number(150.0,),),
+        );
+    }
+
+    #[test]
+    fn reports_missing_reference() {
+        let mut control_loop = ControlLoop::new(definition_with(
+            100.0,
+            PidGains::new(1.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        ));
+
+        assert_eq!(control_loop.reference_kind(), None,);
+
+        assert!(control_loop.reference_parameters().is_empty(),);
+
+        assert_eq!(
+            control_loop.read_reference_parameter("target",),
+            Err(ControlLoopReferenceError::NotConfigured,),
+        );
+
+        assert_eq!(
+            control_loop.write_reference_parameter("target", InstrumentValue::Number(150.0,),),
+            Err(ControlLoopReferenceError::NotConfigured,),
+        );
+    }
+
+    #[test]
+    fn changes_ramp_reference_through_control_loop() {
+        let definition = definition_with(
+            100.0,
+            PidGains::new(1.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 300.0).unwrap(),
+        )
+        .with_reference(ReferenceSource::ramp(20.0, 100.0, 10.0).unwrap());
+
+        let mut control_loop = ControlLoop::new(definition);
+
+        let first = control_loop.update(10.0, 0.0).unwrap();
+
+        assert_eq!(first.setpoint(), Some(20.0),);
+
+        let second = control_loop.update(12.0, 0.0).unwrap();
+
+        assert_eq!(second.setpoint(), Some(40.0),);
+
+        assert_eq!(
+            control_loop.write_reference_parameter("target", InstrumentValue::Number(150.0,),),
+            Ok(InstrumentValue::Number(150.0,),),
+        );
+
+        assert_eq!(
+            control_loop.read_parameter("setpoint",),
+            Ok(InstrumentValue::Number(40.0,),),
+        );
+
+        let restarted = control_loop.update(1_000.0, 0.0).unwrap();
+
+        assert_eq!(restarted.setpoint(), Some(40.0),);
+
+        let next = control_loop.update(1_001.0, 0.0).unwrap();
+
+        assert_eq!(next.setpoint(), Some(50.0),);
+    }
+
+    #[test]
+    fn replaces_control_loop_reference() {
+        let definition = definition_with(
+            100.0,
+            PidGains::new(1.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 300.0).unwrap(),
+        )
+        .with_reference(ReferenceSource::ramp(20.0, 100.0, 10.0).unwrap());
+
+        let mut control_loop = ControlLoop::new(definition);
+
+        control_loop.update(10.0, 0.0).unwrap();
+
+        control_loop.update(12.0, 0.0).unwrap();
+
+        control_loop.set_reference(ReferenceSource::fixed(175.0).unwrap());
+
+        assert_eq!(control_loop.reference_kind(), Some(ReferenceKind::Fixed),);
+
+        assert_eq!(
+            control_loop.read_reference_parameter("value",),
+            Ok(InstrumentValue::Number(175.0,),),
+        );
+
+        assert_eq!(
+            control_loop.read_parameter("setpoint",),
+            Ok(InstrumentValue::Number(175.0,),),
+        );
+
+        let output = control_loop.update(1_000.0, 0.0).unwrap();
+
+        assert_eq!(output.setpoint(), Some(175.0),);
     }
 }
