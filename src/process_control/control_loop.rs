@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use crate::instrument::{InstrumentValue, ParameterDescriptor};
+use crate::instrument::{InstrumentValue, ParameterAccess, ParameterDescriptor};
 
 use super::{
     Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerError,
@@ -220,7 +220,13 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
     }
 
     pub fn parameters(&self) -> Vec<ParameterDescriptor> {
-        let mut parameters = vec![ReferenceParameter::Setpoint.descriptor()];
+        let mut setpoint = ReferenceParameter::Setpoint.descriptor();
+
+        if self.reference.is_some() {
+            setpoint.access = ParameterAccess::ReadOnly;
+        }
+
+        let mut parameters = vec![setpoint];
 
         parameters.extend(self.controller.parameters());
 
@@ -528,7 +534,7 @@ mod tests {
         ControlLoopReferenceError, ControlLoopState,
     };
 
-    use crate::instrument::InstrumentValue;
+    use crate::instrument::{InstrumentValue, ParameterAccess};
 
     use crate::process_control::{
         ControllerKind, OnOffController, PidController, PidGains, PidOutputLimits, ReferenceKind,
@@ -1151,5 +1157,42 @@ mod tests {
         let output = control_loop.update(1_000.0, 0.0).unwrap();
 
         assert_eq!(output.setpoint(), Some(175.0),);
+    }
+
+    #[test]
+    fn exposes_legacy_setpoint_as_writable() {
+        let control_loop = ControlLoop::new(definition_with(
+            100.0,
+            PidGains::new(1.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        ));
+
+        let setpoint = control_loop
+            .parameters()
+            .into_iter()
+            .find(|parameter| parameter.key == "setpoint")
+            .unwrap();
+
+        assert_eq!(setpoint.access, ParameterAccess::ReadWrite,);
+    }
+
+    #[test]
+    fn exposes_reference_managed_setpoint_as_read_only() {
+        let definition = definition_with(
+            100.0,
+            PidGains::new(1.0, 0.0, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        )
+        .with_reference(ReferenceSource::ramp(20.0, 150.0, 2.0).unwrap());
+
+        let control_loop = ControlLoop::new(definition);
+
+        let setpoint = control_loop
+            .parameters()
+            .into_iter()
+            .find(|parameter| parameter.key == "setpoint")
+            .unwrap();
+
+        assert_eq!(setpoint.access, ParameterAccess::ReadOnly,);
     }
 }
