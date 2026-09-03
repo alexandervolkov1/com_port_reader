@@ -14,7 +14,7 @@ pub const DEFAULT_CHANNEL: u8 = 0;
 pub const CHANNEL_TYPE_CODE: u8 = 0x03;
 pub const INTEGRAL_TIME_SCALE: f64 = 1.0 / 60.0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Metakon5x3 {
     device: u8,
     channel: u8,
@@ -120,7 +120,7 @@ impl Default for Metakon5x3 {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Metakon5x3Register {
     ChannelType,
     Measurement,

@@ -4,6 +4,38 @@ use self::virtual_instrument::{VirtualInstrumentId, VirtualParameterId};
 pub mod metakon_5x3;
 pub mod virtual_instrument;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum InstrumentParameterAddress {
+    Metakon5x3 {
+        instrument: Metakon5x3,
+        parameter: Metakon5x3Register,
+    },
+
+    VirtualInstrument {
+        instrument: VirtualInstrumentId,
+        parameter: VirtualParameterId,
+    },
+}
+
+impl InstrumentParameterAddress {
+    pub const fn metakon_5x3(instrument: Metakon5x3, parameter: Metakon5x3Register) -> Self {
+        Self::Metakon5x3 {
+            instrument,
+            parameter,
+        }
+    }
+
+    pub const fn virtual_instrument(
+        instrument: VirtualInstrumentId,
+        parameter: VirtualParameterId,
+    ) -> Self {
+        Self::VirtualInstrument {
+            instrument,
+            parameter,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParameterAccess {
     ReadOnly,
