@@ -7,9 +7,10 @@ use crate::{
 
 use super::{
     ControlLoop, ControlLoopDefinition, ControlLoopExecutionError, ControlLoopParameterError,
-    ControlLoopState, ControlOutputConversionError, ControlOutputParameter, ControlOutputTarget,
-    Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerOperationError,
-    ControllerOutput,
+    ControlLoopReferenceError, ControlLoopState, ControlOutputConversionError,
+    ControlOutputParameter, ControlOutputTarget, Controller, ControllerDiagnostic,
+    ControllerDiagnosticError, ControllerOperationError, ControllerOutput, ReferenceKind,
+    ReferenceSource,
 };
 
 pub struct ControllerRegistry<SignalId> {
@@ -83,6 +84,65 @@ where
             .iter_mut()
             .find(|control_loop| control_loop.name() == name)
             .ok_or_else(|| ControllerAccessError::ControlLoopNotFound(name.to_owned()))
+    }
+
+    pub fn reference_kind(
+        &self,
+        name: &str,
+    ) -> Result<Option<ReferenceKind>, ControllerAccessError> {
+        Ok(self.control_loop(name)?.reference_kind())
+    }
+
+    pub fn reference_parameters(
+        &self,
+        name: &str,
+    ) -> Result<Vec<ParameterDescriptor>, ControllerAccessError> {
+        Ok(self.control_loop(name)?.reference_parameters())
+    }
+
+    pub fn read_reference_parameter(
+        &self,
+        name: &str,
+        key: &str,
+    ) -> Result<InstrumentValue, ControllerAccessError> {
+        self.control_loop(name)?
+            .read_reference_parameter(key)
+            .map_err(Into::into)
+    }
+
+    pub fn write_reference_parameter(
+        &mut self,
+        name: &str,
+        key: &str,
+        value: InstrumentValue,
+    ) -> Result<InstrumentValue, ControllerAccessError> {
+        self.control_loop_mut(name)?
+            .write_reference_parameter(key, value)
+            .map_err(Into::into)
+    }
+
+    pub fn configure_reference<I, K>(
+        &mut self,
+        name: &str,
+        updates: I,
+    ) -> Result<(), ControllerAccessError>
+    where
+        I: IntoIterator<Item = (K, InstrumentValue)>,
+        K: AsRef<str>,
+    {
+        self.control_loop_mut(name)?
+            .configure_reference(updates)
+            .map_err(Into::into)
+    }
+
+    pub fn set_reference(
+        &mut self,
+        name: &str,
+        source: ReferenceSource,
+    ) -> Result<(), ControllerAccessError> {
+        self.control_loop_mut(name)?.set_reference(source);
+
+        Ok(())
     }
 
     pub fn parameters(
@@ -443,6 +503,7 @@ impl std::error::Error for ControllerRegistryError {}
 pub enum ControllerAccessError {
     ControlLoopNotFound(String),
     Parameter(ControlLoopParameterError),
+    Reference(ControlLoopReferenceError),
     Operation(ControllerOperationError),
     Diagnostic(ControllerDiagnosticError),
 }
@@ -460,6 +521,8 @@ impl fmt::Display for ControllerAccessError {
 
             Self::Parameter(error) => error.fmt(formatter),
 
+            Self::Reference(error) => error.fmt(formatter),
+
             Self::Operation(error) => error.fmt(formatter),
 
             Self::Diagnostic(error) => error.fmt(formatter),
@@ -473,6 +536,8 @@ impl std::error::Error for ControllerAccessError {
             Self::ControlLoopNotFound(_) => None,
 
             Self::Parameter(error) => Some(error),
+
+            Self::Reference(error) => Some(error),
 
             Self::Operation(error) => Some(error),
 
@@ -490,6 +555,12 @@ impl From<ControllerOperationError> for ControllerAccessError {
 impl From<ControlLoopParameterError> for ControllerAccessError {
     fn from(error: ControlLoopParameterError) -> Self {
         Self::Parameter(error)
+    }
+}
+
+impl From<ControlLoopReferenceError> for ControllerAccessError {
+    fn from(error: ControlLoopReferenceError) -> Self {
+        Self::Reference(error)
     }
 }
 
@@ -556,9 +627,10 @@ mod tests {
             },
         },
         process_control::{
-            ControlLoopDefinition, ControlLoopExecutionError, ControlOutputTarget, ControllerError,
-            ControllerKind, ControllerOperation, ControllerOperationError, OnOffController,
-            PidController, PidControllerError, PidGains, PidOutputLimits,
+            ControlLoopDefinition, ControlLoopExecutionError, ControlLoopReferenceError,
+            ControlOutputTarget, ControllerError, ControllerKind, ControllerOperation,
+            ControllerOperationError, OnOffController, PidController, PidControllerError, PidGains,
+            PidOutputLimits, ReferenceKind, ReferenceSource,
         },
     };
 
@@ -603,6 +675,15 @@ mod tests {
         .into();
 
         ControlLoopDefinition::new(name, input, target, controller).unwrap()
+    }
+
+    fn ramp_definition(
+        name: &str,
+        input: u64,
+        target: ControlOutputTarget,
+    ) -> ControlLoopDefinition<u64, ControlOutputTarget> {
+        definition(name, input, target)
+            .with_reference(ReferenceSource::ramp(20.0, 150.0, 10.0).unwrap())
     }
 
     fn on_off_definition(
@@ -977,6 +1058,138 @@ mod tests {
             "Controller output range \
              -10..=100 exceeds target range \
              0..=100",
+        );
+    }
+
+    #[test]
+    fn exposes_registered_reference() {
+        let mut registry = ControllerRegistry::new();
+
+        registry
+            .add(ramp_definition("heater", 1, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        assert_eq!(
+            registry.reference_kind("heater"),
+            Ok(Some(ReferenceKind::Ramp,)),
+        );
+
+        let parameters = registry.reference_parameters("heater").unwrap();
+
+        let keys = parameters
+            .into_iter()
+            .map(|parameter| parameter.key)
+            .collect::<Vec<_>>();
+
+        assert_eq!(keys, vec!["start", "target", "rate",],);
+
+        assert_eq!(
+            registry.read_reference_parameter("heater", "target",),
+            Ok(InstrumentValue::Number(150.0,),),
+        );
+    }
+
+    #[test]
+    fn writes_registered_reference_parameter() {
+        let mut registry = ControllerRegistry::new();
+
+        registry
+            .add(ramp_definition("heater", 1, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        assert_eq!(
+            registry
+                .write_reference_parameter("heater", "target", InstrumentValue::Number(200.0,),),
+            Ok(InstrumentValue::Number(200.0,),),
+        );
+
+        assert_eq!(
+            registry.read_reference_parameter("heater", "target",),
+            Ok(InstrumentValue::Number(200.0,),),
+        );
+    }
+
+    #[test]
+    fn configures_registered_reference_atomically() {
+        let mut registry = ControllerRegistry::new();
+
+        registry
+            .add(ramp_definition("heater", 1, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        registry
+            .configure_reference(
+                "heater",
+                [
+                    ("target", InstrumentValue::Number(200.0)),
+                    ("rate", InstrumentValue::Number(5.0)),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(
+            registry.read_reference_parameter("heater", "target",),
+            Ok(InstrumentValue::Number(200.0,),),
+        );
+
+        assert_eq!(
+            registry.read_reference_parameter("heater", "rate",),
+            Ok(InstrumentValue::Number(5.0,),),
+        );
+    }
+
+    #[test]
+    fn replaces_registered_reference() {
+        let mut registry = ControllerRegistry::new();
+
+        registry
+            .add(ramp_definition("heater", 1, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        registry
+            .set_reference("heater", ReferenceSource::fixed(175.0).unwrap())
+            .unwrap();
+
+        assert_eq!(
+            registry.reference_kind("heater"),
+            Ok(Some(ReferenceKind::Fixed,)),
+        );
+
+        assert_eq!(
+            registry.read_reference_parameter("heater", "value",),
+            Ok(InstrumentValue::Number(175.0,),),
+        );
+    }
+
+    #[test]
+    fn reports_missing_registered_reference() {
+        let mut registry = ControllerRegistry::new();
+
+        registry
+            .add(definition("heater", 1, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        assert_eq!(registry.reference_kind("heater"), Ok(None),);
+
+        assert!(registry.reference_parameters("heater",).unwrap().is_empty(),);
+
+        assert_eq!(
+            registry.read_reference_parameter("heater", "target",),
+            Err(ControllerAccessError::Reference(
+                ControlLoopReferenceError::NotConfigured,
+            ),),
+        );
+    }
+
+    #[test]
+    fn reports_missing_reference_control_loop() {
+        let registry = ControllerRegistry::<u64>::new();
+
+        assert_eq!(
+            registry.reference_kind("missing",),
+            Err(ControllerAccessError::ControlLoopNotFound(
+                "missing".to_owned(),
+            ),),
         );
     }
 
