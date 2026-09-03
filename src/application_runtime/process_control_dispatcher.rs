@@ -98,8 +98,11 @@ fn run(
                         let controller_output =
                             output.output;
 
+                        let target =
+                            output.target;
+
                         let connection_id =
-                            output.connection_id;
+                            target.connection_id();
 
                         let request =
                             output.request;

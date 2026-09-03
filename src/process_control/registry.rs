@@ -1,8 +1,8 @@
 use std::fmt;
 
-use crate::{
-    connection::ConnectionId,
-    instrument::{InstrumentValue, InstrumentWriteRequest, ParameterDescriptor, ParameterRange},
+use crate::instrument::{
+    ConnectedParameterAddress, InstrumentValue, InstrumentWriteRequest, ParameterDescriptor,
+    ParameterRange,
 };
 
 use super::{
@@ -327,7 +327,7 @@ where
                 timestamp,
                 measurement,
                 output,
-                connection_id: target.connection_id(),
+                target: target.connected_parameter_address(),
                 request,
             }));
         }
@@ -398,7 +398,7 @@ pub struct ControlOutput<SignalId> {
     pub timestamp: f64,
     pub measurement: f64,
     pub output: ControllerOutput,
-    pub connection_id: ConnectionId,
+    pub target: ConnectedParameterAddress,
     pub request: InstrumentWriteRequest,
 }
 
@@ -809,9 +809,9 @@ mod tests {
     fn creates_output_for_matching_input() {
         let mut registry = ControllerRegistry::new();
 
-        registry
-            .add(definition("heater", 5, virtual_target(2, 7, 4)))
-            .unwrap();
+        let target = virtual_target(2, 7, 4);
+
+        registry.add(definition("heater", 5, target)).unwrap();
 
         let events = registry.process(5, 1_000.0, 80.0);
 
@@ -835,7 +835,7 @@ mod tests {
 
         assert_eq!(output.output.value(), 40.0,);
 
-        assert_eq!(output.connection_id, ConnectionId::new(2),);
+        assert_eq!(output.target, target.connected_parameter_address(),);
 
         assert_eq!(
             output.request,
