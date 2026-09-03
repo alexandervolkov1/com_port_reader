@@ -12,6 +12,7 @@ use crate::instrument::{InstrumentValue, ParameterDescriptor};
 use crate::process_control::{
     ControlEvent, ControlLoopDefinition, ControlLoopState, ControlOutputTarget,
     ControllerAccessError, ControllerDiagnostic, ControllerRegistry, ControllerRegistryError,
+    ReferenceKind, ReferenceSource,
 };
 
 use super::{
@@ -101,6 +102,41 @@ enum ProcessingCommand<SignalId> {
     ConfigureController {
         name: String,
         updates: Vec<(String, InstrumentValue)>,
+        response_sender: Sender<Result<(), ControllerAccessError>>,
+    },
+
+    ReferenceKind {
+        name: String,
+        response_sender: Sender<Result<Option<ReferenceKind>, ControllerAccessError>>,
+    },
+
+    ReferenceParameters {
+        name: String,
+        response_sender: Sender<Result<Vec<ParameterDescriptor>, ControllerAccessError>>,
+    },
+
+    ReadReferenceParameter {
+        name: String,
+        key: String,
+        response_sender: Sender<Result<InstrumentValue, ControllerAccessError>>,
+    },
+
+    WriteReferenceParameter {
+        name: String,
+        key: String,
+        value: InstrumentValue,
+        response_sender: Sender<Result<InstrumentValue, ControllerAccessError>>,
+    },
+
+    ConfigureReference {
+        name: String,
+        updates: Vec<(String, InstrumentValue)>,
+        response_sender: Sender<Result<(), ControllerAccessError>>,
+    },
+
+    SetReference {
+        name: String,
+        source: ReferenceSource,
         response_sender: Sender<Result<(), ControllerAccessError>>,
     },
 
@@ -354,6 +390,139 @@ impl<SignalId> ProcessingHandle<SignalId> {
             .send(ProcessingCommand::ConfigureController {
                 name: name.into(),
                 updates,
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn reference_kind(
+        &self,
+        name: impl Into<String>,
+    ) -> Result<Option<ReferenceKind>, ControllerRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::ReferenceKind {
+                name: name.into(),
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn reference_parameters(
+        &self,
+        name: impl Into<String>,
+    ) -> Result<Vec<ParameterDescriptor>, ControllerRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::ReferenceParameters {
+                name: name.into(),
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn read_reference_parameter(
+        &self,
+        name: impl Into<String>,
+        key: impl Into<String>,
+    ) -> Result<InstrumentValue, ControllerRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::ReadReferenceParameter {
+                name: name.into(),
+                key: key.into(),
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn write_reference_parameter(
+        &self,
+        name: impl Into<String>,
+        key: impl Into<String>,
+        value: InstrumentValue,
+    ) -> Result<InstrumentValue, ControllerRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::WriteReferenceParameter {
+                name: name.into(),
+                key: key.into(),
+                value,
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn configure_reference<I, K>(
+        &self,
+        name: impl Into<String>,
+        updates: I,
+    ) -> Result<(), ControllerRequestError>
+    where
+        I: IntoIterator<Item = (K, InstrumentValue)>,
+        K: AsRef<str>,
+    {
+        let updates = updates
+            .into_iter()
+            .map(|(key, value)| (key.as_ref().to_owned(), value))
+            .collect();
+
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::ConfigureReference {
+                name: name.into(),
+                updates,
+                response_sender,
+            })
+            .map_err(|_| ControllerRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ControllerRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub fn set_reference(
+        &self,
+        name: impl Into<String>,
+        source: ReferenceSource,
+    ) -> Result<(), ControllerRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::SetReference {
+                name: name.into(),
+                source,
                 response_sender,
             })
             .map_err(|_| ControllerRequestError::Disconnected)?;
@@ -722,6 +891,65 @@ fn run_processing<SignalId>(
                 response_sender,
             } => {
                 let result = registry.configure(&name, updates);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::ReferenceKind {
+                name,
+                response_sender,
+            } => {
+                let result = registry.reference_kind(&name);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::ReferenceParameters {
+                name,
+                response_sender,
+            } => {
+                let result = registry.reference_parameters(&name);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::ReadReferenceParameter {
+                name,
+                key,
+                response_sender,
+            } => {
+                let result = registry.read_reference_parameter(&name, &key);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::WriteReferenceParameter {
+                name,
+                key,
+                value,
+                response_sender,
+            } => {
+                let result = registry.write_reference_parameter(&name, &key, value);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::ConfigureReference {
+                name,
+                updates,
+                response_sender,
+            } => {
+                let result = registry.configure_reference(&name, updates);
+
+                let _ = response_sender.send(result);
+            }
+
+            ProcessingCommand::SetReference {
+                name,
+                source,
+                response_sender,
+            } => {
+                let result = registry.set_reference(&name, source);
 
                 let _ = response_sender.send(result);
             }
@@ -1133,6 +1361,7 @@ mod tests {
         process_control::{
             ControlEvent, ControlLoopDefinition, ControlOutput, ControlOutputTarget,
             ControllerAccessError, ControllerDiagnostic, PidController, PidGains, PidOutputLimits,
+            ReferenceKind, ReferenceSource,
         },
         signal_processing::{
             ProcessedSignal, SignalFilterDefinition, SignalFilterError,
@@ -1177,6 +1406,15 @@ mod tests {
         .into();
 
         ControlLoopDefinition::new(name, input, target, controller).unwrap()
+    }
+
+    fn ramp_pid_definition(
+        name: &str,
+        input: u64,
+        parameter: u16,
+    ) -> ControlLoopDefinition<u64, ControlOutputTarget> {
+        pid_definition(name, input, parameter)
+            .with_reference(ReferenceSource::ramp(20.0, 150.0, 10.0).unwrap())
     }
 
     fn receive_pid_output(
@@ -1591,6 +1829,72 @@ mod tests {
     }
 
     #[test]
+    fn manages_reference_through_processing_handle() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        let control_events = service.control_event_receiver();
+
+        handle
+            .add_control_loop(ramp_pid_definition("heater", 1, 1))
+            .unwrap();
+
+        assert_eq!(
+            handle.reference_kind("heater",),
+            Ok(Some(ReferenceKind::Ramp,)),
+        );
+
+        let parameters = handle.reference_parameters("heater").unwrap();
+
+        let keys = parameters
+            .into_iter()
+            .map(|parameter| parameter.key)
+            .collect::<Vec<_>>();
+
+        assert_eq!(keys, vec!["start", "target", "rate",],);
+
+        assert_eq!(
+            handle.read_reference_parameter("heater", "target",),
+            Ok(InstrumentValue::Number(150.0,),),
+        );
+
+        handle.process(1, 10.0, 0.0).unwrap();
+
+        let first = receive_pid_output(&control_events);
+
+        assert_eq!(first.output.setpoint(), Some(20.0),);
+
+        handle.process(1, 12.0, 0.0).unwrap();
+
+        let second = receive_pid_output(&control_events);
+
+        assert_eq!(second.output.setpoint(), Some(40.0),);
+
+        assert_eq!(
+            handle.write_reference_parameter("heater", "target", InstrumentValue::Number(200.0,),),
+            Ok(InstrumentValue::Number(200.0,),),
+        );
+
+        assert_eq!(
+            handle.read_controller_parameter("heater", "setpoint",),
+            Ok(InstrumentValue::Number(40.0,),),
+        );
+
+        handle.process(1, 1_000.0, 0.0).unwrap();
+
+        let restarted = receive_pid_output(&control_events);
+
+        assert_eq!(restarted.output.setpoint(), Some(40.0),);
+
+        handle.process(1, 1_001.0, 0.0).unwrap();
+
+        let next = receive_pid_output(&control_events);
+
+        assert_eq!(next.output.setpoint(), Some(50.0),);
+    }
+
+    #[test]
     fn rejects_duplicate_pid_name() {
         let service = ProcessingService::<u64>::spawn().unwrap();
 
@@ -1604,6 +1908,67 @@ mod tests {
             handle.add_control_loop(pid_definition("heater", 2, 2,),),
             Err(AddControlLoopError::Definition(_)),
         ));
+    }
+
+    #[test]
+    fn configures_reference_through_processing_handle() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        handle
+            .add_control_loop(ramp_pid_definition("heater", 1, 1))
+            .unwrap();
+
+        handle
+            .configure_reference(
+                "heater",
+                [
+                    ("target", InstrumentValue::Number(200.0)),
+                    ("rate", InstrumentValue::Number(5.0)),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(
+            handle.read_reference_parameter("heater", "target",),
+            Ok(InstrumentValue::Number(200.0,),),
+        );
+
+        assert_eq!(
+            handle.read_reference_parameter("heater", "rate",),
+            Ok(InstrumentValue::Number(5.0,),),
+        );
+    }
+
+    #[test]
+    fn replaces_reference_through_processing_handle() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        handle
+            .add_control_loop(ramp_pid_definition("heater", 1, 1))
+            .unwrap();
+
+        handle
+            .set_reference("heater", ReferenceSource::fixed(175.0).unwrap())
+            .unwrap();
+
+        assert_eq!(
+            handle.reference_kind("heater",),
+            Ok(Some(ReferenceKind::Fixed,)),
+        );
+
+        assert_eq!(
+            handle.read_reference_parameter("heater", "value",),
+            Ok(InstrumentValue::Number(175.0,),),
+        );
+
+        assert_eq!(
+            handle.read_controller_parameter("heater", "setpoint",),
+            Ok(InstrumentValue::Number(175.0,),),
+        );
     }
 
     #[test]
