@@ -694,6 +694,12 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
         | UserCommand::ControllerDiagnostics { .. }
         | UserCommand::ReadControllerParameter { .. }
         | UserCommand::ConfigureController { .. }
+        | UserCommand::ControllerReferenceKind { .. }
+        | UserCommand::ControllerReferenceParameters { .. }
+        | UserCommand::ReadControllerReferenceParameter { .. }
+        | UserCommand::WriteControllerReferenceParameter { .. }
+        | UserCommand::ConfigureControllerReference { .. }
+        | UserCommand::SetControllerReference { .. }
         | UserCommand::SetControllerInput { .. }
         | UserCommand::ControllerState { .. }
         | UserCommand::PauseController { .. }

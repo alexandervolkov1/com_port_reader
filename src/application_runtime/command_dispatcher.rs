@@ -209,6 +209,67 @@ impl CommandDispatcher {
                 let _ = response_sender.send(result);
             }
 
+            UserCommand::ControllerReferenceKind {
+                name,
+                response_sender,
+            } => {
+                let result = self.processing.reference_kind(&name);
+
+                let _ = response_sender.send(result);
+            }
+
+            UserCommand::ControllerReferenceParameters {
+                name,
+                response_sender,
+            } => {
+                let result = self.processing.reference_parameters(&name);
+
+                let _ = response_sender.send(result);
+            }
+
+            UserCommand::ReadControllerReferenceParameter {
+                name,
+                key,
+                response_sender,
+            } => {
+                let result = self.processing.read_reference_parameter(&name, &key);
+
+                let _ = response_sender.send(result);
+            }
+
+            UserCommand::WriteControllerReferenceParameter {
+                name,
+                key,
+                value,
+                response_sender,
+            } => {
+                let result = self
+                    .processing
+                    .write_reference_parameter(&name, &key, value);
+
+                let _ = response_sender.send(result);
+            }
+
+            UserCommand::ConfigureControllerReference {
+                name,
+                updates,
+                response_sender,
+            } => {
+                let result = self.processing.configure_reference(&name, updates);
+
+                let _ = response_sender.send(result);
+            }
+
+            UserCommand::SetControllerReference {
+                name,
+                source,
+                response_sender,
+            } => {
+                let result = self.processing.set_reference(&name, source);
+
+                let _ = response_sender.send(result);
+            }
+
             UserCommand::ResetController {
                 name,
                 response_sender,

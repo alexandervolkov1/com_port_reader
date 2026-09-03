@@ -11,6 +11,7 @@ use crate::{
     },
     process_control::{
         ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewOnOffLoop, NewPidLoop,
+        ReferenceKind, ReferenceSource,
     },
     signal_processing::{ControllerRequestError, SignalFilterDefinition},
 };
@@ -82,6 +83,41 @@ pub enum UserCommand {
     ConfigureController {
         name: String,
         updates: Vec<(String, InstrumentValue)>,
+        response_sender: Sender<Result<(), ControllerRequestError>>,
+    },
+
+    ControllerReferenceKind {
+        name: String,
+        response_sender: Sender<Result<Option<ReferenceKind>, ControllerRequestError>>,
+    },
+
+    ControllerReferenceParameters {
+        name: String,
+        response_sender: Sender<Result<Vec<ParameterDescriptor>, ControllerRequestError>>,
+    },
+
+    ReadControllerReferenceParameter {
+        name: String,
+        key: String,
+        response_sender: Sender<Result<InstrumentValue, ControllerRequestError>>,
+    },
+
+    WriteControllerReferenceParameter {
+        name: String,
+        key: String,
+        value: InstrumentValue,
+        response_sender: Sender<Result<InstrumentValue, ControllerRequestError>>,
+    },
+
+    ConfigureControllerReference {
+        name: String,
+        updates: Vec<(String, InstrumentValue)>,
+        response_sender: Sender<Result<(), ControllerRequestError>>,
+    },
+
+    SetControllerReference {
+        name: String,
+        source: ReferenceSource,
         response_sender: Sender<Result<(), ControllerRequestError>>,
     },
 
