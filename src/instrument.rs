@@ -1,5 +1,6 @@
 use self::metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write};
 use self::virtual_instrument::{VirtualInstrumentId, VirtualParameterId};
+use crate::connection::ConnectionId;
 
 pub mod metakon_5x3;
 pub mod virtual_instrument;
@@ -33,6 +34,29 @@ impl InstrumentParameterAddress {
             instrument,
             parameter,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ConnectedParameterAddress {
+    connection_id: ConnectionId,
+    parameter: InstrumentParameterAddress,
+}
+
+impl ConnectedParameterAddress {
+    pub const fn new(connection_id: ConnectionId, parameter: InstrumentParameterAddress) -> Self {
+        Self {
+            connection_id,
+            parameter,
+        }
+    }
+
+    pub const fn connection_id(self) -> ConnectionId {
+        self.connection_id
+    }
+
+    pub const fn parameter(self) -> InstrumentParameterAddress {
+        self.parameter
     }
 }
 

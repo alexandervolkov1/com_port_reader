@@ -3,7 +3,8 @@ use std::fmt;
 use crate::{
     connection::ConnectionId,
     instrument::{
-        InstrumentParameterAddress, ParameterAccess, ParameterRange, ParameterValueType,
+        ConnectedParameterAddress, InstrumentParameterAddress, ParameterAccess, ParameterRange,
+        ParameterValueType,
         metakon_5x3::{Metakon5x3, Metakon5x3Register},
         virtual_instrument::{VirtualInstrumentId, VirtualParameterDescriptor, VirtualParameterId},
     },
@@ -82,6 +83,10 @@ impl ControlOutputTarget {
                 ..
             } => InstrumentParameterAddress::virtual_instrument(instrument, parameter),
         }
+    }
+
+    pub const fn connected_parameter_address(&self) -> ConnectedParameterAddress {
+        ConnectedParameterAddress::new(self.connection_id, self.parameter_address())
     }
 
     pub fn value_type(&self) -> ParameterValueType {

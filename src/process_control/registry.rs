@@ -44,8 +44,10 @@ where
 
         validate_controller_output(definition.controller(), target)?;
 
+        let target_address = target.connected_parameter_address();
+
         for existing in &self.loops {
-            if output_targets_overlap(existing.output_target(), target) {
+            if existing.output_target().connected_parameter_address() == target_address {
                 return Err(ControllerRegistryError::OutputAlreadyControlled {
                     existing_loop: existing.name().to_owned(),
 
@@ -349,11 +351,6 @@ where
             .validate_diagnostic(diagnostic)
             .map_err(Into::into)
     }
-}
-
-fn output_targets_overlap(left: &ControlOutputTarget, right: &ControlOutputTarget) -> bool {
-    left.connection_id() == right.connection_id()
-        && left.parameter_address() == right.parameter_address()
 }
 
 fn validate_controller_output(
