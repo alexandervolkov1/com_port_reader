@@ -2145,20 +2145,20 @@ mod tests {
             .configure_controller(
                 "heater",
                 [
-                    ("output_min", InstrumentValue::Number(200.0)),
-                    ("output_max", InstrumentValue::Number(300.0)),
+                    ("output_min", InstrumentValue::Number(10.0)),
+                    ("output_max", InstrumentValue::Number(90.0)),
                 ],
             )
             .unwrap();
 
         assert_eq!(
             handle.read_controller_parameter("heater", "output_min",),
-            Ok(InstrumentValue::Number(200.0,),),
+            Ok(InstrumentValue::Number(10.0)),
         );
 
         assert_eq!(
             handle.read_controller_parameter("heater", "output_max",),
-            Ok(InstrumentValue::Number(300.0,),),
+            Ok(InstrumentValue::Number(90.0)),
         );
     }
 

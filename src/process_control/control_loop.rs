@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use crate::instrument::{InstrumentValue, ParameterAccess, ParameterDescriptor};
+use crate::instrument::{InstrumentValue, ParameterAccess, ParameterDescriptor, ParameterRange};
 
 use super::{
     Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerError,
@@ -265,6 +265,21 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         self.controller.write(key, value).map_err(Into::into)
     }
 
+    fn validate_configuration_updates(
+        &self,
+        updates: &[(String, InstrumentValue)],
+    ) -> Result<(), ControlLoopParameterError> {
+        if self.reference.is_some() {
+            for (key, _) in updates {
+                if let Some(parameter) = ReferenceParameter::from_key(key) {
+                    return Err(ControlLoopParameterError::ManagedByReference(parameter));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn configure<I, K>(&mut self, updates: I) -> Result<(), ControlLoopParameterError>
     where
         I: IntoIterator<Item = (K, InstrumentValue)>,
@@ -275,15 +290,22 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
             .map(|(key, value)| (key.as_ref().to_owned(), value))
             .collect::<Vec<_>>();
 
-        if self.reference.is_some() {
-            for (key, _) in &updates {
-                if let Some(parameter) = ReferenceParameter::from_key(key) {
-                    return Err(ControlLoopParameterError::ManagedByReference(parameter));
-                }
-            }
-        }
+        self.validate_configuration_updates(&updates)?;
 
         self.controller.configure(updates).map_err(Into::into)
+    }
+
+    pub(crate) fn output_range_after_configuration(
+        &self,
+        updates: &[(String, InstrumentValue)],
+    ) -> Result<ParameterRange, ControlLoopParameterError> {
+        self.validate_configuration_updates(updates)?;
+
+        self.controller
+            .output_range_after_configuration(
+                updates.iter().map(|(key, value)| (key.as_str(), *value)),
+            )
+            .map_err(Into::into)
     }
 
     pub fn update(

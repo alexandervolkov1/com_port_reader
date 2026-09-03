@@ -384,6 +384,44 @@ impl Controller {
         }
     }
 
+    pub(crate) fn output_range_after_configuration<I, K>(
+        &self,
+        updates: I,
+    ) -> Result<ParameterRange, ControllerParameterError>
+    where
+        I: IntoIterator<Item = (K, InstrumentValue)>,
+        K: AsRef<str>,
+    {
+        let mut candidate = match self {
+            Self::Pid(controller) => {
+                let controller = PidController::with_output_limits(
+                    controller.setpoint(),
+                    controller.gains(),
+                    controller.output_limits(),
+                )
+                .map_err(ControllerParameterError::Pid)?;
+
+                Self::Pid(controller)
+            }
+
+            Self::OnOff(controller) => {
+                let controller = OnOffController::new(
+                    controller.setpoint(),
+                    controller.hysteresis(),
+                    controller.output_off(),
+                    controller.output_on(),
+                )
+                .map_err(ControllerParameterError::OnOff)?;
+
+                Self::OnOff(controller)
+            }
+        };
+
+        candidate.configure(updates)?;
+
+        Ok(candidate.output_range())
+    }
+
     pub fn update(
         &mut self,
         timestamp: f64,

@@ -169,9 +169,9 @@ where
         key: &str,
         value: InstrumentValue,
     ) -> Result<InstrumentValue, ControllerAccessError> {
-        self.control_loop_mut(name)?
-            .write_parameter(key, value)
-            .map_err(Into::into)
+        self.configure(name, [(key, value)])?;
+
+        self.read_parameter(name, key)
     }
 
     pub fn configure<I, K>(&mut self, name: &str, updates: I) -> Result<(), ControllerAccessError>
@@ -179,6 +179,30 @@ where
         I: IntoIterator<Item = (K, InstrumentValue)>,
         K: AsRef<str>,
     {
+        let updates = updates
+            .into_iter()
+            .map(|(key, value)| (key.as_ref().to_owned(), value))
+            .collect::<Vec<_>>();
+
+        let (output_range, target) = {
+            let control_loop = self.control_loop(name)?;
+
+            let output_range = control_loop
+                .output_range_after_configuration(&updates)
+                .map_err(ControllerAccessError::from)?;
+
+            (output_range, *control_loop.output_target())
+        };
+
+        validate_output_range(output_range, &target).map_err(|error| {
+            ControllerAccessError::OutputRangeOutsideTargetRange {
+                minimum: error.minimum,
+                maximum: error.maximum,
+                target_minimum: error.target_minimum,
+                target_maximum: error.target_maximum,
+            }
+        })?;
+
         self.control_loop_mut(name)?
             .configure(updates)
             .map_err(Into::into)
@@ -353,20 +377,28 @@ where
     }
 }
 
-fn validate_controller_output(
-    controller: &Controller,
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct OutputRangeMismatch {
+    minimum: f64,
+    maximum: f64,
+    target_minimum: f64,
+    target_maximum: f64,
+}
+
+fn validate_output_range(
+    output_range: ParameterRange,
     target: &ControlOutputTarget,
-) -> Result<(), ControllerRegistryError> {
+) -> Result<(), OutputRangeMismatch> {
     let Some(target_range) = target.range() else {
         return Ok(());
     };
 
-    let (minimum, maximum) = numeric_range_bounds(controller.output_range());
+    let (minimum, maximum) = numeric_range_bounds(output_range);
 
     let (target_minimum, target_maximum) = numeric_range_bounds(target_range);
 
     if minimum < target_minimum || maximum > target_maximum {
-        return Err(ControllerRegistryError::OutputRangeOutsideTargetRange {
+        return Err(OutputRangeMismatch {
             minimum,
             maximum,
             target_minimum,
@@ -375,6 +407,20 @@ fn validate_controller_output(
     }
 
     Ok(())
+}
+
+fn validate_controller_output(
+    controller: &Controller,
+    target: &ControlOutputTarget,
+) -> Result<(), ControllerRegistryError> {
+    validate_output_range(controller.output_range(), target).map_err(|error| {
+        ControllerRegistryError::OutputRangeOutsideTargetRange {
+            minimum: error.minimum,
+            maximum: error.maximum,
+            target_minimum: error.target_minimum,
+            target_maximum: error.target_maximum,
+        }
+    })
 }
 
 fn numeric_range_bounds(range: ParameterRange) -> (f64, f64) {
@@ -463,10 +509,21 @@ impl std::error::Error for ControllerRegistryError {}
 #[derive(Clone, Debug, PartialEq)]
 pub enum ControllerAccessError {
     ControlLoopNotFound(String),
+
     Parameter(ControlLoopParameterError),
+
     Reference(ControlLoopReferenceError),
+
     Operation(ControllerOperationError),
+
     Diagnostic(ControllerDiagnosticError),
+
+    OutputRangeOutsideTargetRange {
+        minimum: f64,
+        maximum: f64,
+        target_minimum: f64,
+        target_maximum: f64,
+    },
 }
 
 impl fmt::Display for ControllerAccessError {
@@ -487,6 +544,22 @@ impl fmt::Display for ControllerAccessError {
             Self::Operation(error) => error.fmt(formatter),
 
             Self::Diagnostic(error) => error.fmt(formatter),
+
+            Self::OutputRangeOutsideTargetRange {
+                minimum,
+                maximum,
+                target_minimum,
+                target_maximum,
+            } => {
+                write!(
+                    formatter,
+                    "Controller output range \
+                     {minimum}..={maximum} \
+                     exceeds target range \
+                     {target_minimum}..=\
+                     {target_maximum}",
+                )
+            }
         }
     }
 }
@@ -494,7 +567,7 @@ impl fmt::Display for ControllerAccessError {
 impl std::error::Error for ControllerAccessError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::ControlLoopNotFound(_) => None,
+            Self::ControlLoopNotFound(_) | Self::OutputRangeOutsideTargetRange { .. } => None,
 
             Self::Parameter(error) => Some(error),
 
@@ -1204,20 +1277,79 @@ mod tests {
             .configure(
                 "heater",
                 [
-                    ("output_min", InstrumentValue::Number(200.0)),
-                    ("output_max", InstrumentValue::Number(300.0)),
+                    ("output_min", InstrumentValue::Number(10.0)),
+                    ("output_max", InstrumentValue::Number(90.0)),
                 ],
             )
             .unwrap();
 
         assert_eq!(
             registry.read_parameter("heater", "output_min",),
-            Ok(InstrumentValue::Number(200.0,),),
+            Ok(InstrumentValue::Number(10.0,)),
         );
 
         assert_eq!(
             registry.read_parameter("heater", "output_max",),
-            Ok(InstrumentValue::Number(300.0,),),
+            Ok(InstrumentValue::Number(90.0,)),
+        );
+    }
+
+    #[test]
+    fn rejects_runtime_pid_output_range_outside_target_atomically() {
+        let mut registry = ControllerRegistry::new();
+
+        registry
+            .add(definition("heater", 1, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        assert_eq!(
+            registry.configure(
+                "heater",
+                [
+                    ("output_min", InstrumentValue::Number(0.0,),),
+                    ("output_max", InstrumentValue::Number(120.0,),),
+                ],
+            ),
+            Err(ControllerAccessError::OutputRangeOutsideTargetRange {
+                minimum: 0.0,
+                maximum: 120.0,
+                target_minimum: 0.0,
+                target_maximum: 100.0,
+            },),
+        );
+
+        assert_eq!(
+            registry.read_parameter("heater", "output_min",),
+            Ok(InstrumentValue::Number(0.0,)),
+        );
+
+        assert_eq!(
+            registry.read_parameter("heater", "output_max",),
+            Ok(InstrumentValue::Number(100.0,)),
+        );
+    }
+
+    #[test]
+    fn rejects_runtime_on_off_output_outside_target_atomically() {
+        let mut registry = ControllerRegistry::new();
+
+        registry
+            .add(on_off_definition("thermostat", 1, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        assert_eq!(
+            registry.write_parameter("thermostat", "output_on", InstrumentValue::Number(120.0,),),
+            Err(ControllerAccessError::OutputRangeOutsideTargetRange {
+                minimum: 0.0,
+                maximum: 120.0,
+                target_minimum: 0.0,
+                target_maximum: 100.0,
+            },),
+        );
+
+        assert_eq!(
+            registry.read_parameter("thermostat", "output_on",),
+            Ok(InstrumentValue::Number(100.0,)),
         );
     }
 
