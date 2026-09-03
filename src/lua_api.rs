@@ -21,7 +21,7 @@ use crate::{
     lua_application_script::LuaApplicationEvent,
     process_control::{
         ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewOnOffLoop, NewPidLoop,
-        PidGains, PidOutputLimits,
+        PidGains, PidOutputLimits, ReferenceKind, ReferenceSource,
     },
     signal_processing::SignalFilterDefinition,
     user_command::UserCommand,
@@ -813,6 +813,43 @@ where
     }
 }
 
+fn parameter_descriptors_to_lua(
+    lua: &Lua,
+    descriptors: Vec<ParameterDescriptor>,
+) -> mlua::Result<Table> {
+    let parameters = lua.create_table_with_capacity(descriptors.len(), 0)?;
+
+    for (index, descriptor) in descriptors.into_iter().enumerate() {
+        let entry = lua.create_table_with_capacity(0, 6)?;
+
+        entry.set("key", descriptor.key)?;
+
+        entry.set("name", descriptor.name)?;
+
+        entry.set("access", descriptor.access.as_str())?;
+
+        entry.set("value_type", descriptor.value_type.as_str())?;
+
+        match descriptor.range {
+            ParameterRange::Integer { minimum, maximum } => {
+                entry.set("minimum", minimum)?;
+
+                entry.set("maximum", maximum)?;
+            }
+
+            ParameterRange::Number { minimum, maximum } => {
+                entry.set("minimum", minimum)?;
+
+                entry.set("maximum", maximum)?;
+            }
+        }
+
+        parameters.raw_set((index + 1) as i64, entry)?;
+    }
+
+    Ok(parameters)
+}
+
 impl LuaControllerHandle {
     fn controller_parameters(&self) -> mlua::Result<Vec<ParameterDescriptor>> {
         let (response_sender, response_receiver) = bounded(1);
@@ -831,32 +868,174 @@ impl LuaControllerHandle {
     fn parameters(&self, lua: &Lua) -> mlua::Result<Table> {
         let descriptors = self.controller_parameters()?;
 
-        let parameters = lua.create_table_with_capacity(descriptors.len(), 0)?;
+        parameter_descriptors_to_lua(lua, descriptors)
+    }
 
-        for (index, descriptor) in descriptors.into_iter().enumerate() {
-            let entry = lua.create_table_with_capacity(0, 6)?;
+    fn reference_kind(&self) -> mlua::Result<Option<String>> {
+        let (response_sender, response_receiver) = bounded(1);
 
-            entry.set("key", descriptor.key)?;
-            entry.set("name", descriptor.name)?;
-            entry.set("access", descriptor.access.as_str())?;
-            entry.set("value_type", descriptor.value_type.as_str())?;
+        send_application_command(
+            &self.command_sender,
+            UserCommand::ControllerReferenceKind {
+                name: self.name.clone(),
+                response_sender,
+            },
+        )?;
 
-            match descriptor.range {
-                ParameterRange::Integer { minimum, maximum } => {
-                    entry.set("minimum", minimum)?;
-                    entry.set("maximum", maximum)?;
-                }
+        let kind: Option<ReferenceKind> =
+            receive_controller_response(response_receiver, "reference kind discovery")?;
 
-                ParameterRange::Number { minimum, maximum } => {
-                    entry.set("minimum", minimum)?;
-                    entry.set("maximum", maximum)?;
-                }
+        Ok(kind.map(|kind| kind.as_str().to_owned()))
+    }
+
+    fn controller_reference_parameters(&self) -> mlua::Result<Vec<ParameterDescriptor>> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::ControllerReferenceParameters {
+                name: self.name.clone(),
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "reference parameter discovery")
+    }
+
+    fn reference_parameters(&self, lua: &Lua) -> mlua::Result<Table> {
+        let descriptors = self.controller_reference_parameters()?;
+
+        parameter_descriptors_to_lua(lua, descriptors)
+    }
+
+    fn reference_parameter_descriptor(&self, key: &str) -> mlua::Result<ParameterDescriptor> {
+        self.controller_reference_parameters()?
+            .into_iter()
+            .find(|parameter| parameter.key == key)
+            .ok_or_else(|| {
+                mlua::Error::RuntimeError(format!(
+                    "Controller '{}' \
+                         reference has no \
+                         parameter '{key}'",
+                    self.name,
+                ))
+            })
+    }
+
+    fn read_reference_parameter(&self, key: &str) -> mlua::Result<InstrumentValue> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::ReadControllerReferenceParameter {
+                name: self.name.clone(),
+                key: key.to_owned(),
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "reference parameter read")
+    }
+
+    fn write_reference_parameter(
+        &self,
+        key: &str,
+        value: InstrumentValue,
+    ) -> mlua::Result<InstrumentValue> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::WriteControllerReferenceParameter {
+                name: self.name.clone(),
+                key: key.to_owned(),
+                value,
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "reference parameter write")
+    }
+
+    fn configure_reference(&self, lua: &Lua, updates: Table) -> mlua::Result<()> {
+        let descriptors = self.controller_reference_parameters()?;
+
+        let mut resolved_updates = Vec::new();
+
+        for pair in updates.pairs::<String, Value>() {
+            let (key, value) = pair?;
+
+            let descriptor = descriptors
+                .iter()
+                .find(|descriptor| descriptor.key == key)
+                .copied()
+                .ok_or_else(|| {
+                    mlua::Error::RuntimeError(format!(
+                        "Controller '{}' \
+                             reference has no \
+                             parameter '{key}'",
+                        self.name,
+                    ))
+                })?;
+
+            if !descriptor.access.writable() {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "Reference parameter \
+                             '{}' is read-only",
+                    key,
+                )));
             }
 
-            parameters.raw_set((index + 1) as i64, entry)?;
+            let value = reference_value_from_lua(lua, descriptor, value)?;
+
+            resolved_updates.push((key, value));
         }
 
-        Ok(parameters)
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::ConfigureControllerReference {
+                name: self.name.clone(),
+                updates: resolved_updates,
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "reference configuration")
+    }
+
+    fn set_reference(&self, source: ReferenceSource) -> mlua::Result<()> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            UserCommand::SetControllerReference {
+                name: self.name.clone(),
+                source,
+                response_sender,
+            },
+        )?;
+
+        receive_controller_response(response_receiver, "reference replacement")
+    }
+
+    fn set_fixed_reference(&self, value: f64) -> mlua::Result<()> {
+        let source = ReferenceSource::fixed(value).map_err(|error| {
+            mlua::Error::RuntimeError(format!(
+                "Invalid fixed \
+                                     reference: \
+                                     {error}",
+            ))
+        })?;
+
+        self.set_reference(source)
+    }
+
+    fn set_ramp_reference(&self, options: &Table) -> mlua::Result<()> {
+        let source = ramp_reference_from_options(options)?;
+
+        self.set_reference(source)
     }
 
     fn add_diagnostic_series(
@@ -1112,6 +1291,50 @@ impl LuaControllerHandle {
 
         receive_controller_response(response_receiver, "reset")
     }
+}
+
+fn ramp_reference_from_options(options: &Table) -> mlua::Result<ReferenceSource> {
+    for pair in options.pairs::<String, Value>() {
+        let (key, _) = pair?;
+
+        if !matches!(key.as_str(), "start" | "target" | "rate") {
+            return Err(mlua::Error::RuntimeError(format!(
+                "Unknown ramp reference \
+                         option '{key}'",
+            )));
+        }
+    }
+
+    let start = options.get::<Option<f64>>("start")?.ok_or_else(|| {
+        mlua::Error::RuntimeError(
+            "Ramp reference option \
+                 'start' is required"
+                .to_owned(),
+        )
+    })?;
+
+    let target = options.get::<Option<f64>>("target")?.ok_or_else(|| {
+        mlua::Error::RuntimeError(
+            "Ramp reference option \
+                 'target' is required"
+                .to_owned(),
+        )
+    })?;
+
+    let rate = options.get::<Option<f64>>("rate")?.ok_or_else(|| {
+        mlua::Error::RuntimeError(
+            "Ramp reference option \
+                 'rate' is required"
+                .to_owned(),
+        )
+    })?;
+
+    ReferenceSource::ramp(start, target, rate).map_err(|error| {
+        mlua::Error::RuntimeError(format!(
+            "Invalid ramp reference: \
+                     {error}",
+        ))
+    })
 }
 
 #[derive(Clone)]
@@ -1665,6 +1888,64 @@ fn controller_value_from_lua(
     }
 }
 
+fn reference_value_from_lua(
+    lua: &Lua,
+    parameter: ParameterDescriptor,
+    value: Value,
+) -> mlua::Result<InstrumentValue> {
+    match parameter.value_type {
+        ParameterValueType::Boolean => {
+            let value = bool::from_lua(value, lua).map_err(|_| {
+                mlua::Error::RuntimeError(format!(
+                    "Reference \
+                                     parameter \
+                                     '{}' expects \
+                                     a Boolean value",
+                    parameter.key,
+                ))
+            })?;
+
+            Ok(InstrumentValue::Boolean(value))
+        }
+
+        ParameterValueType::Integer => {
+            let value = i64::from_lua(value, lua).map_err(|_| {
+                mlua::Error::RuntimeError(format!(
+                    "Reference \
+                                     parameter \
+                                     '{}' expects \
+                                     an integer value",
+                    parameter.key,
+                ))
+            })?;
+
+            Ok(InstrumentValue::Integer(value))
+        }
+
+        ParameterValueType::Number => {
+            let value = f64::from_lua(value, lua).map_err(|_| {
+                mlua::Error::RuntimeError(format!(
+                    "Reference \
+                                     parameter \
+                                     '{}' expects \
+                                     a numeric value",
+                    parameter.key,
+                ))
+            })?;
+
+            if !value.is_finite() {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "Reference parameter \
+                             '{}' must be finite",
+                    parameter.key,
+                )));
+            }
+
+            Ok(InstrumentValue::Number(value))
+        }
+    }
+}
+
 fn virtual_instrument_value_from_lua(
     lua: &Lua,
     parameter: &VirtualParameterDescriptor,
@@ -1737,12 +2018,26 @@ impl UserData for LuaControllerHandle {
             controller.parameters(lua)
         });
 
+        methods.add_method("reference_kind", |_, controller, ()| {
+            controller.reference_kind()
+        });
+
+        methods.add_method("reference_parameters", |lua, controller, ()| {
+            controller.reference_parameters(lua)
+        });
+
         methods.add_method("diagnostics", |lua, controller, ()| {
             controller.diagnostics(lua)
         });
 
         methods.add_method("read", |_, controller, key: String| {
             let value = controller.read_parameter(&key)?;
+
+            Ok(instrument_value_to_lua(value))
+        });
+
+        methods.add_method("read_reference", |_, controller, key: String| {
+            let value = controller.read_reference_parameter(&key)?;
 
             Ok(instrument_value_to_lua(value))
         });
@@ -1764,8 +2059,41 @@ impl UserData for LuaControllerHandle {
             Ok(instrument_value_to_lua(actual))
         });
 
+        methods.add_method(
+            "write_reference",
+            |lua, controller, (key, value): (String, Value)| {
+                let parameter = controller.reference_parameter_descriptor(&key)?;
+
+                if !parameter.access.writable() {
+                    return Err(mlua::Error::RuntimeError(format!(
+                        "Reference parameter \
+                                 '{}' is read-only",
+                        key,
+                    )));
+                }
+
+                let value = reference_value_from_lua(lua, parameter, value)?;
+
+                let actual = controller.write_reference_parameter(&key, value)?;
+
+                Ok(instrument_value_to_lua(actual))
+            },
+        );
+
         methods.add_method("configure", |lua, controller, updates: Table| {
             controller.configure(lua, updates)
+        });
+
+        methods.add_method("configure_reference", |lua, controller, updates: Table| {
+            controller.configure_reference(lua, updates)
+        });
+
+        methods.add_method("set_fixed_reference", |_, controller, value: f64| {
+            controller.set_fixed_reference(value)
+        });
+
+        methods.add_method("set_ramp_reference", |_, controller, options: Table| {
+            controller.set_ramp_reference(&options)
         });
 
         methods.add_method("set_input", |_, controller, input_name: String| {
@@ -2115,12 +2443,15 @@ mod controller_handle_tests {
         connection::ConnectionId,
         data::SeriesColor,
         instrument::{
-            ParameterAccess, ParameterValueType,
+            InstrumentValue, ParameterAccess, ParameterValueType,
             virtual_instrument::{
                 VirtualInstrumentId, VirtualParameterDescriptor, VirtualParameterId,
             },
         },
-        process_control::{ControlLoopState, ControlOutputTarget, ControllerDiagnostic},
+        process_control::{
+            ControlLoopState, ControlOutputTarget, ControllerDiagnostic, ReferenceKind,
+            ReferenceSource,
+        },
         user_command::UserCommand,
     };
 
@@ -2602,5 +2933,329 @@ mod controller_handle_tests {
         let command_receiver = responder.join().unwrap();
 
         assert!(command_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn manages_controller_reference() {
+        let lua = Lua::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        let userdata = lua
+            .create_userdata(LuaControllerHandle {
+                name: "heater".to_owned(),
+                connection_id: ConnectionId::PRIMARY,
+                command_sender,
+            })
+            .unwrap();
+
+        lua.globals().set("controller", userdata).unwrap();
+
+        let responder = thread::spawn(move || {
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::ControllerReferenceKind {
+                name,
+                response_sender,
+            } = command
+            else {
+                panic!(
+                    "expected \
+                         ControllerReferenceKind"
+                );
+            };
+
+            assert_eq!(name, "heater",);
+
+            response_sender.send(Ok(Some(ReferenceKind::Ramp))).unwrap();
+
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::ControllerReferenceParameters {
+                name,
+                response_sender,
+            } = command
+            else {
+                panic!(
+                    "expected \
+                         ControllerReferenceParameters"
+                );
+            };
+
+            assert_eq!(name, "heater",);
+
+            response_sender
+                .send(Ok(ReferenceSource::ramp(20.0, 150.0, 10.0)
+                    .unwrap()
+                    .parameters()))
+                .unwrap();
+
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::ReadControllerReferenceParameter {
+                name,
+                key,
+                response_sender,
+            } = command
+            else {
+                panic!(
+                    "expected \
+                         ReadControllerReferenceParameter"
+                );
+            };
+
+            assert_eq!(name, "heater",);
+
+            assert_eq!(key, "target",);
+
+            response_sender
+                .send(Ok(InstrumentValue::Number(150.0)))
+                .unwrap();
+
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::ControllerReferenceParameters {
+                response_sender, ..
+            } = command
+            else {
+                panic!(
+                    "expected reference \
+                         parameter discovery \
+                         before write"
+                );
+            };
+
+            response_sender
+                .send(Ok(ReferenceSource::ramp(20.0, 150.0, 10.0)
+                    .unwrap()
+                    .parameters()))
+                .unwrap();
+
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::WriteControllerReferenceParameter {
+                name,
+                key,
+                value,
+                response_sender,
+            } = command
+            else {
+                panic!(
+                    "expected \
+                         WriteControllerReferenceParameter"
+                );
+            };
+
+            assert_eq!(name, "heater",);
+
+            assert_eq!(key, "target",);
+
+            assert_eq!(value, InstrumentValue::Number(200.0,),);
+
+            response_sender
+                .send(Ok(InstrumentValue::Number(200.0)))
+                .unwrap();
+
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::ControllerReferenceParameters {
+                response_sender, ..
+            } = command
+            else {
+                panic!(
+                    "expected reference \
+                         parameter discovery \
+                         before configuration"
+                );
+            };
+
+            response_sender
+                .send(Ok(ReferenceSource::ramp(20.0, 200.0, 10.0)
+                    .unwrap()
+                    .parameters()))
+                .unwrap();
+
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::ConfigureControllerReference {
+                name,
+                updates,
+                response_sender,
+            } = command
+            else {
+                panic!(
+                    "expected \
+                         ConfigureControllerReference"
+                );
+            };
+
+            assert_eq!(name, "heater",);
+
+            assert_eq!(updates.len(), 2,);
+
+            assert!(updates.contains(&("target".to_owned(), InstrumentValue::Number(250.0,),)),);
+
+            assert!(updates.contains(&("rate".to_owned(), InstrumentValue::Number(5.0,),)),);
+
+            response_sender.send(Ok(())).unwrap();
+
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::SetControllerReference {
+                name,
+                source,
+                response_sender,
+            } = command
+            else {
+                panic!(
+                    "expected \
+                         SetControllerReference"
+                );
+            };
+
+            assert_eq!(name, "heater",);
+
+            assert_eq!(source, ReferenceSource::fixed(175.0,).unwrap(),);
+
+            response_sender.send(Ok(())).unwrap();
+
+            let command = command_receiver.recv().unwrap();
+
+            let UserCommand::SetControllerReference {
+                name,
+                source,
+                response_sender,
+            } = command
+            else {
+                panic!(
+                    "expected second \
+                         SetControllerReference"
+                );
+            };
+
+            assert_eq!(name, "heater",);
+
+            assert_eq!(source, ReferenceSource::ramp(175.0, 220.0, 2.0,).unwrap(),);
+
+            response_sender.send(Ok(())).unwrap();
+
+            command_receiver
+        });
+
+        lua.load(
+            r#"
+                assert(
+                    controller:reference_kind()
+                        == "ramp"
+                )
+
+                local parameters =
+                    controller:
+                        reference_parameters()
+
+                assert(
+                    #parameters == 3
+                )
+
+                assert(
+                    parameters[1].key
+                        == "start"
+                )
+
+                assert(
+                    parameters[2].key
+                        == "target"
+                )
+
+                assert(
+                    parameters[3].key
+                        == "rate"
+                )
+
+                assert(
+                    controller:
+                        read_reference(
+                            "target"
+                        )
+                        == 150
+                )
+
+                assert(
+                    controller:
+                        write_reference(
+                            "target",
+                            200
+                        )
+                        == 200
+                )
+
+                controller:
+                    configure_reference({
+                        target = 250,
+                        rate = 5,
+                    })
+
+                controller:
+                    set_fixed_reference(
+                        175
+                    )
+
+                controller:
+                    set_ramp_reference({
+                        start = 175,
+                        target = 220,
+                        rate = 2,
+                    })
+            "#,
+        )
+        .exec()
+        .unwrap();
+
+        let command_receiver = responder.join().unwrap();
+
+        assert!(command_receiver.try_recv().is_err(),);
+    }
+
+    #[test]
+    fn rejects_unknown_ramp_reference_option() {
+        let lua = Lua::new();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        let userdata = lua
+            .create_userdata(LuaControllerHandle {
+                name: "heater".to_owned(),
+                connection_id: ConnectionId::PRIMARY,
+                command_sender,
+            })
+            .unwrap();
+
+        lua.globals().set("controller", userdata).unwrap();
+
+        let error = lua
+            .load(
+                r#"
+                    controller:
+                        set_ramp_reference({
+                            start = 20,
+                            target = 150,
+                            rate = 2,
+                            banana = 42,
+                        })
+                "#,
+            )
+            .exec()
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains(
+                "Unknown ramp reference \
+                 option 'banana'",
+            ),
+            "unexpected Lua error: {error}",
+        );
+
+        assert!(command_receiver.try_recv().is_err(),);
     }
 }
