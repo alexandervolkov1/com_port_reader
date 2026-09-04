@@ -17,6 +17,7 @@ use crate::{
     lua_application_definition::apply_lua_definition,
     lua_application_script::{LuaApplicationEvent, LuaControlInvocation},
     lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle, LuaWorkerHandleError},
+    output_control::{OutputHandle, OutputService},
     process_recorder::{ProcessAction, ProcessActionOrigin, ProcessRecord, ProcessRecorder},
     serial_connection::SerialConnectionRegistry,
     signal_processing::{ProcessingEvent, ProcessingService},
@@ -49,6 +50,8 @@ pub struct ApplicationRuntime {
     acquisition: AcquisitionController,
     processing: ProcessingService<SeriesId>,
     _process_control_dispatcher: ProcessControlDispatcher,
+    _output_service: OutputService,
+    _output_handle: OutputHandle,
     dispatcher: CommandDispatcher,
     device_emulator: DeviceEmulatorService,
     lua_command_receiver: Receiver<UserCommand>,
@@ -91,6 +94,10 @@ impl ApplicationRuntime {
         let processing = ProcessingService::<SeriesId>::spawn()?;
 
         let processing_handle = processing.handle();
+
+        let output_service = OutputService::spawn()?;
+
+        let output_handle = output_service.handle();
 
         let emulator_port = definition
             .emulator()
@@ -202,6 +209,8 @@ impl ApplicationRuntime {
             acquisition,
             processing,
             process_control_dispatcher,
+            output_service,
+            output_handle,
             dispatcher,
             device_emulator,
             lua_command_receiver,
@@ -282,6 +291,8 @@ impl ApplicationRuntime {
         acquisition: AcquisitionController,
         processing: ProcessingService<SeriesId>,
         process_control_dispatcher: ProcessControlDispatcher,
+        output_service: OutputService,
+        output_handle: OutputHandle,
         dispatcher: CommandDispatcher,
         device_emulator: DeviceEmulatorService,
         lua_command_receiver: Receiver<UserCommand>,
@@ -297,6 +308,8 @@ impl ApplicationRuntime {
             acquisition,
             processing,
             _process_control_dispatcher: process_control_dispatcher,
+            _output_service: output_service,
+            _output_handle: output_handle,
             dispatcher,
             device_emulator,
             lua_command_receiver,

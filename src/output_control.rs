@@ -2,6 +2,10 @@ use std::{collections::HashMap, error::Error, fmt};
 
 use crate::instrument::ConnectedParameterAddress;
 
+mod service;
+
+pub(crate) use service::{OutputHandle, OutputRequestError, OutputService};
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum OutputMode {
     Manual,
