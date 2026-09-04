@@ -13,7 +13,10 @@ use crate::{
     worker::ConnectionRouter,
 };
 
-use super::{AutomaticOutputIntent, OutputArbiter, OutputArbiterError, OutputMode, OutputSource};
+use super::{
+    AutomaticOutputIntent, ManualOutputIntent, OutputArbiter, OutputArbiterError, OutputMode,
+    OutputSource,
+};
 
 enum OutputCommand {
     RegisterController {
@@ -35,6 +38,11 @@ enum OutputCommand {
 
     ApplyAutomatic {
         intent: AutomaticOutputIntent,
+        response_sender: Sender<Result<Receiver<InstrumentWriteResult>, OutputRequestError>>,
+    },
+
+    ApplyManual {
+        intent: ManualOutputIntent,
         response_sender: Sender<Result<Receiver<InstrumentWriteResult>, OutputRequestError>>,
     },
 
@@ -116,6 +124,24 @@ impl OutputHandle {
 
         self.command_sender
             .send(OutputCommand::ApplyAutomatic {
+                intent,
+                response_sender,
+            })
+            .map_err(|_| OutputRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| OutputRequestError::Disconnected)?
+    }
+
+    pub(crate) fn apply_manual(
+        &self,
+        intent: ManualOutputIntent,
+    ) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(OutputCommand::ApplyManual {
                 intent,
                 response_sender,
             })
@@ -216,6 +242,20 @@ fn run(
                 let _ = response_sender.send(result);
             }
 
+            OutputCommand::ApplyManual {
+                intent,
+                response_sender,
+            } => {
+                let result = apply_manual(
+                    &mut arbiter,
+                    intent,
+                    &connection_router,
+                    &serial_connections,
+                );
+
+                let _ = response_sender.send(result);
+            }
+
             OutputCommand::Shutdown => {
                 break;
             }
@@ -233,18 +273,43 @@ fn apply_automatic(
 
     arbiter.authorize(target, &OutputSource::controller(controller))?;
 
-    let expected_parameter = target.parameter();
-
-    let request_parameter = request.parameter_address();
-
-    if request_parameter != expected_parameter {
-        return Err(OutputRequestError::RequestTargetMismatch {
-            expected: expected_parameter,
-            actual: request_parameter,
-        });
-    }
+    validate_request_target(target, request)?;
 
     dispatch_write(target, request, connection_router, serial_connections)
+}
+
+fn apply_manual(
+    arbiter: &mut OutputArbiter,
+    intent: ManualOutputIntent,
+    connection_router: &ConnectionRouter,
+    serial_connections: &SerialConnectionRegistry,
+) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
+    let (target, request) = intent.into_parts();
+
+    arbiter.mode(target)?;
+
+    validate_request_target(target, request)?;
+
+    let response_receiver = dispatch_write(target, request, connection_router, serial_connections)?;
+
+    arbiter.set_mode(target, OutputMode::Manual)?;
+
+    Ok(response_receiver)
+}
+
+fn validate_request_target(
+    target: ConnectedParameterAddress,
+    request: InstrumentWriteRequest,
+) -> Result<(), OutputRequestError> {
+    let expected = target.parameter();
+
+    let actual = request.parameter_address();
+
+    if actual != expected {
+        return Err(OutputRequestError::RequestTargetMismatch { expected, actual });
+    }
+
+    Ok(())
 }
 
 fn dispatch_write(
@@ -364,7 +429,8 @@ mod tests {
     };
 
     use super::{
-        AutomaticOutputIntent, OutputArbiterError, OutputMode, OutputRequestError, OutputService,
+        AutomaticOutputIntent, ManualOutputIntent, OutputArbiterError, OutputMode,
+        OutputRequestError, OutputService,
     };
 
     fn target() -> ConnectedParameterAddress {
@@ -533,5 +599,125 @@ mod tests {
         assert_eq!(received_request, request,);
 
         assert!(!emit_event);
+    }
+
+    #[test]
+    fn enters_manual_after_enqueuing_write() {
+        let target = target();
+
+        let connection_id = target.connection_id();
+
+        let serial_connections = SerialConnectionRegistry::new();
+
+        serial_connections
+            .register(connection_id)
+            .unwrap()
+            .set(Some(serial_config("COM9")));
+
+        let connection_router = ConnectionRouter::default();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        connection_router.insert(WorkerHandle::new(connection_id, command_sender));
+
+        let service = OutputService::spawn(connection_router, serial_connections).unwrap();
+
+        let handle = service.handle();
+
+        handle.register_controller(target, "heater").unwrap();
+
+        let request = InstrumentWriteRequest::virtual_instrument(
+            VirtualInstrumentId::new(7),
+            VirtualParameterId::new(4),
+            InstrumentValue::Number(35.0),
+        );
+
+        let _response_receiver = handle
+            .apply_manual(ManualOutputIntent::new(target, request))
+            .unwrap();
+
+        assert_eq!(handle.mode(target), Ok(OutputMode::Manual),);
+
+        let command = command_receiver.try_recv().unwrap();
+
+        let WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
+            request: received_request,
+            ..
+        }) = command
+        else {
+            panic!("expected instrument write command",);
+        };
+
+        assert_eq!(received_request, request,);
+    }
+
+    #[test]
+    fn keeps_automatic_mode_when_manual_write_cannot_be_enqueued() {
+        let service = service();
+
+        let handle = service.handle();
+
+        let target = target();
+
+        handle.register_controller(target, "heater").unwrap();
+
+        let request = InstrumentWriteRequest::virtual_instrument(
+            VirtualInstrumentId::new(7),
+            VirtualParameterId::new(4),
+            InstrumentValue::Number(35.0),
+        );
+
+        assert!(matches!(
+            handle.apply_manual(ManualOutputIntent::new(target, request,),),
+            Err(OutputRequestError::Transport(_)),
+        ));
+
+        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
+    }
+
+    #[test]
+    fn rejects_automatic_output_in_manual_mode() {
+        let target = target();
+
+        let connection_id = target.connection_id();
+
+        let serial_connections = SerialConnectionRegistry::new();
+
+        serial_connections
+            .register(connection_id)
+            .unwrap()
+            .set(Some(serial_config("COM9")));
+
+        let connection_router = ConnectionRouter::default();
+
+        let (command_sender, _command_receiver) = unbounded();
+
+        connection_router.insert(WorkerHandle::new(connection_id, command_sender));
+
+        let service = OutputService::spawn(connection_router, serial_connections).unwrap();
+
+        let handle = service.handle();
+
+        handle.register_controller(target, "heater").unwrap();
+
+        let request = InstrumentWriteRequest::virtual_instrument(
+            VirtualInstrumentId::new(7),
+            VirtualParameterId::new(4),
+            InstrumentValue::Number(35.0),
+        );
+
+        let _ = handle
+            .apply_manual(ManualOutputIntent::new(target, request))
+            .unwrap();
+
+        assert!(matches!(
+            handle.apply_automatic(AutomaticOutputIntent::new(target, "heater", request,),),
+            Err(OutputRequestError::Arbiter(
+                OutputArbiterError::SourceNotAllowed {
+                    mode: OutputMode::Manual,
+                    ..
+                }
+            )),
+        ));
     }
 }

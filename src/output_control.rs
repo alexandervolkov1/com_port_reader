@@ -100,6 +100,22 @@ impl AutomaticOutputIntent {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ManualOutputIntent {
+    target: ConnectedParameterAddress,
+    request: InstrumentWriteRequest,
+}
+
+impl ManualOutputIntent {
+    pub(crate) fn new(target: ConnectedParameterAddress, request: InstrumentWriteRequest) -> Self {
+        Self { target, request }
+    }
+
+    fn into_parts(self) -> (ConnectedParameterAddress, InstrumentWriteRequest) {
+        (self.target, self.request)
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct OutputArbiter {
     outputs: HashMap<ConnectedParameterAddress, OutputState>,
