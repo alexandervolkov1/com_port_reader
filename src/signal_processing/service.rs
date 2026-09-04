@@ -177,7 +177,9 @@ enum ProcessingCommand<SignalId> {
         signal_id: SignalId,
     },
 
-    Clear,
+    Clear {
+        response_sender: Sender<()>,
+    },
 
     Shutdown,
 
@@ -678,8 +680,14 @@ impl<SignalId> ProcessingHandle<SignalId> {
     }
 
     pub fn clear(&self) -> Result<(), ProcessingServiceDisconnected> {
+        let (response_sender, response_receiver) = bounded(1);
+
         self.command_sender
-            .send(ProcessingCommand::Clear)
+            .send(ProcessingCommand::Clear { response_sender })
+            .map_err(|_| ProcessingServiceDisconnected)?;
+
+        response_receiver
+            .recv()
             .map_err(|_| ProcessingServiceDisconnected)
     }
 
@@ -1138,10 +1146,12 @@ fn run_processing<SignalId>(
                 let _ = response_sender.send(removed);
             }
 
-            ProcessingCommand::Clear => {
+            ProcessingCommand::Clear { response_sender } => {
                 controller_diagnostics.clear();
                 registry.clear();
                 graph.clear();
+
+                let _ = response_sender.send(());
             }
 
             ProcessingCommand::Shutdown => {
