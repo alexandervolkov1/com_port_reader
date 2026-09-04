@@ -15,7 +15,9 @@ use crate::{
     },
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
     signal_processing::{ProcessingHandle, SignalFilterDefinition},
-    user_command::{ResumeControllerError, SetControllerInputError, UserCommand},
+    user_command::{
+        PauseControllerError, ResumeControllerError, SetControllerInputError, UserCommand,
+    },
     worker::{
         ConnectionRouter, ConnectionWorkerEvent, WorkerEvent, WorkerHandle, WorkerHandleError,
     },
@@ -160,6 +162,16 @@ impl CommandDispatcher {
 
             return Err(ResumeControllerError::Output(output_error));
         }
+
+        Ok(())
+    }
+
+    fn pause_controller(&self, name: &str) -> Result<(), PauseControllerError> {
+        let _safe_write_response = self.output_control.apply_safe(name)?;
+
+        self.processing
+            .pause_controller(name)
+            .map_err(PauseControllerError::ControllerAfterSafeOutput)?;
 
         Ok(())
     }
@@ -342,7 +354,7 @@ impl CommandDispatcher {
                 name,
                 response_sender,
             } => {
-                let result = self.processing.pause_controller(&name);
+                let result = self.pause_controller(&name);
 
                 let _ = response_sender.send(result);
             }
@@ -610,8 +622,18 @@ impl CommandDispatcher {
         target: ConnectedParameterAddress,
         definition: ControlLoopDefinition<SeriesId, ControlOutputTarget>,
     ) -> Result<(), String> {
+        let safe_request = definition
+            .output_target()
+            .safe_write_request()
+            .map_err(|error| {
+                format!(
+                    "failed to create safe \
+                         output request: {error}",
+                )
+            })?;
+
         self.output_control
-            .register_controller(target, name)
+            .register_controller(target, name, safe_request)
             .map_err(|error| {
                 format!(
                     "failed to register output: \

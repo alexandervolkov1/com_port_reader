@@ -23,6 +23,7 @@ enum OutputCommand {
     RegisterController {
         target: ConnectedParameterAddress,
         controller: String,
+        safe_request: Option<InstrumentWriteRequest>,
         response_sender: Sender<Result<(), OutputArbiterError>>,
     },
 
@@ -59,6 +60,11 @@ enum OutputCommand {
         response_sender: Sender<Result<(), OutputRequestError>>,
     },
 
+    ApplySafe {
+        controller: String,
+        response_sender: Sender<Result<Receiver<InstrumentWriteResult>, OutputRequestError>>,
+    },
+
     Shutdown,
 }
 
@@ -72,6 +78,7 @@ impl OutputHandle {
         &self,
         target: ConnectedParameterAddress,
         controller: impl Into<String>,
+        safe_request: Option<InstrumentWriteRequest>,
     ) -> Result<(), OutputRequestError> {
         let (response_sender, response_receiver) = bounded(1);
 
@@ -79,6 +86,7 @@ impl OutputHandle {
             .send(OutputCommand::RegisterController {
                 target,
                 controller: controller.into(),
+                safe_request,
                 response_sender,
             })
             .map_err(|_| OutputRequestError::Disconnected)?;
@@ -205,6 +213,24 @@ impl OutputHandle {
             .map_err(|_| OutputRequestError::Disconnected)?
             .map_err(Into::into)
     }
+
+    pub(crate) fn apply_safe(
+        &self,
+        controller: impl Into<String>,
+    ) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(OutputCommand::ApplySafe {
+                controller: controller.into(),
+                response_sender,
+            })
+            .map_err(|_| OutputRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| OutputRequestError::Disconnected)?
+    }
 }
 
 pub(crate) struct OutputService {
@@ -260,9 +286,10 @@ fn run(
             OutputCommand::RegisterController {
                 target,
                 controller,
+                safe_request,
                 response_sender,
             } => {
-                let result = arbiter.register_controller(target, controller);
+                let result = arbiter.register_controller(target, controller, safe_request);
 
                 let _ = response_sender.send(result);
             }
@@ -341,6 +368,20 @@ fn run(
                 let _ = response_sender.send(result);
             }
 
+            OutputCommand::ApplySafe {
+                controller,
+                response_sender,
+            } => {
+                let result = apply_safe(
+                    &mut arbiter,
+                    &controller,
+                    &connection_router,
+                    &serial_connections,
+                );
+
+                let _ = response_sender.send(result);
+            }
+
             OutputCommand::Shutdown => {
                 break;
             }
@@ -376,6 +417,25 @@ fn apply_manual(
     let (target, request) = intent.into_parts();
 
     arbiter.mode(target)?;
+
+    validate_request_target(target, request)?;
+
+    let response_receiver = dispatch_write(target, request, connection_router, serial_connections)?;
+
+    arbiter.set_mode(target, OutputMode::Manual)?;
+
+    Ok(response_receiver)
+}
+
+fn apply_safe(
+    arbiter: &mut OutputArbiter,
+    controller: &str,
+    connection_router: &ConnectionRouter,
+    serial_connections: &SerialConnectionRegistry,
+) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
+    let (target, request) = arbiter.safe_output(controller)?;
+
+    arbiter.authorize(target, &OutputSource::Safety)?;
 
     validate_request_target(target, request)?;
 
@@ -600,7 +660,7 @@ mod tests {
 
         let target = target();
 
-        handle.register_controller(target, "heater").unwrap();
+        handle.register_controller(target, "heater", None).unwrap();
 
         assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
     }
@@ -613,10 +673,10 @@ mod tests {
 
         let target = target();
 
-        handle.register_controller(target, "heater").unwrap();
+        handle.register_controller(target, "heater", None).unwrap();
 
         assert_eq!(
-            handle.register_controller(target, "other",),
+            handle.register_controller(target, "other", None),
             Err(OutputRequestError::Arbiter(
                 OutputArbiterError::AlreadyRegistered {
                     controller: "heater".to_owned(),
@@ -633,13 +693,13 @@ mod tests {
 
         let target = target();
 
-        handle.register_controller(target, "heater").unwrap();
+        handle.register_controller(target, "heater", None).unwrap();
 
         handle
             .rollback_controller_registration(target, "heater")
             .unwrap();
 
-        handle.register_controller(target, "other").unwrap();
+        handle.register_controller(target, "other", None).unwrap();
 
         assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
     }
@@ -666,7 +726,7 @@ mod tests {
 
         let target = target();
 
-        handle.register_controller(target, "heater").unwrap();
+        handle.register_controller(target, "heater", None).unwrap();
 
         let request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -703,7 +763,7 @@ mod tests {
 
         let handle = service.handle();
 
-        handle.register_controller(target, "heater").unwrap();
+        handle.register_controller(target, "heater", None).unwrap();
 
         let request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -757,7 +817,7 @@ mod tests {
 
         let handle = service.handle();
 
-        handle.register_controller(target, "heater").unwrap();
+        handle.register_controller(target, "heater", None).unwrap();
 
         let request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -792,7 +852,7 @@ mod tests {
 
         let target = target();
 
-        handle.register_controller(target, "heater").unwrap();
+        handle.register_controller(target, "heater", None).unwrap();
 
         let request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -831,7 +891,7 @@ mod tests {
 
         let handle = service.handle();
 
-        handle.register_controller(target, "heater").unwrap();
+        handle.register_controller(target, "heater", None).unwrap();
 
         let request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -932,7 +992,7 @@ mod tests {
 
         let handle = service.handle();
 
-        handle.register_controller(target, "heater").unwrap();
+        handle.register_controller(target, "heater", None).unwrap();
 
         let request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -972,7 +1032,7 @@ mod tests {
 
         let handle = service.handle();
 
-        handle.register_controller(target, "heater").unwrap();
+        handle.register_controller(target, "heater", None).unwrap();
 
         let request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -993,6 +1053,75 @@ mod tests {
         let _ = handle
             .apply_automatic(AutomaticOutputIntent::new(target, "heater", request))
             .unwrap();
+
+        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
+    }
+
+    #[test]
+    fn applies_configured_safe_output_and_enters_manual_mode() {
+        let target = target();
+
+        let connection_id = target.connection_id();
+
+        let serial_connections = SerialConnectionRegistry::new();
+
+        serial_connections
+            .register(connection_id)
+            .unwrap()
+            .set(Some(serial_config("COM9")));
+
+        let connection_router = ConnectionRouter::default();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        connection_router.insert(WorkerHandle::new(connection_id, command_sender));
+
+        let service = OutputService::spawn(connection_router, serial_connections).unwrap();
+
+        let handle = service.handle();
+
+        let safe_request = InstrumentWriteRequest::virtual_instrument(
+            VirtualInstrumentId::new(7),
+            VirtualParameterId::new(4),
+            InstrumentValue::Number(0.0),
+        );
+
+        handle
+            .register_controller(target, "heater", Some(safe_request))
+            .unwrap();
+
+        let _response_receiver = handle.apply_safe("heater").unwrap();
+
+        assert_eq!(handle.mode(target), Ok(OutputMode::Manual),);
+
+        let command = command_receiver.try_recv().unwrap();
+
+        let WorkerCommand::Connection(ConnectionCommand::WriteInstrument { request, .. }) = command
+        else {
+            panic!("expected instrument write command",);
+        };
+
+        assert_eq!(request, safe_request,);
+    }
+
+    #[test]
+    fn rejects_safe_output_without_configuration() {
+        let service = service();
+
+        let handle = service.handle();
+
+        let target = target();
+
+        handle.register_controller(target, "heater", None).unwrap();
+
+        assert!(matches!(
+            handle.apply_safe("heater"),
+            Err(OutputRequestError::Arbiter(
+                OutputArbiterError::SafeOutputNotConfigured(
+                    controller,
+                ),
+            )) if controller == "heater"
+        ));
 
         assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
     }

@@ -186,29 +186,37 @@ where
         self.outputs_by_input.clear();
     }
 
-    pub fn remove_from(&mut self, signal_id: SignalId) -> Vec<SignalId> {
+    pub fn removal_set_from(&self, signal_id: SignalId) -> Vec<SignalId> {
         let mut pending = VecDeque::from([signal_id]);
 
-        let mut removed = Vec::new();
+        let mut affected = Vec::new();
         let mut visited = HashSet::new();
 
         if self.nodes.contains_key(&signal_id) {
             visited.insert(signal_id);
-            removed.push(signal_id);
+            affected.push(signal_id);
         }
 
         while let Some(input) = pending.pop_front() {
-            let Some(outputs) = self.outputs_by_input.get(&input).cloned() else {
+            let Some(outputs) = self.outputs_by_input.get(&input) else {
                 continue;
             };
 
-            for output in outputs {
+            for &output in outputs {
                 if visited.insert(output) {
-                    removed.push(output);
+                    affected.push(output);
                     pending.push_back(output);
                 }
             }
         }
+
+        affected
+    }
+
+    pub fn remove_from(&mut self, signal_id: SignalId) -> Vec<SignalId> {
+        let removed = self.removal_set_from(signal_id);
+
+        let removed_set = removed.iter().copied().collect::<HashSet<_>>();
 
         for output in &removed {
             self.nodes.remove(output);
@@ -216,7 +224,7 @@ where
         }
 
         for outputs in self.outputs_by_input.values_mut() {
-            outputs.retain(|output| !visited.contains(output));
+            outputs.retain(|output| !removed_set.contains(output));
         }
 
         self.outputs_by_input
@@ -779,5 +787,28 @@ mod tests {
             graph.replace_filter(10, SignalFilterDefinition::median(3).unwrap(),),
             Err(SignalProcessingGraphUpdateError::UnknownOutput { output: 10 },),
         );
+    }
+
+    #[test]
+    fn removal_preview_matches_actual_removal() {
+        let mut graph = SignalProcessingGraph::new();
+
+        graph
+            .add_filter(1_u64, 2, SignalFilterDefinition::moving_average(2).unwrap())
+            .unwrap();
+
+        graph
+            .add_filter(2, 3, SignalFilterDefinition::median(3).unwrap())
+            .unwrap();
+
+        graph
+            .add_filter(1, 4, SignalFilterDefinition::exponential(1.0).unwrap())
+            .unwrap();
+
+        let preview = graph.removal_set_from(1);
+
+        let removed = graph.remove_from(1);
+
+        assert_eq!(preview, removed,);
     }
 }

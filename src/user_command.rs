@@ -51,6 +51,52 @@ impl From<ControllerRequestError> for SetControllerInputError {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum PauseControllerError {
+    Output(OutputRequestError),
+
+    ControllerAfterSafeOutput(ControllerRequestError),
+}
+
+impl fmt::Display for PauseControllerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Output(error) => {
+                write!(
+                    formatter,
+                    "Safe controller output \
+                     failed: {error}",
+                )
+            }
+
+            Self::ControllerAfterSafeOutput(error) => {
+                write!(
+                    formatter,
+                    "Safe output was requested, \
+                     but controller pause failed: \
+                     {error}",
+                )
+            }
+        }
+    }
+}
+
+impl Error for PauseControllerError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Output(error) => Some(error),
+
+            Self::ControllerAfterSafeOutput(error) => Some(error),
+        }
+    }
+}
+
+impl From<OutputRequestError> for PauseControllerError {
+    fn from(error: OutputRequestError) -> Self {
+        Self::Output(error)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum ResumeControllerError {
     Controller(ControllerRequestError),
     Output(OutputRequestError),
@@ -196,7 +242,7 @@ pub enum UserCommand {
 
     PauseController {
         name: String,
-        response_sender: Sender<Result<(), ControllerRequestError>>,
+        response_sender: Sender<Result<(), PauseControllerError>>,
     },
 
     ResumeController {

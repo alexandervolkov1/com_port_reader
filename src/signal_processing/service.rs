@@ -181,6 +181,11 @@ enum ProcessingCommand<SignalId> {
 
     Shutdown,
 
+    ControllersAffectedByRemoval {
+        signal_id: SignalId,
+        response_sender: Sender<Vec<String>>,
+    },
+
     RemoveFrom {
         signal_id: SignalId,
         response_sender: Sender<Vec<SignalId>>,
@@ -674,6 +679,24 @@ impl<SignalId> ProcessingHandle<SignalId> {
             .map_err(|_| ProcessingServiceDisconnected)
     }
 
+    pub fn controllers_affected_by_removal(
+        &self,
+        signal_id: SignalId,
+    ) -> Result<Vec<String>, ProcessingServiceDisconnected> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::ControllersAffectedByRemoval {
+                signal_id,
+                response_sender,
+            })
+            .map_err(|_| ProcessingServiceDisconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ProcessingServiceDisconnected)
+    }
+
     pub fn remove_from(
         &self,
         signal_id: SignalId,
@@ -783,6 +806,29 @@ where
     });
 
     Ok(())
+}
+
+fn controllers_affected_by_removal<SignalId>(
+    graph: &SignalProcessingGraph<SignalId>,
+    registry: &ControllerRegistry<SignalId>,
+    signal_id: SignalId,
+) -> Vec<String>
+where
+    SignalId: Copy + Eq + Hash,
+{
+    let mut affected_signals = graph.removal_set_from(signal_id);
+
+    if !affected_signals.contains(&signal_id) {
+        affected_signals.insert(0, signal_id);
+    }
+
+    let mut controllers = Vec::new();
+
+    for affected_signal in affected_signals {
+        controllers.extend(registry.names_from(affected_signal));
+    }
+
+    controllers
 }
 
 fn run_processing<SignalId>(
@@ -1024,6 +1070,15 @@ fn run_processing<SignalId>(
                 graph.reset_from(signal_id);
 
                 registry.reset_from(signal_id);
+            }
+
+            ProcessingCommand::ControllersAffectedByRemoval {
+                signal_id,
+                response_sender,
+            } => {
+                let controllers = controllers_affected_by_removal(&graph, &registry, signal_id);
+
+                let _ = response_sender.send(controllers);
             }
 
             ProcessingCommand::RemoveFrom {
@@ -2371,5 +2426,51 @@ mod tests {
         assert_eq!(filtered.output.integral(), Some(integral),);
 
         assert_eq!(filtered.output.derivative(), Some(0.0),);
+    }
+
+    #[test]
+    fn previews_controllers_removed_with_signal_branch() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        handle
+            .add_control_loop(pid_definition("raw_heater", 1, 1))
+            .unwrap();
+
+        handle
+            .add_filter(1, 2, SignalFilterDefinition::moving_average(2).unwrap())
+            .unwrap();
+
+        handle
+            .add_control_loop(pid_definition("filtered_heater", 2, 2))
+            .unwrap();
+
+        handle
+            .add_control_loop(pid_definition("unrelated_heater", 3, 3))
+            .unwrap();
+
+        assert_eq!(
+            handle.controllers_affected_by_removal(1,).unwrap(),
+            vec!["raw_heater".to_owned(), "filtered_heater".to_owned(),],
+        );
+
+        /*
+         * Preview must not mutate runtime.
+         */
+        assert_eq!(
+            handle.controller_state("raw_heater",),
+            Ok(ControlLoopState::Running),
+        );
+
+        assert_eq!(
+            handle.controller_state("filtered_heater",),
+            Ok(ControlLoopState::Running),
+        );
+
+        assert_eq!(
+            handle.controller_state("unrelated_heater",),
+            Ok(ControlLoopState::Running),
+        );
     }
 }

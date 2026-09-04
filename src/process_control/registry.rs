@@ -264,6 +264,14 @@ where
         true
     }
 
+    pub fn names_from(&self, signal_id: SignalId) -> Vec<String> {
+        self.loops
+            .iter()
+            .filter(|control_loop| *control_loop.input() == signal_id)
+            .map(|control_loop| control_loop.name().to_owned())
+            .collect()
+    }
+
     pub fn remove_from(&mut self, signal_id: SignalId) -> Vec<String> {
         let mut removed = Vec::new();
 
@@ -1492,5 +1500,29 @@ mod tests {
                 },
             ),),
         );
+    }
+
+    #[test]
+    fn previews_loops_for_signal_without_removing_them() {
+        let mut registry = ControllerRegistry::new();
+
+        registry
+            .add(definition("first", 1, virtual_target(1, 1, 1)))
+            .unwrap();
+
+        registry
+            .add(definition("second", 1, virtual_target(1, 1, 2)))
+            .unwrap();
+
+        registry
+            .add(definition("third", 2, virtual_target(1, 1, 3)))
+            .unwrap();
+
+        assert_eq!(
+            registry.names_from(1),
+            vec!["first".to_owned(), "second".to_owned(),],
+        );
+
+        assert_eq!(registry.len(), 3,);
     }
 }
