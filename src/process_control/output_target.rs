@@ -10,10 +10,13 @@ use crate::{
     },
 };
 
+use super::ControlOutputConversionError;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ControlOutputTarget {
     connection_id: ConnectionId,
     parameter: ControlOutputParameter,
+    safe_value: Option<f64>,
 }
 
 impl ControlOutputTarget {
@@ -33,12 +36,12 @@ impl ControlOutputTarget {
 
         Ok(Self {
             connection_id,
-
             parameter: ControlOutputParameter::Metakon5x3 {
                 instrument,
                 parameter,
                 scale,
             },
+            safe_value: None,
         })
     }
 
@@ -51,13 +54,13 @@ impl ControlOutputTarget {
 
         Ok(Self {
             connection_id,
-
             parameter: ControlOutputParameter::VirtualInstrument {
                 instrument,
                 parameter: parameter.id(),
                 value_type: parameter.value_type(),
                 range: parameter.range(),
             },
+            safe_value: None,
         })
     }
 
@@ -107,6 +110,16 @@ impl ControlOutputTarget {
 
             ControlOutputParameter::VirtualInstrument { range, .. } => range,
         }
+    }
+
+    pub fn with_safe_value(mut self, value: f64) -> Result<Self, ControlOutputConversionError> {
+        self.write_request(value)?;
+        self.safe_value = Some(value);
+        Ok(self)
+    }
+
+    pub const fn safe_value(&self) -> Option<f64> {
+        self.safe_value
     }
 }
 
@@ -228,6 +241,7 @@ mod tests {
                 VirtualInstrumentId, VirtualParameterDescriptor, VirtualParameterId,
             },
         },
+        process_control::ControlOutputConversionError,
     };
 
     use super::{ControlOutputParameter, ControlOutputTarget, ControlOutputTargetError};
@@ -268,6 +282,8 @@ mod tests {
             "connection 7, Metakon 5X3 device 3, \
              channel 0, parameter output_power",
         );
+
+        assert_eq!(target.safe_value(), None,);
     }
 
     #[test]
@@ -394,6 +410,8 @@ mod tests {
             "connection 2, virtual instrument 9, \
              parameter 4",
         );
+
+        assert_eq!(target.safe_value(), None,);
     }
 
     #[test]
@@ -482,6 +500,63 @@ mod tests {
             ControlOutputTargetError::InvalidScale.to_string(),
             "Metakon output scale must be finite \
              and greater than zero",
+        );
+    }
+
+    #[test]
+    fn stores_valid_safe_output_value() {
+        let parameter = VirtualParameterDescriptor::new(
+            VirtualParameterId::new(4),
+            "heater_power",
+            "Heater power",
+            ParameterAccess::ReadWrite,
+            ParameterValueType::Number,
+        )
+        .with_range(ParameterRange::Number {
+            minimum: 0.0,
+            maximum: 100.0,
+        });
+
+        let target = ControlOutputTarget::virtual_instrument(
+            ConnectionId::PRIMARY,
+            VirtualInstrumentId::new(1),
+            &parameter,
+        )
+        .unwrap()
+        .with_safe_value(0.0)
+        .unwrap();
+
+        assert_eq!(target.safe_value(), Some(0.0),);
+    }
+
+    #[test]
+    fn rejects_safe_output_value_outside_target_range() {
+        let parameter = VirtualParameterDescriptor::new(
+            VirtualParameterId::new(4),
+            "heater_power",
+            "Heater power",
+            ParameterAccess::ReadWrite,
+            ParameterValueType::Number,
+        )
+        .with_range(ParameterRange::Number {
+            minimum: 0.0,
+            maximum: 100.0,
+        });
+
+        let target = ControlOutputTarget::virtual_instrument(
+            ConnectionId::PRIMARY,
+            VirtualInstrumentId::new(1),
+            &parameter,
+        )
+        .unwrap();
+
+        assert_eq!(
+            target.with_safe_value(120.0),
+            Err(ControlOutputConversionError::ValueOutOfRange {
+                value: 120.0,
+                minimum: 0.0,
+                maximum: 100.0,
+            },),
         );
     }
 }

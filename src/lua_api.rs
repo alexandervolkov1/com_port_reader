@@ -459,6 +459,8 @@ fn add_pid_loop(
 ) -> mlua::Result<LuaControllerHandle> {
     validate_pid_options(options)?;
 
+    let output_target = configure_safe_output(output_target, options)?;
+
     let connection_id = output_target.connection_id();
 
     let name = options
@@ -522,12 +524,30 @@ fn add_pid_loop(
     })
 }
 
+fn configure_safe_output(
+    output_target: ControlOutputTarget,
+    options: &Table,
+) -> mlua::Result<ControlOutputTarget> {
+    let Some(safe_output) = options.get::<Option<f64>>("safe_output")? else {
+        return Ok(output_target);
+    };
+
+    output_target.with_safe_value(safe_output).map_err(|error| {
+        mlua::Error::RuntimeError(format!(
+            "Invalid safe output: \
+                     {error}",
+        ))
+    })
+}
+
 fn add_on_off_loop(
     command_sender: &Sender<UserCommand>,
     output_target: ControlOutputTarget,
     options: &Table,
 ) -> mlua::Result<LuaControllerHandle> {
     validate_on_off_options(options)?;
+
+    let output_target = configure_safe_output(output_target, options)?;
 
     let connection_id = output_target.connection_id();
 
@@ -581,7 +601,15 @@ fn validate_pid_options(options: &Table) -> mlua::Result<()> {
 
         if !matches!(
             key.as_str(),
-            "name" | "input" | "setpoint" | "kp" | "ki" | "kd" | "output_min" | "output_max"
+            "name"
+                | "input"
+                | "setpoint"
+                | "kp"
+                | "ki"
+                | "kd"
+                | "output_min"
+                | "output_max"
+                | "safe_output"
         ) {
             return Err(mlua::Error::RuntimeError(format!(
                 "Unknown PID option '{key}'",
@@ -598,7 +626,13 @@ fn validate_on_off_options(options: &Table) -> mlua::Result<()> {
 
         if !matches!(
             key.as_str(),
-            "name" | "input" | "setpoint" | "hysteresis" | "output_off" | "output_on"
+            "name"
+                | "input"
+                | "setpoint"
+                | "hysteresis"
+                | "output_off"
+                | "output_on"
+                | "safe_output"
         ) {
             return Err(mlua::Error::RuntimeError(format!(
                 "Unknown on/off option \

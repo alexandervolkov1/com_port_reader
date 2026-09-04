@@ -30,6 +30,14 @@ impl ControlOutputTarget {
             } => virtual_write_request(instrument, parameter, value_type, value),
         }
     }
+
+    pub fn safe_write_request(
+        &self,
+    ) -> Result<Option<InstrumentWriteRequest>, ControlOutputConversionError> {
+        self.safe_value()
+            .map(|value| self.write_request(value))
+            .transpose()
+    }
 }
 
 fn validate_output_value(
@@ -632,6 +640,28 @@ mod tests {
                 .to_string(),
             "Control output does not support \
              parameter type 'boolean'",
+        );
+    }
+
+    #[test]
+    fn converts_safe_virtual_output() {
+        let target = virtual_target(
+            ParameterValueType::Number,
+            Some(ParameterRange::Number {
+                minimum: 0.0,
+                maximum: 100.0,
+            }),
+        )
+        .with_safe_value(0.0)
+        .unwrap();
+
+        assert_eq!(
+            target.safe_write_request(),
+            Ok(Some(InstrumentWriteRequest::VirtualInstrument {
+                instrument: VirtualInstrumentId::new(7),
+                parameter: VirtualParameterId::new(4),
+                value: InstrumentValue::Number(0.0,),
+            },)),
         );
     }
 }
