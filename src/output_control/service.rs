@@ -17,6 +17,12 @@ enum OutputCommand {
         response_sender: Sender<Result<(), OutputArbiterError>>,
     },
 
+    RollbackControllerRegistration {
+        target: ConnectedParameterAddress,
+        controller: String,
+        response_sender: Sender<Result<(), OutputArbiterError>>,
+    },
+
     Mode {
         target: ConnectedParameterAddress,
         response_sender: Sender<Result<OutputMode, OutputArbiterError>>,
@@ -40,6 +46,27 @@ impl OutputHandle {
 
         self.command_sender
             .send(OutputCommand::RegisterController {
+                target,
+                controller: controller.into(),
+                response_sender,
+            })
+            .map_err(|_| OutputRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| OutputRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub(crate) fn rollback_controller_registration(
+        &self,
+        target: ConnectedParameterAddress,
+        controller: impl Into<String>,
+    ) -> Result<(), OutputRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(OutputCommand::RollbackControllerRegistration {
                 target,
                 controller: controller.into(),
                 response_sender,
@@ -121,6 +148,16 @@ fn run(command_receiver: Receiver<OutputCommand>) {
                 response_sender,
             } => {
                 let result = arbiter.register_controller(target, controller);
+
+                let _ = response_sender.send(result);
+            }
+
+            OutputCommand::RollbackControllerRegistration {
+                target,
+                controller,
+                response_sender,
+            } => {
+                let result = arbiter.unregister_controller(target, &controller);
 
                 let _ = response_sender.send(result);
             }
@@ -226,6 +263,25 @@ mod tests {
                 },
             ),),
         );
+    }
+
+    #[test]
+    fn rolls_back_controller_registration() {
+        let service = OutputService::spawn().unwrap();
+
+        let handle = service.handle();
+
+        let target = target();
+
+        handle.register_controller(target, "heater").unwrap();
+
+        handle
+            .rollback_controller_registration(target, "heater")
+            .unwrap();
+
+        handle.register_controller(target, "other").unwrap();
+
+        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
     }
 
     #[test]

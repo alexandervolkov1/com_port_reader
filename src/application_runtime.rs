@@ -189,6 +189,7 @@ impl ApplicationRuntime {
             definition.clone(),
             series.clone(),
             processing_handle,
+            output_handle.clone(),
             event_receiver,
             log.clone(),
         );

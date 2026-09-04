@@ -109,8 +109,26 @@ impl OutputArbiter {
         Ok(())
     }
 
-    pub(crate) fn unregister(&mut self, target: ConnectedParameterAddress) -> bool {
-        self.outputs.remove(&target).is_some()
+    pub(crate) fn unregister_controller(
+        &mut self,
+        target: ConnectedParameterAddress,
+        controller: &str,
+    ) -> Result<(), OutputArbiterError> {
+        let state = self
+            .outputs
+            .get(&target)
+            .ok_or(OutputArbiterError::NotRegistered)?;
+
+        if state.controller != controller {
+            return Err(OutputArbiterError::ControllerMismatch {
+                expected: state.controller.clone(),
+                actual: controller.to_owned(),
+            });
+        }
+
+        self.outputs.remove(&target);
+
+        Ok(())
     }
 
     pub(crate) fn mode(
@@ -363,18 +381,37 @@ mod tests {
     }
 
     #[test]
-    fn unregisters_output() {
+    fn unregisters_matching_controller() {
         let mut arbiter = OutputArbiter::new();
 
         let target = target();
 
         arbiter.register_controller(target, "heater").unwrap();
 
-        assert!(arbiter.unregister(target));
+        assert_eq!(arbiter.unregister_controller(target, "heater",), Ok(()),);
 
         assert_eq!(
             arbiter.mode(target),
             Err(OutputArbiterError::NotRegistered,),
         );
+    }
+
+    #[test]
+    fn does_not_unregister_another_controller() {
+        let mut arbiter = OutputArbiter::new();
+
+        let target = target();
+
+        arbiter.register_controller(target, "heater").unwrap();
+
+        assert_eq!(
+            arbiter.unregister_controller(target, "other",),
+            Err(OutputArbiterError::ControllerMismatch {
+                expected: "heater".to_owned(),
+                actual: "other".to_owned(),
+            },),
+        );
+
+        assert_eq!(arbiter.mode(target), Ok(OutputMode::Automatic),);
     }
 }

@@ -7,6 +7,8 @@ use crate::{
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
     data::{NewControllerDiagnosticSeries, NewFilteredSeries, NewSeries, SeriesId, SeriesStore},
+    instrument::ConnectedParameterAddress,
+    output_control::OutputHandle,
     process_control::{
         ControlLoopDefinition, ControlOutputTarget, Controller, NewOnOffLoop, NewPidLoop,
         OnOffController, PidController,
@@ -29,6 +31,7 @@ pub(crate) struct CommandDispatcher {
     application_definition: ApplicationDefinition,
     series: SeriesStore,
     processing: ProcessingHandle<SeriesId>,
+    output_control: OutputHandle,
     event_receiver: Receiver<ConnectionWorkerEvent>,
     log: LogHandle,
 }
@@ -40,6 +43,7 @@ impl CommandDispatcher {
         application_definition: ApplicationDefinition,
         series: SeriesStore,
         processing: ProcessingHandle<SeriesId>,
+        output_control: OutputHandle,
         event_receiver: Receiver<ConnectionWorkerEvent>,
         log: LogHandle,
     ) -> Self {
@@ -49,6 +53,7 @@ impl CommandDispatcher {
             application_definition,
             series,
             processing,
+            output_control,
             event_receiver,
             log,
         }
@@ -600,9 +605,45 @@ impl CommandDispatcher {
         }
     }
 
+    fn install_control_loop(
+        &self,
+        name: &str,
+        target: ConnectedParameterAddress,
+        definition: ControlLoopDefinition<SeriesId, ControlOutputTarget>,
+    ) -> Result<(), String> {
+        self.output_control
+            .register_controller(target, name)
+            .map_err(|error| {
+                format!(
+                    "failed to register output: \
+                     {error}",
+                )
+            })?;
+
+        if let Err(error) = self.processing.add_control_loop(definition) {
+            let rollback_result = self
+                .output_control
+                .rollback_controller_registration(target, name);
+
+            return match rollback_result {
+                Ok(()) => Err(error.to_string()),
+
+                Err(rollback_error) => Err(format!(
+                    "{error}; output ownership \
+                         rollback also failed: \
+                         {rollback_error}",
+                )),
+            };
+        }
+
+        Ok(())
+    }
+
     fn add_pid_loop(&self, pid_loop: NewPidLoop<ControlOutputTarget>) {
         let (name, input_name, output_target, setpoint, gains, output_limits) =
             pid_loop.into_parts();
+
+        let target = output_target.connected_parameter_address();
 
         let Some(input_id) = self.series.id_by_name(&input_name) else {
             self.log.error(format!(
@@ -642,20 +683,20 @@ impl CommandDispatcher {
                 }
             };
 
-        match self.processing.add_control_loop(definition) {
+        match self.install_control_loop(&name, target, definition) {
             Ok(()) => {
                 self.log.info(format!(
                     "PID loop '{name}' \
-                         added for input series \
-                         '{input_name}' \
-                         ({input_id}).",
+                     added for input series \
+                     '{input_name}' \
+                     ({input_id}).",
                 ));
             }
 
             Err(error) => {
                 self.log.error(format!(
                     "Failed to add PID loop \
-                         '{name}': {error}",
+                     '{name}': {error}",
                 ));
             }
         }
@@ -664,6 +705,8 @@ impl CommandDispatcher {
     fn add_on_off_loop(&self, on_off_loop: NewOnOffLoop<ControlOutputTarget>) {
         let (name, input_name, output_target, setpoint, hysteresis, output_off, output_on) =
             on_off_loop.into_parts();
+
+        let target = output_target.connected_parameter_address();
 
         let Some(input_id) = self.series.id_by_name(&input_name) else {
             self.log.error(format!(
@@ -702,12 +745,13 @@ impl CommandDispatcher {
                 }
             };
 
-        match self.processing.add_control_loop(definition) {
+        match self.install_control_loop(&name, target, definition) {
             Ok(()) => {
                 self.log.info(format!(
                     "On/off loop '{name}' \
                      added for input series \
-                     '{input_name}' ({input_id}).",
+                     '{input_name}' \
+                     ({input_id}).",
                 ));
             }
 
