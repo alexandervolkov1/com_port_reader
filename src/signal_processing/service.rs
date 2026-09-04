@@ -181,6 +181,10 @@ enum ProcessingCommand<SignalId> {
 
     Shutdown,
 
+    ControllerNames {
+        response_sender: Sender<Vec<String>>,
+    },
+
     ControllersAffectedByRemoval {
         signal_id: SignalId,
         response_sender: Sender<Vec<String>>,
@@ -697,6 +701,18 @@ impl<SignalId> ProcessingHandle<SignalId> {
             .map_err(|_| ProcessingServiceDisconnected)
     }
 
+    pub fn controller_names(&self) -> Result<Vec<String>, ProcessingServiceDisconnected> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::ControllerNames { response_sender })
+            .map_err(|_| ProcessingServiceDisconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ProcessingServiceDisconnected)
+    }
+
     pub fn remove_from(
         &self,
         signal_id: SignalId,
@@ -1070,6 +1086,10 @@ fn run_processing<SignalId>(
                 graph.reset_from(signal_id);
 
                 registry.reset_from(signal_id);
+            }
+
+            ProcessingCommand::ControllerNames { response_sender } => {
+                let _ = response_sender.send(registry.names());
             }
 
             ProcessingCommand::ControllersAffectedByRemoval {
@@ -2471,6 +2491,36 @@ mod tests {
         assert_eq!(
             handle.controller_state("unrelated_heater",),
             Ok(ControlLoopState::Running),
+        );
+    }
+
+    #[test]
+    fn returns_all_controller_names_without_modifying_runtime() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        handle
+            .add_control_loop(pid_definition("first", 1, 1))
+            .unwrap();
+
+        handle
+            .add_control_loop(pid_definition("second", 2, 2))
+            .unwrap();
+
+        assert_eq!(
+            handle.controller_names().unwrap(),
+            vec!["first".to_owned(), "second".to_owned(),],
+        );
+
+        assert_eq!(
+            handle.controller_state("first",),
+            Ok(ControlLoopState::Running,),
+        );
+
+        assert_eq!(
+            handle.controller_state("second",),
+            Ok(ControlLoopState::Running,),
         );
     }
 }
