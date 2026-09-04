@@ -595,8 +595,24 @@ impl ApplicationRuntime {
             return;
         }
 
+        let metadata = self.series.metadata();
+
+        /*
+         * Processing events and series lifecycle use
+         * different queues. A sample produced before
+         * delete/clear may therefore arrive after its
+         * output series has already been removed.
+         *
+         * Such a sample is stale, not an application
+         * error.
+         */
         let series_samples = samples
             .into_iter()
+            .filter(|processed| {
+                metadata
+                    .iter()
+                    .any(|series| series.id == processed.signal_id)
+            })
             .map(|processed| {
                 SeriesSample::new(
                     processed.signal_id,
@@ -605,14 +621,16 @@ impl ApplicationRuntime {
             })
             .collect::<Vec<_>>();
 
+        if series_samples.is_empty() {
+            return;
+        }
+
         if let Err(error) = self.series.append_samples(&series_samples) {
             self.log
                 .error(format!("Failed to store processed signal: {error}",));
 
             return;
         }
-
-        let metadata = self.series.metadata();
 
         let mut samples_by_connection: BTreeMap<ConnectionId, Vec<SeriesSample>> = BTreeMap::new();
 
@@ -621,12 +639,13 @@ impl ApplicationRuntime {
                 .iter()
                 .find(|metadata| metadata.id == series_sample.series_id)
             else {
-                self.log.error(format!(
-                    "Processed series {} disappeared \
-                     before it could be recorded",
-                    series_sample.series_id,
-                ));
-
+                /*
+                 * This should now be practically unreachable:
+                 * stale series were filtered above.
+                 *
+                 * Keep the guard anyway because SeriesStore
+                 * can change independently.
+                 */
                 continue;
             };
 
