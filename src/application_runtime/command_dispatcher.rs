@@ -1119,22 +1119,74 @@ impl CommandDispatcher {
     }
 
     fn clear_series(&self) {
-        match self.processing.clear() {
-            Ok(()) => {
-                self.series.clear();
-
-                self.log.info("All series cleared.");
-            }
+        let controllers = match self.processing.controller_names() {
+            Ok(controllers) => controllers,
 
             Err(error) => {
                 self.log.error(format!(
                     "Processing failed: \
-                         cannot clear \
-                         processing state: \
-                         {error}",
+                         cannot inspect controllers \
+                         before clearing: {error}",
+                ));
+
+                return;
+            }
+        };
+
+        /*
+         * Move every managed actuator into
+         * its configured safe state before
+         * destroying processing state.
+         */
+        for controller in &controllers {
+            if let Err(error) = self.output_control.apply_safe(controller) {
+                self.log.error(format!(
+                    "Cannot clear processing: \
+                     failed to apply safe \
+                     output for controller \
+                     '{controller}': {error}",
+                ));
+
+                return;
+            }
+        }
+
+        /*
+         * All affected outputs are now
+         * Manual and their safe writes have
+         * been successfully enqueued.
+         */
+        if let Err(error) = self.processing.clear() {
+            self.log.error(format!(
+                "Processing failed: \
+                 cannot clear processing \
+                 state: {error}",
+            ));
+
+            return;
+        }
+
+        /*
+         * Controllers no longer exist in
+         * ProcessingService. Their managed
+         * outputs may now release ownership.
+         */
+        for controller in &controllers {
+            if let Err(error) = self.output_control.release_controller(controller) {
+                self.log.error(format!(
+                    "Controller \
+                     '{controller}' was \
+                     removed from processing, \
+                     but its output ownership \
+                     could not be released: \
+                     {error}",
                 ));
             }
         }
+
+        self.series.clear();
+
+        self.log.info("All series cleared.");
     }
 }
 
