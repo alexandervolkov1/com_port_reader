@@ -23,8 +23,9 @@ impl ControllerInstanceId {
         Self(NEXT_CONTROLLER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed))
     }
 
-    pub(crate) const fn get(self) -> u64 {
-        self.0
+    #[cfg(test)]
+    pub(crate) const fn for_test(value: u64) -> Self {
+        Self(value)
     }
 }
 

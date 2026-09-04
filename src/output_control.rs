@@ -1,6 +1,9 @@
 use std::{collections::HashMap, error::Error, fmt};
 
-use crate::instrument::{ConnectedParameterAddress, InstrumentWriteRequest};
+use crate::{
+    instrument::{ConnectedParameterAddress, InstrumentWriteRequest},
+    process_control::ControllerInstanceId,
+};
 
 mod service;
 
@@ -75,6 +78,7 @@ impl OutputSourceKind {
 struct OutputState {
     mode: OutputMode,
     controller: String,
+    instance_id: ControllerInstanceId,
     safe_request: Option<InstrumentWriteRequest>,
 }
 
@@ -175,6 +179,7 @@ impl OutputArbiter {
         &mut self,
         target: ConnectedParameterAddress,
         controller: impl Into<String>,
+        instance_id: ControllerInstanceId,
         safe_request: Option<InstrumentWriteRequest>,
     ) -> Result<(), OutputArbiterError> {
         if let Some(existing) = self.outputs.get(&target) {
@@ -188,6 +193,7 @@ impl OutputArbiter {
             OutputState {
                 mode: OutputMode::Automatic,
                 controller: controller.into(),
+                instance_id,
                 safe_request,
             },
         );
@@ -426,6 +432,7 @@ mod tests {
             ConnectedParameterAddress, InstrumentParameterAddress,
             virtual_instrument::{VirtualInstrumentId, VirtualParameterId},
         },
+        process_control::ControllerInstanceId,
     };
 
     use super::{OutputArbiter, OutputArbiterError, OutputMode, OutputSource, OutputSourceKind};
@@ -440,13 +447,19 @@ mod tests {
         )
     }
 
+    fn instance_id() -> ControllerInstanceId {
+        ControllerInstanceId::for_test(1)
+    }
+
     #[test]
     fn registers_controller_in_automatic_mode() {
         let mut arbiter = OutputArbiter::new();
 
         let target = target();
 
-        arbiter.register_controller(target, "heater", None).unwrap();
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         assert_eq!(arbiter.mode(target), Ok(OutputMode::Automatic),);
 
@@ -462,7 +475,9 @@ mod tests {
 
         let target = target();
 
-        arbiter.register_controller(target, "heater", None).unwrap();
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         assert_eq!(
             arbiter.authorize(target, &OutputSource::Manual,),
@@ -491,7 +506,9 @@ mod tests {
 
         let target = target();
 
-        arbiter.register_controller(target, "heater", None).unwrap();
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         assert_eq!(
             arbiter.authorize(target, &OutputSource::controller("other",),),
@@ -508,7 +525,9 @@ mod tests {
 
         let target = target();
 
-        arbiter.register_controller(target, "heater", None).unwrap();
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         assert_eq!(arbiter.authorize(target, &OutputSource::Safety,), Ok(()),);
 
@@ -523,10 +542,12 @@ mod tests {
 
         let target = target();
 
-        arbiter.register_controller(target, "heater", None).unwrap();
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         assert_eq!(
-            arbiter.register_controller(target, "other", None),
+            arbiter.register_controller(target, "other", instance_id(), None),
             Err(OutputArbiterError::AlreadyRegistered {
                 controller: "heater".to_owned(),
             },),
@@ -549,7 +570,9 @@ mod tests {
 
         let target = target();
 
-        arbiter.register_controller(target, "heater", None).unwrap();
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         assert_eq!(arbiter.unregister_controller(target, "heater",), Ok(()),);
 
@@ -565,7 +588,9 @@ mod tests {
 
         let target = target();
 
-        arbiter.register_controller(target, "heater", None).unwrap();
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         assert_eq!(
             arbiter.unregister_controller(target, "other",),
@@ -584,7 +609,9 @@ mod tests {
 
         let target = target();
 
-        arbiter.register_controller(target, "heater", None).unwrap();
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         arbiter.set_mode(target, OutputMode::Manual).unwrap();
 
@@ -604,7 +631,9 @@ mod tests {
 
         let target = target();
 
-        arbiter.register_controller(target, "heater", None).unwrap();
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         assert_eq!(
             arbiter.release_controller("heater",),
@@ -623,7 +652,9 @@ mod tests {
 
         let target = target();
 
-        arbiter.register_controller(target, "heater", None).unwrap();
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         arbiter.set_mode(target, OutputMode::Manual).unwrap();
 

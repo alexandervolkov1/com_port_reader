@@ -622,6 +622,8 @@ impl CommandDispatcher {
         target: ConnectedParameterAddress,
         definition: ControlLoopDefinition<SeriesId, ControlOutputTarget>,
     ) -> Result<(), String> {
+        let instance_id = definition.instance_id();
+
         let safe_request = definition
             .output_target()
             .safe_write_request()
@@ -633,7 +635,7 @@ impl CommandDispatcher {
             })?;
 
         self.output_control
-            .register_controller(target, name, safe_request)
+            .register_controller(target, name, instance_id, safe_request)
             .map_err(|error| {
                 format!(
                     "failed to register output: \

@@ -10,6 +10,7 @@ use crate::{
     acquisition::InstrumentWriteResult,
     connection::ConnectionId,
     instrument::{ConnectedParameterAddress, InstrumentParameterAddress, InstrumentWriteRequest},
+    process_control::ControllerInstanceId,
     serial_connection::SerialConnectionRegistry,
     worker::ConnectionRouter,
 };
@@ -23,6 +24,7 @@ enum OutputCommand {
     RegisterController {
         target: ConnectedParameterAddress,
         controller: String,
+        instance_id: ControllerInstanceId,
         safe_request: Option<InstrumentWriteRequest>,
         response_sender: Sender<Result<(), OutputArbiterError>>,
     },
@@ -83,6 +85,7 @@ impl OutputHandle {
         &self,
         target: ConnectedParameterAddress,
         controller: impl Into<String>,
+        instance_id: ControllerInstanceId,
         safe_request: Option<InstrumentWriteRequest>,
     ) -> Result<(), OutputRequestError> {
         let (response_sender, response_receiver) = bounded(1);
@@ -91,6 +94,7 @@ impl OutputHandle {
             .send(OutputCommand::RegisterController {
                 target,
                 controller: controller.into(),
+                instance_id,
                 safe_request,
                 response_sender,
             })
@@ -310,10 +314,12 @@ fn run(
             OutputCommand::RegisterController {
                 target,
                 controller,
+                instance_id,
                 safe_request,
                 response_sender,
             } => {
-                let result = arbiter.register_controller(target, controller, safe_request);
+                let result =
+                    arbiter.register_controller(target, controller, instance_id, safe_request);
 
                 let _ = response_sender.send(result);
             }
@@ -650,6 +656,7 @@ mod tests {
             InstrumentWriteRequest,
             virtual_instrument::{VirtualInstrumentId, VirtualParameterId},
         },
+        process_control::ControllerInstanceId,
         serial_connection::{SerialConnectionRegistry, SerialPortConfig},
         worker::{ConnectionCommand, ConnectionRouter, WorkerCommand, WorkerHandle},
     };
@@ -667,6 +674,10 @@ mod tests {
                 VirtualParameterId::new(4),
             ),
         )
+    }
+
+    fn instance_id() -> ControllerInstanceId {
+        ControllerInstanceId::for_test(1)
     }
 
     fn service() -> OutputService {
@@ -693,7 +704,9 @@ mod tests {
 
         let target = target();
 
-        handle.register_controller(target, "heater", None).unwrap();
+        handle
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
     }
@@ -706,10 +719,12 @@ mod tests {
 
         let target = target();
 
-        handle.register_controller(target, "heater", None).unwrap();
+        handle
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         assert_eq!(
-            handle.register_controller(target, "other", None),
+            handle.register_controller(target, "other", instance_id(), None),
             Err(OutputRequestError::Arbiter(
                 OutputArbiterError::AlreadyRegistered {
                     controller: "heater".to_owned(),
@@ -726,13 +741,17 @@ mod tests {
 
         let target = target();
 
-        handle.register_controller(target, "heater", None).unwrap();
+        handle
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         handle
             .rollback_controller_registration(target, "heater")
             .unwrap();
 
-        handle.register_controller(target, "other", None).unwrap();
+        handle
+            .register_controller(target, "other", instance_id(), None)
+            .unwrap();
 
         assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
     }
@@ -759,7 +778,9 @@ mod tests {
 
         let target = target();
 
-        handle.register_controller(target, "heater", None).unwrap();
+        handle
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         let request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -796,7 +817,9 @@ mod tests {
 
         let handle = service.handle();
 
-        handle.register_controller(target, "heater", None).unwrap();
+        handle
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         let request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -850,7 +873,9 @@ mod tests {
 
         let handle = service.handle();
 
-        handle.register_controller(target, "heater", None).unwrap();
+        handle
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         let request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -885,7 +910,9 @@ mod tests {
 
         let target = target();
 
-        handle.register_controller(target, "heater", None).unwrap();
+        handle
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         let request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -924,7 +951,9 @@ mod tests {
 
         let handle = service.handle();
 
-        handle.register_controller(target, "heater", None).unwrap();
+        handle
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         let request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -1025,7 +1054,9 @@ mod tests {
 
         let handle = service.handle();
 
-        handle.register_controller(target, "heater", None).unwrap();
+        handle
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         let request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -1065,7 +1096,9 @@ mod tests {
 
         let handle = service.handle();
 
-        handle.register_controller(target, "heater", None).unwrap();
+        handle
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         let request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -1120,7 +1153,7 @@ mod tests {
         );
 
         handle
-            .register_controller(target, "heater", Some(safe_request))
+            .register_controller(target, "heater", instance_id(), Some(safe_request))
             .unwrap();
 
         let _response_receiver = handle.apply_safe("heater").unwrap();
@@ -1145,7 +1178,9 @@ mod tests {
 
         let target = target();
 
-        handle.register_controller(target, "heater", None).unwrap();
+        handle
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
 
         assert!(matches!(
             handle.apply_safe("heater"),
@@ -1189,7 +1224,7 @@ mod tests {
         );
 
         handle
-            .register_controller(target, "heater", Some(safe_request))
+            .register_controller(target, "heater", instance_id(), Some(safe_request))
             .unwrap();
 
         let _ = handle.apply_safe("heater").unwrap();
