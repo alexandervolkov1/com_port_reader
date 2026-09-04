@@ -126,6 +126,10 @@ impl OutputArbiter {
         Self::default()
     }
 
+    fn contains(&self, target: ConnectedParameterAddress) -> bool {
+        self.outputs.contains_key(&target)
+    }
+
     pub(crate) fn register_controller(
         &mut self,
         target: ConnectedParameterAddress,

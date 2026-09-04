@@ -8,7 +8,7 @@ use crate::{
     connection::ConnectionId,
     data::{NewControllerDiagnosticSeries, NewFilteredSeries, NewSeries, SeriesId, SeriesStore},
     instrument::ConnectedParameterAddress,
-    output_control::OutputHandle,
+    output_control::{OutputHandle, OutputRequestError},
     process_control::{
         ControlLoopDefinition, ControlOutputTarget, Controller, NewOnOffLoop, NewPidLoop,
         OnOffController, PidController,
@@ -100,6 +100,13 @@ impl CommandDispatcher {
 
     fn emulator_serial_config(&self) -> Result<SerialPortConfig, AcquisitionError> {
         self.serial_config(self.emulator_connection_id())
+    }
+
+    fn output_write_error(error: OutputRequestError) -> AcquisitionError {
+        AcquisitionError::from(format!(
+            "Failed to request instrument \
+                 write: {error}",
+        ))
     }
 
     fn format_worker_event(&self, connection_event: &ConnectionWorkerEvent) -> String {
@@ -521,41 +528,12 @@ impl CommandDispatcher {
                 request,
                 response_sender,
             } => {
-                let config = match self.serial_config(connection_id) {
-                    Ok(config) => config,
-
-                    Err(error) => {
-                        self.log.error(error.to_string());
-
-                        let _ = response_sender.send(Err(error));
-
-                        return;
-                    }
-                };
-
-                let worker_handle = match self.connection_worker(connection_id) {
-                    Ok(worker_handle) => worker_handle,
-
-                    Err(error) => {
-                        self.log.error(error.to_string());
-
-                        let _ = response_sender.send(Err(error));
-
-                        return;
-                    }
-                };
-
-                let send_result = worker_handle.write_instrument(
-                    config.port_name().to_owned(),
+                if let Err(error) = self.output_control.write_instrument(
+                    connection_id,
                     request,
                     response_sender.clone(),
-                );
-
-                if let Err(send_error) = send_result {
-                    let error = AcquisitionError::from(format!(
-                        "Failed to request instrument \
-                             write: {send_error}",
-                    ));
+                ) {
+                    let error = Self::output_write_error(error);
 
                     self.log.error(error.to_string());
 

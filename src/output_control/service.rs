@@ -8,6 +8,7 @@ use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 
 use crate::{
     acquisition::InstrumentWriteResult,
+    connection::ConnectionId,
     instrument::{ConnectedParameterAddress, InstrumentParameterAddress, InstrumentWriteRequest},
     serial_connection::SerialConnectionRegistry,
     worker::ConnectionRouter,
@@ -44,6 +45,13 @@ enum OutputCommand {
     ApplyManual {
         intent: ManualOutputIntent,
         response_sender: Sender<Result<Receiver<InstrumentWriteResult>, OutputRequestError>>,
+    },
+
+    WriteInstrument {
+        connection_id: ConnectionId,
+        request: InstrumentWriteRequest,
+        instrument_response_sender: Sender<InstrumentWriteResult>,
+        response_sender: Sender<Result<(), OutputRequestError>>,
     },
 
     Shutdown,
@@ -143,6 +151,28 @@ impl OutputHandle {
         self.command_sender
             .send(OutputCommand::ApplyManual {
                 intent,
+                response_sender,
+            })
+            .map_err(|_| OutputRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| OutputRequestError::Disconnected)?
+    }
+
+    pub(crate) fn write_instrument(
+        &self,
+        connection_id: ConnectionId,
+        request: InstrumentWriteRequest,
+        instrument_response_sender: Sender<InstrumentWriteResult>,
+    ) -> Result<(), OutputRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(OutputCommand::WriteInstrument {
+                connection_id,
+                request,
+                instrument_response_sender,
                 response_sender,
             })
             .map_err(|_| OutputRequestError::Disconnected)?;
@@ -256,6 +286,24 @@ fn run(
                 let _ = response_sender.send(result);
             }
 
+            OutputCommand::WriteInstrument {
+                connection_id,
+                request,
+                instrument_response_sender,
+                response_sender,
+            } => {
+                let result = write_instrument(
+                    &mut arbiter,
+                    connection_id,
+                    request,
+                    instrument_response_sender,
+                    &connection_router,
+                    &serial_connections,
+                );
+
+                let _ = response_sender.send(result);
+            }
+
             OutputCommand::Shutdown => {
                 break;
             }
@@ -297,6 +345,33 @@ fn apply_manual(
     Ok(response_receiver)
 }
 
+fn write_instrument(
+    arbiter: &mut OutputArbiter,
+    connection_id: ConnectionId,
+    request: InstrumentWriteRequest,
+    instrument_response_sender: Sender<InstrumentWriteResult>,
+    connection_router: &ConnectionRouter,
+    serial_connections: &SerialConnectionRegistry,
+) -> Result<(), OutputRequestError> {
+    let target = ConnectedParameterAddress::new(connection_id, request.parameter_address());
+
+    let controlled = arbiter.contains(target);
+
+    dispatch_write_to_sender(
+        target,
+        request,
+        instrument_response_sender,
+        connection_router,
+        serial_connections,
+    )?;
+
+    if controlled {
+        arbiter.set_mode(target, OutputMode::Manual)?;
+    }
+
+    Ok(())
+}
+
 fn validate_request_target(
     target: ConnectedParameterAddress,
     request: InstrumentWriteRequest,
@@ -318,33 +393,52 @@ fn dispatch_write(
     connection_router: &ConnectionRouter,
     serial_connections: &SerialConnectionRegistry,
 ) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
+    let (response_sender, response_receiver) = bounded(1);
+
+    dispatch_write_to_sender(
+        target,
+        request,
+        response_sender,
+        connection_router,
+        serial_connections,
+    )?;
+
+    Ok(response_receiver)
+}
+
+fn dispatch_write_to_sender(
+    target: ConnectedParameterAddress,
+    request: InstrumentWriteRequest,
+    response_sender: Sender<InstrumentWriteResult>,
+    connection_router: &ConnectionRouter,
+    serial_connections: &SerialConnectionRegistry,
+) -> Result<(), OutputRequestError> {
     let connection_id = target.connection_id();
 
     let worker = connection_router.handle(connection_id).ok_or_else(|| {
         OutputRequestError::Transport(format!(
-            "connection {connection_id} \
-                     does not have a registered \
-                     worker",
+            "connection \
+                         {connection_id} does not \
+                         have a registered worker",
         ))
     })?;
 
     let serial_config_store = serial_connections.store(connection_id).ok_or_else(|| {
         OutputRequestError::Transport(format!(
-            "connection {connection_id} \
-                         does not have a serial \
+            "connection \
+                         {connection_id} does not \
+                         have a serial \
                          configuration store",
         ))
     })?;
 
     let serial_config = serial_config_store.snapshot().ok_or_else(|| {
         OutputRequestError::Transport(format!(
-            "connection {connection_id} \
-                         does not have a selected \
-                         COM port",
+            "connection \
+                         {connection_id} does not \
+                         have a selected COM port",
         ))
     })?;
-
-    let (response_sender, response_receiver) = bounded(1);
 
     worker
         .write_instrument_quiet(
@@ -358,9 +452,7 @@ fn dispatch_write(
                      write for connection \
                      {connection_id}: {error}",
             ))
-        })?;
-
-    Ok(response_receiver)
+        })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -413,7 +505,7 @@ impl From<OutputArbiterError> for OutputRequestError {
 
 #[cfg(test)]
 mod tests {
-    use crossbeam_channel::unbounded;
+    use crossbeam_channel::{bounded, unbounded};
 
     use serialport::{DataBits, FlowControl, Parity, StopBits};
 
@@ -719,5 +811,100 @@ mod tests {
                 }
             )),
         ));
+    }
+
+    #[test]
+    fn routes_uncontrolled_instrument_write_without_changing_ownership() {
+        let target = target();
+
+        let connection_id = target.connection_id();
+
+        let serial_connections = SerialConnectionRegistry::new();
+
+        serial_connections
+            .register(connection_id)
+            .unwrap()
+            .set(Some(serial_config("COM9")));
+
+        let connection_router = ConnectionRouter::default();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        connection_router.insert(WorkerHandle::new(connection_id, command_sender));
+
+        let service = OutputService::spawn(connection_router, serial_connections).unwrap();
+
+        let handle = service.handle();
+
+        let request = InstrumentWriteRequest::virtual_instrument(
+            VirtualInstrumentId::new(7),
+            VirtualParameterId::new(4),
+            InstrumentValue::Number(25.0),
+        );
+
+        let (instrument_response_sender, _instrument_response_receiver) = bounded(1);
+
+        handle
+            .write_instrument(connection_id, request, instrument_response_sender)
+            .unwrap();
+
+        assert_eq!(
+            handle.mode(target),
+            Err(OutputRequestError::Arbiter(
+                OutputArbiterError::NotRegistered,
+            ),),
+        );
+
+        let command = command_receiver.try_recv().unwrap();
+
+        let WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
+            request: received_request,
+            ..
+        }) = command
+        else {
+            panic!("expected instrument write command",);
+        };
+
+        assert_eq!(received_request, request,);
+    }
+
+    #[test]
+    fn explicit_write_to_controlled_output_enters_manual_mode() {
+        let target = target();
+
+        let connection_id = target.connection_id();
+
+        let serial_connections = SerialConnectionRegistry::new();
+
+        serial_connections
+            .register(connection_id)
+            .unwrap()
+            .set(Some(serial_config("COM9")));
+
+        let connection_router = ConnectionRouter::default();
+
+        let (command_sender, _command_receiver) = unbounded();
+
+        connection_router.insert(WorkerHandle::new(connection_id, command_sender));
+
+        let service = OutputService::spawn(connection_router, serial_connections).unwrap();
+
+        let handle = service.handle();
+
+        handle.register_controller(target, "heater").unwrap();
+
+        let request = InstrumentWriteRequest::virtual_instrument(
+            VirtualInstrumentId::new(7),
+            VirtualParameterId::new(4),
+            InstrumentValue::Number(25.0),
+        );
+
+        let (instrument_response_sender, _instrument_response_receiver) = bounded(1);
+
+        handle
+            .write_instrument(connection_id, request, instrument_response_sender)
+            .unwrap();
+
+        assert_eq!(handle.mode(target), Ok(OutputMode::Manual),);
     }
 }
