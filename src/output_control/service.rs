@@ -1320,4 +1320,162 @@ mod tests {
 
         assert!(command_receiver.try_recv().is_err(),);
     }
+
+    #[test]
+    fn rejects_output_from_replaced_controller_instance() {
+        let target = target();
+        let connection_id = target.connection_id();
+
+        let serial_connections = SerialConnectionRegistry::new();
+
+        serial_connections
+            .register(connection_id)
+            .unwrap()
+            .set(Some(serial_config("COM9")));
+
+        let connection_router = ConnectionRouter::default();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        connection_router.insert(WorkerHandle::new(connection_id, command_sender));
+
+        let service = OutputService::spawn(connection_router, serial_connections).unwrap();
+
+        let handle = service.handle();
+
+        let old_instance = ControllerInstanceId::for_test(1);
+
+        let new_instance = ControllerInstanceId::for_test(2);
+
+        let safe_request = InstrumentWriteRequest::virtual_instrument(
+            VirtualInstrumentId::new(7),
+            VirtualParameterId::new(4),
+            InstrumentValue::Number(0.0),
+        );
+
+        let automatic_request = InstrumentWriteRequest::virtual_instrument(
+            VirtualInstrumentId::new(7),
+            VirtualParameterId::new(4),
+            InstrumentValue::Number(42.5),
+        );
+
+        /*
+         * First incarnation owns the output.
+         */
+        handle
+            .register_controller(target, "heater", old_instance, Some(safe_request))
+            .unwrap();
+
+        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
+
+        /*
+         * Simulate controller removal:
+         *
+         * Automatic -> safe write -> Manual
+         */
+        let _safe_response = handle.apply_safe("heater").unwrap();
+
+        assert_eq!(handle.mode(target), Ok(OutputMode::Manual),);
+
+        /*
+         * Drain the safe write that was sent
+         * to the connection worker.
+         */
+        let safe_command = command_receiver.try_recv().unwrap();
+
+        let WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
+            request: received_safe_request,
+            ..
+        }) = safe_command
+        else {
+            panic!("expected safe instrument write");
+        };
+
+        assert_eq!(received_safe_request, safe_request,);
+
+        /*
+         * Manual ownership may now be
+         * released.
+         */
+        handle.release_controller("heater").unwrap();
+
+        assert_eq!(
+            handle.mode(target),
+            Err(OutputRequestError::Arbiter(
+                OutputArbiterError::NotRegistered,
+            ),),
+        );
+
+        /*
+         * A new controller with the same
+         * human-readable name takes over
+         * the same physical output.
+         */
+        handle
+            .register_controller(target, "heater", new_instance, Some(safe_request))
+            .unwrap();
+
+        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
+
+        /*
+         * An old event was already queued
+         * before the first controller was
+         * removed.
+         */
+        let stale_result = handle.apply_automatic(AutomaticOutputIntent::new(
+            target,
+            "heater",
+            old_instance,
+            automatic_request,
+        ));
+
+        assert!(matches!(
+            stale_result,
+            Err(
+                OutputRequestError::Arbiter(
+                    OutputArbiterError::ControllerInstanceMismatch {
+                        controller,
+                        expected,
+                        actual,
+                    },
+                ),
+            ) if controller == "heater"
+                && expected == new_instance
+                && actual == old_instance
+        ));
+
+        /*
+         * Most importantly, stale output
+         * must not reach the worker.
+         */
+        assert!(command_receiver.try_recv().is_err(),);
+
+        /*
+         * Output from the current
+         * incarnation must still work.
+         */
+        let _current_response = handle
+            .apply_automatic(AutomaticOutputIntent::new(
+                target,
+                "heater",
+                new_instance,
+                automatic_request,
+            ))
+            .unwrap();
+
+        let current_command = command_receiver.try_recv().unwrap();
+
+        let WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
+            request: received_request,
+            ..
+        }) = current_command
+        else {
+            panic!(
+                "expected current controller \
+                 instrument write"
+            );
+        };
+
+        assert_eq!(received_request, automatic_request,);
+    }
 }
