@@ -170,6 +170,7 @@ local function build_processing()
         kd = kd,
         output_min = OUTPUT_MIN,
         output_max = OUTPUT_MAX,
+        safe_output = 0.0,
     })
 
     add_diagnostics()

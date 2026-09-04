@@ -335,6 +335,8 @@ local function build_processing()
                     output_off,
                 output_on =
                     output_on,
+
+                safe_output = 0.0,
             }
         )
 
