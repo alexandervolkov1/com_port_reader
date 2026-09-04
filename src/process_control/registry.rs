@@ -8,8 +8,8 @@ use crate::instrument::{
 use super::{
     ControlLoop, ControlLoopDefinition, ControlLoopExecutionError, ControlLoopParameterError,
     ControlLoopReferenceError, ControlLoopState, ControlOutputConversionError, ControlOutputTarget,
-    Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerOperationError,
-    ControllerOutput, ReferenceKind, ReferenceSource,
+    Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerInstanceId,
+    ControllerOperationError, ControllerOutput, ReferenceKind, ReferenceSource,
 };
 
 pub struct ControllerRegistry<SignalId> {
@@ -328,6 +328,8 @@ where
 
             let loop_name = control_loop.name().to_owned();
 
+            let instance_id = control_loop.instance_id();
+
             let target = *control_loop.output_target();
 
             let output = match control_loop.process(timestamp, measurement) {
@@ -361,6 +363,7 @@ where
             };
 
             events.push(ControlEvent::Output(ControlOutput {
+                instance_id,
                 loop_name,
                 input: signal_id,
                 timestamp,
@@ -454,6 +457,7 @@ pub enum ControlEvent<SignalId> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ControlOutput<SignalId> {
+    pub(crate) instance_id: ControllerInstanceId,
     pub loop_name: String,
     pub input: SignalId,
     pub timestamp: f64,
@@ -461,6 +465,12 @@ pub struct ControlOutput<SignalId> {
     pub output: ControllerOutput,
     pub target: ConnectedParameterAddress,
     pub request: InstrumentWriteRequest,
+}
+
+impl<SignalId> ControlOutput<SignalId> {
+    pub(crate) const fn instance_id(&self) -> ControllerInstanceId {
+        self.instance_id
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

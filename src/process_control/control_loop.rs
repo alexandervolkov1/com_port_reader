@@ -1,4 +1,8 @@
-use std::{error::Error, fmt};
+use std::{
+    error::Error,
+    fmt,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use crate::instrument::{InstrumentValue, ParameterAccess, ParameterDescriptor, ParameterRange};
 
@@ -9,8 +13,30 @@ use super::{
     ReferenceSource, ReferenceSourceError,
 };
 
+static NEXT_CONTROLLER_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ControllerInstanceId(u64);
+
+impl ControllerInstanceId {
+    fn next() -> Self {
+        Self(NEXT_CONTROLLER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed))
+    }
+
+    pub(crate) const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl fmt::Display for ControllerInstanceId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
 #[derive(Debug)]
 pub struct ControlLoopDefinition<SignalId, OutputTarget> {
+    instance_id: ControllerInstanceId,
     name: String,
     input: SignalId,
     output_target: OutputTarget,
@@ -29,6 +55,7 @@ impl<SignalId, OutputTarget> ControlLoopDefinition<SignalId, OutputTarget> {
         let name = normalize_name(&name)?;
 
         Ok(Self {
+            instance_id: ControllerInstanceId::next(),
             name: name.to_owned(),
             input,
             output_target,
@@ -44,6 +71,10 @@ impl<SignalId, OutputTarget> ControlLoopDefinition<SignalId, OutputTarget> {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub(crate) const fn instance_id(&self) -> ControllerInstanceId {
+        self.instance_id
     }
 
     pub const fn input(&self) -> &SignalId {
@@ -65,6 +96,7 @@ impl<SignalId, OutputTarget> ControlLoopDefinition<SignalId, OutputTarget> {
     fn into_parts(
         self,
     ) -> (
+        ControllerInstanceId,
         String,
         SignalId,
         OutputTarget,
@@ -72,6 +104,7 @@ impl<SignalId, OutputTarget> ControlLoopDefinition<SignalId, OutputTarget> {
         Option<ReferenceSource>,
     ) {
         (
+            self.instance_id,
             self.name,
             self.input,
             self.output_target,
@@ -99,6 +132,7 @@ impl ControlLoopState {
 
 #[derive(Debug)]
 pub struct ControlLoop<SignalId, OutputTarget> {
+    instance_id: ControllerInstanceId,
     name: String,
     input: SignalId,
     output_target: OutputTarget,
@@ -109,9 +143,11 @@ pub struct ControlLoop<SignalId, OutputTarget> {
 
 impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
     pub fn new(definition: ControlLoopDefinition<SignalId, OutputTarget>) -> Self {
-        let (name, input, output_target, controller, reference) = definition.into_parts();
+        let (instance_id, name, input, output_target, controller, reference) =
+            definition.into_parts();
 
         Self {
+            instance_id,
             name,
             input,
             output_target,
@@ -123,6 +159,10 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub(crate) const fn instance_id(&self) -> ControllerInstanceId {
+        self.instance_id
     }
 
     pub const fn input(&self) -> &SignalId {
@@ -1216,5 +1256,26 @@ mod tests {
             .unwrap();
 
         assert_eq!(setpoint.access, ParameterAccess::ReadOnly,);
+    }
+
+    #[test]
+    fn assigns_unique_instance_id_to_each_definition() {
+        let gains = PidGains::new(2.0, 0.5, 1.0).unwrap();
+
+        let limits = PidOutputLimits::new(0.0, 100.0).unwrap();
+
+        let first_controller = PidController::with_output_limits(100.0, gains, limits)
+            .unwrap()
+            .into();
+
+        let second_controller = PidController::with_output_limits(100.0, gains, limits)
+            .unwrap()
+            .into();
+
+        let first = ControlLoopDefinition::new("heater", 1_u64, (), first_controller).unwrap();
+
+        let second = ControlLoopDefinition::new("heater", 1_u64, (), second_controller).unwrap();
+
+        assert_ne!(first.instance_id(), second.instance_id(),);
     }
 }

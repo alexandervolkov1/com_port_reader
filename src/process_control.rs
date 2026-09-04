@@ -10,6 +10,7 @@ mod reference;
 mod reference_runtime;
 mod registry;
 
+pub(crate) use control_loop::ControllerInstanceId;
 pub use control_loop::{
     ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError, ControlLoopExecutionError,
     ControlLoopParameterError, ControlLoopReferenceError, ControlLoopState,
