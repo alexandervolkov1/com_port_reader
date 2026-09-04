@@ -25,3 +25,4 @@ pub mod signal_processing;
 mod user_command;
 mod utils;
 mod worker;
+mod output_control;
