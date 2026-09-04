@@ -76,6 +76,9 @@ fn run(
 
                 match event {
                     ControlEvent::Output(output) => {
+                        let instance_id =
+                            output.instance_id();
+
                         let loop_name =
                             output.loop_name;
 
@@ -104,6 +107,7 @@ fn run(
                             AutomaticOutputIntent::new(
                                 target,
                                 loop_name.clone(),
+                                instance_id,
                                 request,
                             );
 

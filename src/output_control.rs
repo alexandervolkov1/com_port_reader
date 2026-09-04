@@ -37,13 +37,19 @@ impl fmt::Display for OutputMode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum OutputSource {
     Manual,
-    Controller { name: String },
+    Controller {
+        name: String,
+        instance_id: ControllerInstanceId,
+    },
     Safety,
 }
 
 impl OutputSource {
-    pub(crate) fn controller(name: impl Into<String>) -> Self {
-        Self::Controller { name: name.into() }
+    pub(crate) fn controller(name: impl Into<String>, instance_id: ControllerInstanceId) -> Self {
+        Self::Controller {
+            name: name.into(),
+            instance_id,
+        }
     }
 
     const fn kind(&self) -> OutputSourceKind {
@@ -86,6 +92,7 @@ struct OutputState {
 pub(crate) struct AutomaticOutputIntent {
     target: ConnectedParameterAddress,
     controller: String,
+    instance_id: ControllerInstanceId,
     request: InstrumentWriteRequest,
 }
 
@@ -93,17 +100,26 @@ impl AutomaticOutputIntent {
     pub(crate) fn new(
         target: ConnectedParameterAddress,
         controller: impl Into<String>,
+        instance_id: ControllerInstanceId,
         request: InstrumentWriteRequest,
     ) -> Self {
         Self {
             target,
             controller: controller.into(),
+            instance_id,
             request,
         }
     }
 
-    fn into_parts(self) -> (ConnectedParameterAddress, String, InstrumentWriteRequest) {
-        (self.target, self.controller, self.request)
+    fn into_parts(
+        self,
+    ) -> (
+        ConnectedParameterAddress,
+        String,
+        ControllerInstanceId,
+        InstrumentWriteRequest,
+    ) {
+        (self.target, self.controller, self.instance_id, self.request)
     }
 }
 
@@ -295,11 +311,19 @@ impl OutputArbiter {
                 }
             }
 
-            OutputSource::Controller { name } => {
+            OutputSource::Controller { name, instance_id } => {
                 if name != &state.controller {
                     return Err(OutputArbiterError::ControllerMismatch {
                         expected: state.controller.clone(),
                         actual: name.clone(),
+                    });
+                }
+
+                if instance_id != &state.instance_id {
+                    return Err(OutputArbiterError::ControllerInstanceMismatch {
+                        controller: name.clone(),
+                        expected: state.instance_id,
+                        actual: *instance_id,
                     });
                 }
 
@@ -350,6 +374,12 @@ pub(crate) enum OutputArbiterError {
         actual: String,
     },
 
+    ControllerInstanceMismatch {
+        controller: String,
+        expected: ControllerInstanceId,
+        actual: ControllerInstanceId,
+    },
+
     SourceNotAllowed {
         mode: OutputMode,
         source: OutputSourceKind,
@@ -389,6 +419,19 @@ impl fmt::Display for OutputArbiterError {
                     formatter,
                     "Output belongs to controller \
                      '{expected}', not '{actual}'",
+                )
+            }
+
+            Self::ControllerInstanceMismatch {
+                controller,
+                expected,
+                actual,
+            } => {
+                write!(
+                    formatter,
+                    "Output belongs to controller \
+                     '{controller}' instance {expected}, \
+                     not instance {actual}",
                 )
             }
 
@@ -451,6 +494,10 @@ mod tests {
         ControllerInstanceId::for_test(1)
     }
 
+    fn other_instance_id() -> ControllerInstanceId {
+        ControllerInstanceId::for_test(2)
+    }
+
     #[test]
     fn registers_controller_in_automatic_mode() {
         let mut arbiter = OutputArbiter::new();
@@ -464,7 +511,7 @@ mod tests {
         assert_eq!(arbiter.mode(target), Ok(OutputMode::Automatic),);
 
         assert_eq!(
-            arbiter.authorize(target, &OutputSource::controller("heater",),),
+            arbiter.authorize(target, &OutputSource::controller("heater", instance_id(),),),
             Ok(()),
         );
     }
@@ -492,7 +539,7 @@ mod tests {
         assert_eq!(arbiter.authorize(target, &OutputSource::Manual,), Ok(()),);
 
         assert_eq!(
-            arbiter.authorize(target, &OutputSource::controller("heater",),),
+            arbiter.authorize(target, &OutputSource::controller("heater", instance_id(),),),
             Err(OutputArbiterError::SourceNotAllowed {
                 mode: OutputMode::Manual,
                 source: OutputSourceKind::Controller,
@@ -511,7 +558,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            arbiter.authorize(target, &OutputSource::controller("other",),),
+            arbiter.authorize(target, &OutputSource::controller("other", instance_id(),),),
             Err(OutputArbiterError::ControllerMismatch {
                 expected: "heater".to_owned(),
                 actual: "other".to_owned(),
@@ -620,7 +667,7 @@ mod tests {
         assert_eq!(arbiter.mode(target), Ok(OutputMode::AutomaticPending,),);
 
         assert_eq!(
-            arbiter.authorize(target, &OutputSource::controller("heater",),),
+            arbiter.authorize(target, &OutputSource::controller("heater", instance_id(),),),
             Ok(()),
         );
     }
@@ -664,5 +711,30 @@ mod tests {
             arbiter.mode(target),
             Err(OutputArbiterError::NotRegistered,),
         );
+    }
+
+    #[test]
+    fn rejects_stale_controller_instance() {
+        let mut arbiter = OutputArbiter::new();
+
+        let target = target();
+
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
+
+        assert_eq!(
+            arbiter.authorize(
+                target,
+                &OutputSource::controller("heater", other_instance_id(),),
+            ),
+            Err(OutputArbiterError::ControllerInstanceMismatch {
+                controller: "heater".to_owned(),
+                expected: instance_id(),
+                actual: other_instance_id(),
+            },),
+        );
+
+        assert_eq!(arbiter.mode(target), Ok(OutputMode::Automatic),);
     }
 }

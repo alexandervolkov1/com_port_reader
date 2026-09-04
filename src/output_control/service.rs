@@ -434,9 +434,12 @@ fn apply_automatic(
     connection_router: &ConnectionRouter,
     serial_connections: &SerialConnectionRegistry,
 ) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
-    let (target, controller, request) = intent.into_parts();
+    let (target, controller, instance_id, request) = intent.into_parts();
 
-    arbiter.authorize(target, &OutputSource::controller(controller.clone()))?;
+    arbiter.authorize(
+        target,
+        &OutputSource::controller(controller.clone(), instance_id),
+    )?;
 
     validate_request_target(target, request)?;
 
@@ -789,7 +792,12 @@ mod tests {
         );
 
         assert!(matches!(
-            handle.apply_automatic(AutomaticOutputIntent::new(target, "heater", request,),),
+            handle.apply_automatic(AutomaticOutputIntent::new(
+                target,
+                "heater",
+                instance_id(),
+                request,
+            ),),
             Err(OutputRequestError::RequestTargetMismatch { .. }),
         ));
     }
@@ -828,7 +836,12 @@ mod tests {
         );
 
         let _write_result = handle
-            .apply_automatic(AutomaticOutputIntent::new(target, "heater", request))
+            .apply_automatic(AutomaticOutputIntent::new(
+                target,
+                "heater",
+                instance_id(),
+                request,
+            ))
             .unwrap();
 
         let command = command_receiver.try_recv().unwrap();
@@ -966,7 +979,12 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            handle.apply_automatic(AutomaticOutputIntent::new(target, "heater", request,),),
+            handle.apply_automatic(AutomaticOutputIntent::new(
+                target,
+                "heater",
+                instance_id(),
+                request,
+            ),),
             Err(OutputRequestError::Arbiter(
                 OutputArbiterError::SourceNotAllowed {
                     mode: OutputMode::Manual,
@@ -1117,7 +1135,12 @@ mod tests {
         assert_eq!(handle.mode(target), Ok(OutputMode::AutomaticPending,),);
 
         let _ = handle
-            .apply_automatic(AutomaticOutputIntent::new(target, "heater", request))
+            .apply_automatic(AutomaticOutputIntent::new(
+                target,
+                "heater",
+                instance_id(),
+                request,
+            ))
             .unwrap();
 
         assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
@@ -1237,5 +1260,64 @@ mod tests {
                 OutputArbiterError::NotRegistered,
             ),),
         );
+    }
+
+    #[test]
+    fn stale_controller_instance_is_not_dispatched() {
+        let target = target();
+        let connection_id = target.connection_id();
+
+        let serial_connections = SerialConnectionRegistry::new();
+
+        serial_connections
+            .register(connection_id)
+            .unwrap()
+            .set(Some(serial_config("COM9")));
+
+        let connection_router = ConnectionRouter::default();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        connection_router.insert(WorkerHandle::new(connection_id, command_sender));
+
+        let service = OutputService::spawn(connection_router, serial_connections).unwrap();
+
+        let handle = service.handle();
+
+        handle
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
+
+        let stale_instance = ControllerInstanceId::for_test(2);
+
+        let request = InstrumentWriteRequest::virtual_instrument(
+            VirtualInstrumentId::new(7),
+            VirtualParameterId::new(4),
+            InstrumentValue::Number(42.5),
+        );
+
+        let result = handle.apply_automatic(AutomaticOutputIntent::new(
+            target,
+            "heater",
+            stale_instance,
+            request,
+        ));
+
+        assert!(matches!(
+            result,
+            Err(
+                OutputRequestError::Arbiter(
+                    OutputArbiterError::ControllerInstanceMismatch {
+                        controller,
+                        expected,
+                        actual,
+                    },
+                ),
+            ) if controller == "heater"
+                && expected == instance_id()
+                && actual == stale_instance
+        ));
+
+        assert!(command_receiver.try_recv().is_err(),);
     }
 }
