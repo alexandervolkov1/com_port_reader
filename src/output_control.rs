@@ -1,6 +1,6 @@
 use std::{collections::HashMap, error::Error, fmt};
 
-use crate::instrument::ConnectedParameterAddress;
+use crate::instrument::{ConnectedParameterAddress, InstrumentWriteRequest};
 
 mod service;
 
@@ -32,9 +32,7 @@ impl fmt::Display for OutputMode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum OutputSource {
     Manual,
-
     Controller { name: String },
-
     Safety,
 }
 
@@ -75,6 +73,31 @@ impl OutputSourceKind {
 struct OutputState {
     mode: OutputMode,
     controller: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AutomaticOutputIntent {
+    target: ConnectedParameterAddress,
+    controller: String,
+    request: InstrumentWriteRequest,
+}
+
+impl AutomaticOutputIntent {
+    pub(crate) fn new(
+        target: ConnectedParameterAddress,
+        controller: impl Into<String>,
+        request: InstrumentWriteRequest,
+    ) -> Self {
+        Self {
+            target,
+            controller: controller.into(),
+            request,
+        }
+    }
+
+    fn into_parts(self) -> (ConnectedParameterAddress, String, InstrumentWriteRequest) {
+        (self.target, self.controller, self.request)
+    }
 }
 
 #[derive(Default)]

@@ -95,10 +95,6 @@ impl ApplicationRuntime {
 
         let processing_handle = processing.handle();
 
-        let output_service = OutputService::spawn()?;
-
-        let output_handle = output_service.handle();
-
         let emulator_port = definition
             .emulator()
             .map(|emulator| emulator.port_name().to_owned());
@@ -173,10 +169,14 @@ impl ApplicationRuntime {
 
         let connection_router = workers.router();
 
+        let output_service =
+            OutputService::spawn(connection_router.clone(), serial_connections.clone())?;
+
+        let output_handle = output_service.handle();
+
         let process_control_dispatcher = ProcessControlDispatcher::spawn(
             processing.control_event_receiver(),
-            connection_router.clone(),
-            serial_connections.clone(),
+            output_handle.clone(),
             process_recorder.clone(),
             log.clone(),
         )?;

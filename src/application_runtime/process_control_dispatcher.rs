@@ -6,15 +6,11 @@ use std::{
 use crossbeam_channel::{Receiver, Sender, bounded};
 
 use crate::{
-    acquisition::InstrumentWriteResult,
     app_log::LogHandle,
-    connection::ConnectionId,
     data::SeriesId,
-    instrument::InstrumentWriteRequest,
+    output_control::{AutomaticOutputIntent, OutputHandle},
     process_control::ControlEvent,
     process_recorder::{ProcessControlOutput, ProcessRecorder},
-    serial_connection::SerialConnectionRegistry,
-    worker::ConnectionRouter,
 };
 
 pub(crate) struct ProcessControlDispatcher {
@@ -25,8 +21,7 @@ pub(crate) struct ProcessControlDispatcher {
 impl ProcessControlDispatcher {
     pub(crate) fn spawn(
         event_receiver: Receiver<ControlEvent<SeriesId>>,
-        connection_router: ConnectionRouter,
-        serial_connections: SerialConnectionRegistry,
+        output_control: OutputHandle,
         process_recorder: ProcessRecorder,
         log: LogHandle,
     ) -> io::Result<Self> {
@@ -38,8 +33,7 @@ impl ProcessControlDispatcher {
                 run(
                     event_receiver,
                     shutdown_receiver,
-                    connection_router,
-                    serial_connections,
+                    output_control,
                     process_recorder,
                     log,
                 );
@@ -65,8 +59,7 @@ impl Drop for ProcessControlDispatcher {
 fn run(
     event_receiver: Receiver<ControlEvent<SeriesId>>,
     shutdown_receiver: Receiver<()>,
-    connection_router: ConnectionRouter,
-    serial_connections: SerialConnectionRegistry,
+    output_control: OutputHandle,
     process_recorder: ProcessRecorder,
     log: LogHandle,
 ) {
@@ -107,13 +100,17 @@ fn run(
                         let request =
                             output.request;
 
-                        let actual_output =
-                            match dispatch_write(
-                                connection_id,
+                        let intent =
+                            AutomaticOutputIntent::new(
+                                target,
+                                loop_name.clone(),
                                 request,
-                                &connection_router,
-                                &serial_connections,
-                            ) {
+                            );
+
+                        let actual_output =
+                            match output_control
+                                .apply_automatic(intent)
+                            {
                                 Ok(response_receiver) => {
                                     match response_receiver.recv() {
                                         Ok(Ok(actual_value)) => {
@@ -123,29 +120,25 @@ fn run(
                                         }
 
                                         Ok(Err(error)) => {
-                                            log.error(
-                                                format!(
-                                                    "Control loop \
-                                                     '{loop_name}' \
-                                                     output failed: \
-                                                     {error}",
-                                                ),
-                                            );
+                                            log.error(format!(
+                                                "Control loop \
+                                                 '{loop_name}' \
+                                                 output failed: \
+                                                 {error}",
+                                            ));
 
                                             None
                                         }
 
                                         Err(_) => {
-                                            log.error(
-                                                format!(
-                                                    "Control loop \
-                                                     '{loop_name}' \
-                                                     output failed: \
-                                                     instrument write \
-                                                     response channel \
-                                                     is disconnected",
-                                                ),
-                                            );
+                                            log.error(format!(
+                                                "Control loop \
+                                                 '{loop_name}' \
+                                                 output failed: \
+                                                 instrument write \
+                                                 response channel \
+                                                 is disconnected",
+                                            ));
 
                                             None
                                         }
@@ -153,14 +146,12 @@ fn run(
                                 }
 
                                 Err(error) => {
-                                    log.error(
-                                        format!(
-                                            "Control loop \
-                                             '{loop_name}' \
-                                             output failed: \
-                                             {error}",
-                                        ),
-                                    );
+                                    log.error(format!(
+                                        "Control loop \
+                                         '{loop_name}' \
+                                         output rejected: \
+                                         {error}",
+                                    ));
 
                                     None
                                 }
@@ -213,183 +204,5 @@ fn run(
                 }
             }
         }
-    }
-}
-
-fn dispatch_write(
-    connection_id: ConnectionId,
-    request: InstrumentWriteRequest,
-    connection_router: &ConnectionRouter,
-    serial_connections: &SerialConnectionRegistry,
-) -> Result<Receiver<InstrumentWriteResult>, String> {
-    let worker = connection_router.handle(connection_id).ok_or_else(|| {
-        format!(
-            "connection {connection_id} \
-                     does not have a \
-                     registered worker",
-        )
-    })?;
-
-    let serial_config_store = serial_connections.store(connection_id).ok_or_else(|| {
-        format!(
-            "connection {connection_id} \
-                     does not have a serial \
-                     configuration store",
-        )
-    })?;
-
-    let serial_config = serial_config_store.snapshot().ok_or_else(|| {
-        format!(
-            "connection {connection_id} \
-                     does not have a selected \
-                     COM port",
-        )
-    })?;
-
-    let (response_sender, response_receiver) = bounded(1);
-
-    worker
-        .write_instrument_quiet(
-            serial_config.port_name().to_owned(),
-            request,
-            response_sender,
-        )
-        .map_err(|error| {
-            format!(
-                "cannot enqueue instrument \
-                 write for connection \
-                 {connection_id}: {error}",
-            )
-        })?;
-
-    Ok(response_receiver)
-}
-
-#[cfg(test)]
-mod tests {
-    use crossbeam_channel::unbounded;
-
-    use serialport::{DataBits, FlowControl, Parity, StopBits};
-
-    use super::dispatch_write;
-
-    use crate::{
-        connection::ConnectionId,
-        instrument::{
-            InstrumentValue, InstrumentWriteRequest,
-            virtual_instrument::{VirtualInstrumentId, VirtualParameterId},
-        },
-        serial_connection::{SerialConnectionRegistry, SerialPortConfig},
-        worker::{ConnectionCommand, ConnectionRouter, WorkerCommand, WorkerHandle},
-    };
-
-    fn write_request() -> InstrumentWriteRequest {
-        InstrumentWriteRequest::virtual_instrument(
-            VirtualInstrumentId::new(7),
-            VirtualParameterId::new(3),
-            InstrumentValue::Number(42.5),
-        )
-    }
-
-    fn serial_config(port_name: &str) -> SerialPortConfig {
-        SerialPortConfig::new(
-            port_name.to_owned(),
-            9_600,
-            DataBits::Eight,
-            Parity::None,
-            StopBits::One,
-            FlowControl::None,
-            250,
-        )
-    }
-
-    #[test]
-    fn routes_pid_output_to_selected_connection_worker() {
-        let connection_id = ConnectionId::new(2);
-
-        let serial_connections = SerialConnectionRegistry::new();
-
-        serial_connections
-            .register(connection_id)
-            .unwrap()
-            .set(Some(serial_config("COM9")));
-
-        let connection_router = ConnectionRouter::default();
-
-        let (command_sender, command_receiver) = unbounded();
-
-        connection_router.insert(WorkerHandle::new(connection_id, command_sender));
-
-        let request = write_request();
-
-        let _response_receiver = dispatch_write(
-            connection_id,
-            request,
-            &connection_router,
-            &serial_connections,
-        )
-        .unwrap();
-
-        let command = command_receiver.try_recv().unwrap();
-
-        let WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
-            port_name,
-            request: received_request,
-            emit_event,
-            ..
-        }) = command
-        else {
-            panic!("expected instrument write command",);
-        };
-
-        assert_eq!(port_name, "COM9");
-
-        assert_eq!(received_request, request,);
-
-        assert!(!emit_event);
-    }
-
-    #[test]
-    fn rejects_connection_without_registered_worker() {
-        let error = dispatch_write(
-            ConnectionId::PRIMARY,
-            write_request(),
-            &ConnectionRouter::default(),
-            &SerialConnectionRegistry::new(),
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            error,
-            "connection 1 does not have a \
-             registered worker",
-        );
-    }
-
-    #[test]
-    fn rejects_connection_without_selected_port() {
-        let connection_id = ConnectionId::PRIMARY;
-
-        let serial_connections = SerialConnectionRegistry::new();
-
-        let connection_router = ConnectionRouter::default();
-
-        let (command_sender, _command_receiver) = unbounded();
-
-        connection_router.insert(WorkerHandle::new(connection_id, command_sender));
-
-        let error = dispatch_write(
-            connection_id,
-            write_request(),
-            &connection_router,
-            &serial_connections,
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            error,
-            "connection 1 does not have a \
-             selected COM port",
-        );
     }
 }
