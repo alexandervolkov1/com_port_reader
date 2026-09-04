@@ -47,6 +47,11 @@ enum OutputCommand {
         response_sender: Sender<Result<Receiver<InstrumentWriteResult>, OutputRequestError>>,
     },
 
+    RequestAutomatic {
+        controller: String,
+        response_sender: Sender<Result<(), OutputArbiterError>>,
+    },
+
     WriteInstrument {
         connection_id: ConnectionId,
         request: InstrumentWriteRequest,
@@ -181,6 +186,25 @@ impl OutputHandle {
             .recv()
             .map_err(|_| OutputRequestError::Disconnected)?
     }
+
+    pub(crate) fn request_automatic(
+        &self,
+        controller: impl Into<String>,
+    ) -> Result<(), OutputRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(OutputCommand::RequestAutomatic {
+                controller: controller.into(),
+                response_sender,
+            })
+            .map_err(|_| OutputRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| OutputRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
 }
 
 pub(crate) struct OutputService {
@@ -266,8 +290,12 @@ fn run(
                 intent,
                 response_sender,
             } => {
-                let result =
-                    apply_automatic(&arbiter, intent, &connection_router, &serial_connections);
+                let result = apply_automatic(
+                    &mut arbiter,
+                    intent,
+                    &connection_router,
+                    &serial_connections,
+                );
 
                 let _ = response_sender.send(result);
             }
@@ -282,6 +310,15 @@ fn run(
                     &connection_router,
                     &serial_connections,
                 );
+
+                let _ = response_sender.send(result);
+            }
+
+            OutputCommand::RequestAutomatic {
+                controller,
+                response_sender,
+            } => {
+                let result = arbiter.request_automatic(&controller);
 
                 let _ = response_sender.send(result);
             }
@@ -312,18 +349,22 @@ fn run(
 }
 
 fn apply_automatic(
-    arbiter: &OutputArbiter,
+    arbiter: &mut OutputArbiter,
     intent: AutomaticOutputIntent,
     connection_router: &ConnectionRouter,
     serial_connections: &SerialConnectionRegistry,
 ) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
     let (target, controller, request) = intent.into_parts();
 
-    arbiter.authorize(target, &OutputSource::controller(controller))?;
+    arbiter.authorize(target, &OutputSource::controller(controller.clone()))?;
 
     validate_request_target(target, request)?;
 
-    dispatch_write(target, request, connection_router, serial_connections)
+    let response_receiver = dispatch_write(target, request, connection_router, serial_connections)?;
+
+    arbiter.complete_automatic_transition(target, &controller)?;
+
+    Ok(response_receiver)
 }
 
 fn apply_manual(
@@ -906,5 +947,53 @@ mod tests {
             .unwrap();
 
         assert_eq!(handle.mode(target), Ok(OutputMode::Manual),);
+    }
+
+    #[test]
+    fn completes_automatic_takeover_on_first_successful_output() {
+        let target = target();
+
+        let connection_id = target.connection_id();
+
+        let serial_connections = SerialConnectionRegistry::new();
+
+        serial_connections
+            .register(connection_id)
+            .unwrap()
+            .set(Some(serial_config("COM9")));
+
+        let connection_router = ConnectionRouter::default();
+
+        let (command_sender, _command_receiver) = unbounded();
+
+        connection_router.insert(WorkerHandle::new(connection_id, command_sender));
+
+        let service = OutputService::spawn(connection_router, serial_connections).unwrap();
+
+        let handle = service.handle();
+
+        handle.register_controller(target, "heater").unwrap();
+
+        let request = InstrumentWriteRequest::virtual_instrument(
+            VirtualInstrumentId::new(7),
+            VirtualParameterId::new(4),
+            InstrumentValue::Number(35.0),
+        );
+
+        let _ = handle
+            .apply_manual(ManualOutputIntent::new(target, request))
+            .unwrap();
+
+        assert_eq!(handle.mode(target), Ok(OutputMode::Manual),);
+
+        handle.request_automatic("heater").unwrap();
+
+        assert_eq!(handle.mode(target), Ok(OutputMode::AutomaticPending,),);
+
+        let _ = handle
+            .apply_automatic(AutomaticOutputIntent::new(target, "heater", request))
+            .unwrap();
+
+        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
     }
 }

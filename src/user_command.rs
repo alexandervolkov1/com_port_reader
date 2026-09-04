@@ -9,6 +9,7 @@ use crate::{
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterDescriptor,
     },
+    output_control::OutputRequestError,
     process_control::{
         ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewOnOffLoop, NewPidLoop,
         ReferenceKind, ReferenceSource,
@@ -46,6 +47,67 @@ impl Error for SetControllerInputError {
 impl From<ControllerRequestError> for SetControllerInputError {
     fn from(error: ControllerRequestError) -> Self {
         Self::Controller(error)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ResumeControllerError {
+    Controller(ControllerRequestError),
+    Output(OutputRequestError),
+
+    Rollback {
+        output: OutputRequestError,
+        rollback: ControllerRequestError,
+    },
+}
+
+impl fmt::Display for ResumeControllerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Controller(error) => error.fmt(formatter),
+
+            Self::Output(error) => {
+                write!(
+                    formatter,
+                    "Automatic output takeover \
+                     failed: {error}",
+                )
+            }
+
+            Self::Rollback { output, rollback } => {
+                write!(
+                    formatter,
+                    "Automatic output takeover \
+                     failed: {output}; controller \
+                     rollback also failed: \
+                     {rollback}",
+                )
+            }
+        }
+    }
+}
+
+impl Error for ResumeControllerError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Controller(error) => Some(error),
+
+            Self::Output(error) => Some(error),
+
+            Self::Rollback { output, .. } => Some(output),
+        }
+    }
+}
+
+impl From<ControllerRequestError> for ResumeControllerError {
+    fn from(error: ControllerRequestError) -> Self {
+        Self::Controller(error)
+    }
+}
+
+impl From<OutputRequestError> for ResumeControllerError {
+    fn from(error: OutputRequestError) -> Self {
+        Self::Output(error)
     }
 }
 
@@ -139,7 +201,7 @@ pub enum UserCommand {
 
     ResumeController {
         name: String,
-        response_sender: Sender<Result<(), ControllerRequestError>>,
+        response_sender: Sender<Result<(), ResumeControllerError>>,
     },
 
     ResetControllerIntegral {

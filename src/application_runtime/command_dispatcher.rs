@@ -10,12 +10,12 @@ use crate::{
     instrument::ConnectedParameterAddress,
     output_control::{OutputHandle, OutputRequestError},
     process_control::{
-        ControlLoopDefinition, ControlOutputTarget, Controller, NewOnOffLoop, NewPidLoop,
-        OnOffController, PidController,
+        ControlLoopDefinition, ControlLoopState, ControlOutputTarget, Controller, NewOnOffLoop,
+        NewPidLoop, OnOffController, PidController,
     },
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
     signal_processing::{ProcessingHandle, SignalFilterDefinition},
-    user_command::{SetControllerInputError, UserCommand},
+    user_command::{ResumeControllerError, SetControllerInputError, UserCommand},
     worker::{
         ConnectionRouter, ConnectionWorkerEvent, WorkerEvent, WorkerHandle, WorkerHandleError,
     },
@@ -141,6 +141,27 @@ impl CommandDispatcher {
                 self.log.info(message);
             }
         }
+    }
+
+    fn resume_controller(&self, name: &str) -> Result<(), ResumeControllerError> {
+        let previous_state = self.processing.controller_state(name)?;
+
+        self.processing.resume_controller(name)?;
+
+        if let Err(output_error) = self.output_control.request_automatic(name) {
+            if previous_state == ControlLoopState::Paused {
+                if let Err(rollback_error) = self.processing.pause_controller(name) {
+                    return Err(ResumeControllerError::Rollback {
+                        output: output_error,
+                        rollback: rollback_error,
+                    });
+                }
+            }
+
+            return Err(ResumeControllerError::Output(output_error));
+        }
+
+        Ok(())
     }
 
     pub fn execute(
@@ -330,7 +351,7 @@ impl CommandDispatcher {
                 name,
                 response_sender,
             } => {
-                let result = self.processing.resume_controller(&name);
+                let result = self.resume_controller(&name);
 
                 let _ = response_sender.send(result);
             }

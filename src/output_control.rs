@@ -9,6 +9,7 @@ pub(crate) use service::{OutputHandle, OutputRequestError, OutputService};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum OutputMode {
     Manual,
+    AutomaticPending,
 
     #[default]
     Automatic,
@@ -18,6 +19,7 @@ impl OutputMode {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Manual => "manual",
+            Self::AutomaticPending => "automatic_pending",
             Self::Automatic => "automatic",
         }
     }
@@ -130,6 +132,44 @@ impl OutputArbiter {
         self.outputs.contains_key(&target)
     }
 
+    pub(crate) fn request_automatic(&mut self, controller: &str) -> Result<(), OutputArbiterError> {
+        let state = self
+            .outputs
+            .values_mut()
+            .find(|state| state.controller == controller)
+            .ok_or_else(|| OutputArbiterError::ControllerNotRegistered(controller.to_owned()))?;
+
+        if state.mode == OutputMode::Manual {
+            state.mode = OutputMode::AutomaticPending;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn complete_automatic_transition(
+        &mut self,
+        target: ConnectedParameterAddress,
+        controller: &str,
+    ) -> Result<(), OutputArbiterError> {
+        let state = self
+            .outputs
+            .get_mut(&target)
+            .ok_or(OutputArbiterError::NotRegistered)?;
+
+        if state.controller != controller {
+            return Err(OutputArbiterError::ControllerMismatch {
+                expected: state.controller.clone(),
+                actual: controller.to_owned(),
+            });
+        }
+
+        if state.mode == OutputMode::AutomaticPending {
+            state.mode = OutputMode::Automatic;
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn register_controller(
         &mut self,
         target: ConnectedParameterAddress,
@@ -231,7 +271,10 @@ impl OutputArbiter {
                     });
                 }
 
-                if state.mode == OutputMode::Automatic {
+                if matches!(
+                    state.mode,
+                    OutputMode::Automatic | OutputMode::AutomaticPending
+                ) {
                     Ok(())
                 } else {
                     Err(OutputArbiterError::SourceNotAllowed {
@@ -251,6 +294,7 @@ pub(crate) enum OutputArbiterError {
     },
 
     NotRegistered,
+    ControllerNotRegistered(String),
 
     ControllerMismatch {
         expected: String,
@@ -275,6 +319,14 @@ impl fmt::Display for OutputArbiterError {
             }
 
             Self::NotRegistered => formatter.write_str("Output is not registered"),
+
+            Self::ControllerNotRegistered(controller) => {
+                write!(
+                    formatter,
+                    "Controller '{controller}' \
+                     does not own a registered output",
+                )
+            }
 
             Self::ControllerMismatch { expected, actual } => {
                 write!(
@@ -456,5 +508,25 @@ mod tests {
         );
 
         assert_eq!(arbiter.mode(target), Ok(OutputMode::Automatic),);
+    }
+
+    #[test]
+    fn requests_automatic_takeover_without_completing_it() {
+        let mut arbiter = OutputArbiter::new();
+
+        let target = target();
+
+        arbiter.register_controller(target, "heater").unwrap();
+
+        arbiter.set_mode(target, OutputMode::Manual).unwrap();
+
+        arbiter.request_automatic("heater").unwrap();
+
+        assert_eq!(arbiter.mode(target), Ok(OutputMode::AutomaticPending,),);
+
+        assert_eq!(
+            arbiter.authorize(target, &OutputSource::controller("heater",),),
+            Ok(()),
+        );
     }
 }
