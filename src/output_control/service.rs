@@ -65,6 +65,11 @@ enum OutputCommand {
         response_sender: Sender<Result<Receiver<InstrumentWriteResult>, OutputRequestError>>,
     },
 
+    ReleaseController {
+        controller: String,
+        response_sender: Sender<Result<(), OutputArbiterError>>,
+    },
+
     Shutdown,
 }
 
@@ -231,6 +236,25 @@ impl OutputHandle {
             .recv()
             .map_err(|_| OutputRequestError::Disconnected)?
     }
+
+    pub(crate) fn release_controller(
+        &self,
+        controller: impl Into<String>,
+    ) -> Result<(), OutputRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(OutputCommand::ReleaseController {
+                controller: controller.into(),
+                response_sender,
+            })
+            .map_err(|_| OutputRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| OutputRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
 }
 
 pub(crate) struct OutputService {
@@ -378,6 +402,15 @@ fn run(
                     &connection_router,
                     &serial_connections,
                 );
+
+                let _ = response_sender.send(result);
+            }
+
+            OutputCommand::ReleaseController {
+                controller,
+                response_sender,
+            } => {
+                let result = arbiter.release_controller(&controller);
 
                 let _ = response_sender.send(result);
             }
@@ -1124,5 +1157,50 @@ mod tests {
         ));
 
         assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
+    }
+
+    #[test]
+    fn releases_output_after_safe_transition() {
+        let target = target();
+
+        let connection_id = target.connection_id();
+
+        let serial_connections = SerialConnectionRegistry::new();
+
+        serial_connections
+            .register(connection_id)
+            .unwrap()
+            .set(Some(serial_config("COM9")));
+
+        let connection_router = ConnectionRouter::default();
+
+        let (command_sender, _command_receiver) = unbounded();
+
+        connection_router.insert(WorkerHandle::new(connection_id, command_sender));
+
+        let service = OutputService::spawn(connection_router, serial_connections).unwrap();
+
+        let handle = service.handle();
+
+        let safe_request = InstrumentWriteRequest::virtual_instrument(
+            VirtualInstrumentId::new(7),
+            VirtualParameterId::new(4),
+            InstrumentValue::Number(0.0),
+        );
+
+        handle
+            .register_controller(target, "heater", Some(safe_request))
+            .unwrap();
+
+        let _ = handle.apply_safe("heater").unwrap();
+
+        handle.release_controller("heater").unwrap();
+
+        assert_eq!(
+            handle.mode(target),
+            Err(OutputRequestError::Arbiter(
+                OutputArbiterError::NotRegistered,
+            ),),
+        );
     }
 }

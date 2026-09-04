@@ -217,6 +217,29 @@ impl OutputArbiter {
         Ok(())
     }
 
+    pub(crate) fn release_controller(
+        &mut self,
+        controller: &str,
+    ) -> Result<(), OutputArbiterError> {
+        let (target, mode) = self
+            .outputs
+            .iter()
+            .find(|(_, state)| state.controller == controller)
+            .map(|(target, state)| (*target, state.mode))
+            .ok_or_else(|| OutputArbiterError::ControllerNotRegistered(controller.to_owned()))?;
+
+        if mode != OutputMode::Manual {
+            return Err(OutputArbiterError::UnsafeControllerRelease {
+                controller: controller.to_owned(),
+                mode,
+            });
+        }
+
+        self.outputs.remove(&target);
+
+        Ok(())
+    }
+
     pub(crate) fn mode(
         &self,
         target: ConnectedParameterAddress,
@@ -326,6 +349,11 @@ pub(crate) enum OutputArbiterError {
         source: OutputSourceKind,
     },
 
+    UnsafeControllerRelease {
+        controller: String,
+        mode: OutputMode,
+    },
+
     SafeOutputNotConfigured(String),
 }
 
@@ -364,6 +392,15 @@ impl fmt::Display for OutputArbiterError {
                     "Output source '{}' is not \
                      allowed in {mode} mode",
                     source.as_str(),
+                )
+            }
+
+            Self::UnsafeControllerRelease { controller, mode } => {
+                write!(
+                    formatter,
+                    "Controller '{controller}' \
+                     cannot release its output \
+                     while it is in {mode} mode",
                 )
             }
 
@@ -558,6 +595,43 @@ mod tests {
         assert_eq!(
             arbiter.authorize(target, &OutputSource::controller("heater",),),
             Ok(()),
+        );
+    }
+
+    #[test]
+    fn rejects_controller_release_while_automatic() {
+        let mut arbiter = OutputArbiter::new();
+
+        let target = target();
+
+        arbiter.register_controller(target, "heater", None).unwrap();
+
+        assert_eq!(
+            arbiter.release_controller("heater",),
+            Err(OutputArbiterError::UnsafeControllerRelease {
+                controller: "heater".to_owned(),
+                mode: OutputMode::Automatic,
+            },),
+        );
+
+        assert_eq!(arbiter.mode(target), Ok(OutputMode::Automatic),);
+    }
+
+    #[test]
+    fn releases_controller_after_entering_manual_mode() {
+        let mut arbiter = OutputArbiter::new();
+
+        let target = target();
+
+        arbiter.register_controller(target, "heater", None).unwrap();
+
+        arbiter.set_mode(target, OutputMode::Manual).unwrap();
+
+        arbiter.release_controller("heater").unwrap();
+
+        assert_eq!(
+            arbiter.mode(target),
+            Err(OutputArbiterError::NotRegistered,),
         );
     }
 }

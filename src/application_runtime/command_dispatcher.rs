@@ -1019,6 +1019,41 @@ impl CommandDispatcher {
             return;
         };
 
+        let affected_controllers = match self.processing.controllers_affected_by_removal(id) {
+            Ok(controllers) => controllers,
+
+            Err(error) => {
+                self.log.error(format!(
+                    "Processing failed: \
+                         cannot preview controllers \
+                         affected by removal of \
+                         series '{name}': {error}",
+                ));
+
+                return;
+            }
+        };
+
+        /*
+         * First move every affected actuator
+         * into its configured safe state.
+         *
+         * No processing state has been
+         * removed yet.
+         */
+        for controller in &affected_controllers {
+            if let Err(error) = self.output_control.apply_safe(controller) {
+                self.log.error(format!(
+                    "Cannot remove series \
+                     '{name}': failed to apply \
+                     safe output for controller \
+                     '{controller}': {error}",
+                ));
+
+                return;
+            }
+        }
+
         let dependent_ids = match self.processing.remove_from(id) {
             Ok(dependent_ids) => dependent_ids,
 
@@ -1034,6 +1069,24 @@ impl CommandDispatcher {
                 return;
             }
         };
+
+        /*
+         * Controllers no longer exist in
+         * ProcessingService. Their outputs
+         * are already Manual/safe, so
+         * ownership may now be released.
+         */
+        for controller in &affected_controllers {
+            if let Err(error) = self.output_control.release_controller(controller) {
+                self.log.error(format!(
+                    "Controller \
+                     '{controller}' was removed \
+                     from processing, but its \
+                     output ownership could not \
+                     be released: {error}",
+                ));
+            }
+        }
 
         for dependent_id in dependent_ids
             .iter()
@@ -1051,12 +1104,16 @@ impl CommandDispatcher {
             .count();
 
         if dependent_count == 0 {
-            self.log.info(format!("Series '{name}' ({id}) removed.",));
+            self.log.info(format!(
+                "Series '{name}' ({id}) \
+                 removed.",
+            ));
         } else {
             self.log.info(format!(
-                "Series '{name}' ({id}) removed \
-                     with {dependent_count} dependent \
-                     series.",
+                "Series '{name}' ({id}) \
+                 removed with \
+                 {dependent_count} dependent \
+                 series.",
             ));
         }
     }
