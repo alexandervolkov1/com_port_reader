@@ -6,16 +6,17 @@ use std::{
     time::SystemTime,
 };
 
-mod sqlite;
-
-pub(crate) use sqlite::{SqliteProcessRecordWriter, new_process_database_path};
-
 use crossbeam_channel::{Receiver, Sender, unbounded};
 
 use crate::{
     connection::ConnectionId,
     data::{SeriesId, SeriesMetadata, SeriesSample},
+    instrument::InstrumentValue,
 };
+
+mod sqlite;
+
+pub(crate) use sqlite::{SqliteProcessRecordWriter, new_process_database_path};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProcessLogLevel {
@@ -65,9 +66,15 @@ pub enum ProcessAction {
         output_maximum: f64,
     },
 
-    SetPidSetpoint {
+    WriteControllerParameter {
         name: String,
-        setpoint: f64,
+        key: String,
+        value: InstrumentValue,
+    },
+
+    ConfigureController {
+        name: String,
+        updates: Vec<(String, InstrumentValue)>,
     },
 
     SetFilter {

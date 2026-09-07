@@ -13,7 +13,6 @@ use crate::{
     application_paths::ApplicationPaths,
     connection::ConnectionId,
     data::{Sample, SeriesId, SeriesSample, SeriesStore},
-    instrument::InstrumentValue,
     lua_application_definition::apply_lua_definition,
     lua_application_script::{LuaApplicationEvent, LuaControlInvocation},
     lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle, LuaWorkerHandleError},
@@ -705,19 +704,17 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
 
         UserCommand::WriteControllerParameter {
             name, key, value, ..
-        } => {
-            if key == "setpoint" {
-                if let InstrumentValue::Number(setpoint) = value {
-                    Some(ProcessAction::SetPidSetpoint {
-                        name: name.clone(),
-                        setpoint: *setpoint,
-                    })
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+        } => Some(ProcessAction::WriteControllerParameter {
+            name: name.clone(),
+            key: key.clone(),
+            value: *value,
+        }),
+
+        UserCommand::ConfigureController { name, updates, .. } => {
+            Some(ProcessAction::ConfigureController {
+                name: name.clone(),
+                updates: updates.clone(),
+            })
         }
 
         UserCommand::AddControllerDiagnostic(_)
@@ -725,7 +722,6 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
         | UserCommand::ControllerParameters { .. }
         | UserCommand::ControllerDiagnostics { .. }
         | UserCommand::ReadControllerParameter { .. }
-        | UserCommand::ConfigureController { .. }
         | UserCommand::ControllerReferenceKind { .. }
         | UserCommand::ControllerReferenceParameters { .. }
         | UserCommand::ReadControllerReferenceParameter { .. }
@@ -817,7 +813,7 @@ mod tests {
         connection::ConnectionId,
         data::{NewSeries, SamplingInterval, SeriesColor, SeriesId},
         instrument::{
-            ParameterAccess, ParameterRange, ParameterValueType,
+            InstrumentValue, ParameterAccess, ParameterRange, ParameterValueType,
             virtual_instrument::{
                 VirtualInstrumentId, VirtualParameterDescriptor, VirtualParameterId,
             },
@@ -950,5 +946,50 @@ mod tests {
         assert_eq!(output.loop_name, "heater");
         assert_eq!(output.input, input);
         assert_eq!(output.output.value(), 40.0);
+    }
+
+    #[test]
+    fn records_controller_parameter_write_action() {
+        let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
+
+        let command = UserCommand::WriteControllerParameter {
+            name: "heater".to_owned(),
+            key: "kd".to_owned(),
+            value: InstrumentValue::Number(2.5),
+            response_sender,
+        };
+
+        assert_eq!(
+            process_action_from_command(&command),
+            Some(ProcessAction::WriteControllerParameter {
+                name: "heater".to_owned(),
+                key: "kd".to_owned(),
+                value: InstrumentValue::Number(2.5),
+            },),
+        );
+    }
+
+    #[test]
+    fn records_controller_configuration_action() {
+        let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
+
+        let updates = vec![
+            ("kp".to_owned(), InstrumentValue::Number(1.5)),
+            ("ki".to_owned(), InstrumentValue::Number(0.25)),
+        ];
+
+        let command = UserCommand::ConfigureController {
+            name: "heater".to_owned(),
+            updates: updates.clone(),
+            response_sender,
+        };
+
+        assert_eq!(
+            process_action_from_command(&command),
+            Some(ProcessAction::ConfigureController {
+                name: "heater".to_owned(),
+                updates,
+            },),
+        );
     }
 }
