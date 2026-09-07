@@ -438,6 +438,11 @@ fn action_type_name(action: &ProcessAction) -> &'static str {
         ProcessAction::AddPidLoop { .. } => "add_pid_loop",
         ProcessAction::WriteControllerParameter { .. } => "write_controller_parameter",
         ProcessAction::ConfigureController { .. } => "configure_controller",
+        ProcessAction::WriteControllerReferenceParameter { .. } => {
+            "write_controller_reference_parameter"
+        }
+        ProcessAction::ConfigureControllerReference { .. } => "configure_controller_reference",
+        ProcessAction::SetControllerReference { .. } => "set_controller_reference",
         ProcessAction::AddFilteredSeries { .. } => "add_filtered_series",
         ProcessAction::SetFilter { .. } => "set_filter",
         ProcessAction::DeleteSeriesByName { .. } => "delete_series_by_name",
@@ -469,6 +474,9 @@ fn action_connection_id(action: &ProcessAction) -> Option<String> {
         | ProcessAction::SetFilter { .. }
         | ProcessAction::WriteControllerParameter { .. }
         | ProcessAction::ConfigureController { .. }
+        | ProcessAction::WriteControllerReferenceParameter { .. }
+        | ProcessAction::ConfigureControllerReference { .. }
+        | ProcessAction::SetControllerReference { .. }
         | ProcessAction::DeleteSeriesByName { .. }
         | ProcessAction::RenameSeries { .. }
         | ProcessAction::SetSeriesVisibility { .. }

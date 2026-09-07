@@ -12,6 +12,7 @@ use crate::{
     connection::ConnectionId,
     data::{SeriesId, SeriesMetadata, SeriesSample},
     instrument::InstrumentValue,
+    process_control::ReferenceSource,
 };
 
 mod sqlite;
@@ -75,6 +76,22 @@ pub enum ProcessAction {
     ConfigureController {
         name: String,
         updates: Vec<(String, InstrumentValue)>,
+    },
+
+    WriteControllerReferenceParameter {
+        name: String,
+        key: String,
+        value: InstrumentValue,
+    },
+
+    ConfigureControllerReference {
+        name: String,
+        updates: Vec<(String, InstrumentValue)>,
+    },
+
+    SetControllerReference {
+        name: String,
+        source: ReferenceSource,
     },
 
     SetFilter {

@@ -717,6 +717,28 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             })
         }
 
+        UserCommand::WriteControllerReferenceParameter {
+            name, key, value, ..
+        } => Some(ProcessAction::WriteControllerReferenceParameter {
+            name: name.clone(),
+            key: key.clone(),
+            value: *value,
+        }),
+
+        UserCommand::ConfigureControllerReference { name, updates, .. } => {
+            Some(ProcessAction::ConfigureControllerReference {
+                name: name.clone(),
+                updates: updates.clone(),
+            })
+        }
+
+        UserCommand::SetControllerReference { name, source, .. } => {
+            Some(ProcessAction::SetControllerReference {
+                name: name.clone(),
+                source: *source,
+            })
+        }
+
         UserCommand::AddControllerDiagnostic(_)
         | UserCommand::AddOnOffLoop(_)
         | UserCommand::ControllerParameters { .. }
@@ -725,9 +747,6 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
         | UserCommand::ControllerReferenceKind { .. }
         | UserCommand::ControllerReferenceParameters { .. }
         | UserCommand::ReadControllerReferenceParameter { .. }
-        | UserCommand::WriteControllerReferenceParameter { .. }
-        | UserCommand::ConfigureControllerReference { .. }
-        | UserCommand::SetControllerReference { .. }
         | UserCommand::SetControllerInput { .. }
         | UserCommand::ControllerState { .. }
         | UserCommand::PauseController { .. }
@@ -820,7 +839,7 @@ mod tests {
         },
         process_control::{
             ControlEvent, ControlLoopDefinition, ControlOutputTarget, PidController, PidGains,
-            PidOutputLimits,
+            PidOutputLimits, ReferenceSource,
         },
         signal_processing::SignalFilterDefinition,
         user_command::UserCommand,
@@ -989,6 +1008,72 @@ mod tests {
             Some(ProcessAction::ConfigureController {
                 name: "heater".to_owned(),
                 updates,
+            },),
+        );
+    }
+
+    #[test]
+    fn records_controller_reference_parameter_write_action() {
+        let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
+
+        let command = UserCommand::WriteControllerReferenceParameter {
+            name: "heater".to_owned(),
+            key: "target".to_owned(),
+            value: InstrumentValue::Number(220.0),
+            response_sender,
+        };
+
+        assert_eq!(
+            process_action_from_command(&command),
+            Some(ProcessAction::WriteControllerReferenceParameter {
+                name: "heater".to_owned(),
+                key: "target".to_owned(),
+                value: InstrumentValue::Number(220.0,),
+            },),
+        );
+    }
+
+    #[test]
+    fn records_controller_reference_configuration_action() {
+        let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
+
+        let updates = vec![
+            ("target".to_owned(), InstrumentValue::Number(220.0)),
+            ("rate".to_owned(), InstrumentValue::Number(2.0)),
+        ];
+
+        let command = UserCommand::ConfigureControllerReference {
+            name: "heater".to_owned(),
+            updates: updates.clone(),
+            response_sender,
+        };
+
+        assert_eq!(
+            process_action_from_command(&command),
+            Some(ProcessAction::ConfigureControllerReference {
+                name: "heater".to_owned(),
+                updates,
+            },),
+        );
+    }
+
+    #[test]
+    fn records_controller_reference_replacement_action() {
+        let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
+
+        let source = ReferenceSource::ramp(175.0, 220.0, 2.0).unwrap();
+
+        let command = UserCommand::SetControllerReference {
+            name: "heater".to_owned(),
+            source,
+            response_sender,
+        };
+
+        assert_eq!(
+            process_action_from_command(&command),
+            Some(ProcessAction::SetControllerReference {
+                name: "heater".to_owned(),
+                source,
             },),
         );
     }
