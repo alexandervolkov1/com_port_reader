@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     error::Error,
     fmt, io,
     thread::{self, JoinHandle},
@@ -7,13 +8,16 @@ use std::{
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 
 use crate::{
-    acquisition::{AcquisitionError, InstrumentWriteResult},
+    acquisition::{
+        AcquisitionError, InstrumentWriteCompletion, InstrumentWriteCompletionId,
+        InstrumentWriteResult,
+    },
     connection::ConnectionId,
     instrument::{
         ConnectedParameterAddress, InstrumentParameterAddress, InstrumentValue,
         InstrumentWriteRequest,
     },
-    output_control::ControllerInstanceId,
+    process_control::ControllerInstanceId,
     serial_connection::SerialConnectionRegistry,
     worker::ConnectionRouter,
 };
@@ -38,9 +42,19 @@ enum OutputCommand {
         response_sender: Sender<Result<(), OutputArbiterError>>,
     },
 
+    ReleaseController {
+        controller: String,
+        response_sender: Sender<Result<(), OutputArbiterError>>,
+    },
+
     Mode {
         target: ConnectedParameterAddress,
         response_sender: Sender<Result<OutputMode, OutputArbiterError>>,
+    },
+
+    LastApplied {
+        target: ConnectedParameterAddress,
+        response_sender: Sender<Result<Option<InstrumentValue>, OutputArbiterError>>,
     },
 
     ApplyAutomatic {
@@ -70,12 +84,13 @@ enum OutputCommand {
         response_sender: Sender<Result<Receiver<InstrumentWriteResult>, OutputRequestError>>,
     },
 
-    ReleaseController {
-        controller: String,
-        response_sender: Sender<Result<(), OutputArbiterError>>,
-    },
-
     Shutdown,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingWrite {
+    target: ConnectedParameterAddress,
+    instance_id: ControllerInstanceId,
 }
 
 pub(crate) struct OutputWriteResponse {
@@ -105,11 +120,9 @@ impl fmt::Display for OutputWriteError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Instrument(error) => error.fmt(formatter),
-
-            Self::Disconnected => formatter.write_str(
-                "instrument write response \
-                     channel is disconnected",
-            ),
+            Self::Disconnected => {
+                formatter.write_str("instrument write response channel is disconnected")
+            }
         }
     }
 }
@@ -118,7 +131,6 @@ impl Error for OutputWriteError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Instrument(error) => Some(error),
-
             Self::Disconnected => None,
         }
     }
@@ -176,6 +188,25 @@ impl OutputHandle {
             .map_err(Into::into)
     }
 
+    pub(crate) fn release_controller(
+        &self,
+        controller: impl Into<String>,
+    ) -> Result<(), OutputRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(OutputCommand::ReleaseController {
+                controller: controller.into(),
+                response_sender,
+            })
+            .map_err(|_| OutputRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| OutputRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
     pub(crate) fn mode(
         &self,
         target: ConnectedParameterAddress,
@@ -184,6 +215,25 @@ impl OutputHandle {
 
         self.command_sender
             .send(OutputCommand::Mode {
+                target,
+                response_sender,
+            })
+            .map_err(|_| OutputRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| OutputRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub(crate) fn last_applied(
+        &self,
+        target: ConnectedParameterAddress,
+    ) -> Result<Option<InstrumentValue>, OutputRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(OutputCommand::LastApplied {
                 target,
                 response_sender,
             })
@@ -295,25 +345,6 @@ impl OutputHandle {
 
         result.map(OutputWriteResponse::new)
     }
-
-    pub(crate) fn release_controller(
-        &self,
-        controller: impl Into<String>,
-    ) -> Result<(), OutputRequestError> {
-        let (response_sender, response_receiver) = bounded(1);
-
-        self.command_sender
-            .send(OutputCommand::ReleaseController {
-                controller: controller.into(),
-                response_sender,
-            })
-            .map_err(|_| OutputRequestError::Disconnected)?;
-
-        response_receiver
-            .recv()
-            .map_err(|_| OutputRequestError::Disconnected)?
-            .map_err(Into::into)
-    }
 }
 
 pub(crate) struct OutputService {
@@ -327,13 +358,20 @@ impl OutputService {
         serial_connections: SerialConnectionRegistry,
     ) -> io::Result<Self> {
         let (command_sender, command_receiver) = unbounded();
+        let (completion_sender, completion_receiver) = unbounded();
 
         let handle = OutputHandle { command_sender };
 
         let thread = thread::Builder::new()
             .name("output-control".to_owned())
             .spawn(move || {
-                run(command_receiver, connection_router, serial_connections);
+                run(
+                    command_receiver,
+                    completion_sender,
+                    completion_receiver,
+                    connection_router,
+                    serial_connections,
+                );
             })?;
 
         Ok(Self {
@@ -357,135 +395,220 @@ impl Drop for OutputService {
     }
 }
 
+fn allocate_completion_id(next_id: &mut u64) -> InstrumentWriteCompletionId {
+    let id = InstrumentWriteCompletionId(*next_id);
+
+    *next_id = next_id
+        .checked_add(1)
+        .expect("instrument write completion id overflow");
+
+    id
+}
+
 fn run(
     command_receiver: Receiver<OutputCommand>,
+    completion_sender: Sender<InstrumentWriteCompletion>,
+    completion_receiver: Receiver<InstrumentWriteCompletion>,
     connection_router: ConnectionRouter,
     serial_connections: SerialConnectionRegistry,
 ) {
     let mut arbiter = OutputArbiter::new();
 
-    while let Ok(command) = command_receiver.recv() {
-        match command {
-            OutputCommand::RegisterController {
-                target,
-                controller,
-                instance_id,
-                safe_request,
-                response_sender,
-            } => {
-                let result =
-                    arbiter.register_controller(target, controller, instance_id, safe_request);
+    let mut pending_writes: HashMap<InstrumentWriteCompletionId, PendingWrite> = HashMap::new();
 
-                let _ = response_sender.send(result);
+    let mut next_write_completion_id = 1_u64;
+
+    'run: loop {
+        crossbeam_channel::select! {
+            recv(command_receiver) -> command => {
+                let Ok(command) = command else {
+                    break 'run;
+                };
+
+                match command {
+                    OutputCommand::RegisterController {
+                        target,
+                        controller,
+                        instance_id,
+                        safe_request,
+                        response_sender,
+                    } => {
+                        let result = arbiter.register_controller(
+                            target,
+                            controller,
+                            instance_id,
+                            safe_request,
+                        );
+
+                        let _ = response_sender.send(result);
+                    }
+
+                    OutputCommand::RollbackControllerRegistration {
+                        target,
+                        controller,
+                        response_sender,
+                    } => {
+                        let result = arbiter.unregister_controller(target, &controller);
+
+                        let _ = response_sender.send(result);
+                    }
+
+                    OutputCommand::ReleaseController {
+                        controller,
+                        response_sender,
+                    } => {
+                        let result = arbiter.release_controller(&controller);
+
+                        let _ = response_sender.send(result);
+                    }
+
+                    OutputCommand::Mode {
+                        target,
+                        response_sender,
+                    } => {
+                        let result = arbiter.mode(target);
+
+                        let _ = response_sender.send(result);
+                    }
+
+                    OutputCommand::LastApplied {
+                        target,
+                        response_sender,
+                    } => {
+                        let result = arbiter.last_applied(target);
+
+                        let _ = response_sender.send(result);
+                    }
+
+                    OutputCommand::ApplyAutomatic {
+                        intent,
+                        response_sender,
+                    } => {
+                        let result = apply_automatic(
+                            &mut arbiter,
+                            intent,
+                            &completion_sender,
+                            &mut pending_writes,
+                            &mut next_write_completion_id,
+                            &connection_router,
+                            &serial_connections,
+                        );
+
+                        let _ = response_sender.send(result);
+                    }
+
+                    OutputCommand::ApplyManual {
+                        intent,
+                        response_sender,
+                    } => {
+                        let result = apply_manual(
+                            &mut arbiter,
+                            intent,
+                            &completion_sender,
+                            &mut pending_writes,
+                            &mut next_write_completion_id,
+                            &connection_router,
+                            &serial_connections,
+                        );
+
+                        let _ = response_sender.send(result);
+                    }
+
+                    OutputCommand::RequestAutomatic {
+                        controller,
+                        response_sender,
+                    } => {
+                        let result = arbiter.request_automatic(&controller);
+
+                        let _ = response_sender.send(result);
+                    }
+
+                    OutputCommand::WriteInstrument {
+                        connection_id,
+                        request,
+                        instrument_response_sender,
+                        response_sender,
+                    } => {
+                        let result = write_instrument(
+                            &mut arbiter,
+                            connection_id,
+                            request,
+                            instrument_response_sender,
+                            &completion_sender,
+                            &mut pending_writes,
+                            &mut next_write_completion_id,
+                            &connection_router,
+                            &serial_connections,
+                        );
+
+                        let _ = response_sender.send(result);
+                    }
+
+                    OutputCommand::ApplySafe {
+                        controller,
+                        response_sender,
+                    } => {
+                        let result = apply_safe(
+                            &mut arbiter,
+                            &controller,
+                            &completion_sender,
+                            &mut pending_writes,
+                            &mut next_write_completion_id,
+                            &connection_router,
+                            &serial_connections,
+                        );
+
+                        let _ = response_sender.send(result);
+                    }
+
+                    OutputCommand::Shutdown => {
+                        break 'run;
+                    }
+                }
             }
 
-            OutputCommand::RollbackControllerRegistration {
-                target,
-                controller,
-                response_sender,
-            } => {
-                let result = arbiter.unregister_controller(target, &controller);
+            recv(completion_receiver) -> completion => {
+                let Ok(completion) = completion else {
+                    break 'run;
+                };
 
-                let _ = response_sender.send(result);
-            }
-
-            OutputCommand::Mode {
-                target,
-                response_sender,
-            } => {
-                let result = arbiter.mode(target);
-
-                let _ = response_sender.send(result);
-            }
-
-            OutputCommand::ApplyAutomatic {
-                intent,
-                response_sender,
-            } => {
-                let result = apply_automatic(
+                handle_write_completion(
                     &mut arbiter,
-                    intent,
-                    &connection_router,
-                    &serial_connections,
+                    &mut pending_writes,
+                    completion,
                 );
-
-                let _ = response_sender.send(result);
-            }
-
-            OutputCommand::ApplyManual {
-                intent,
-                response_sender,
-            } => {
-                let result = apply_manual(
-                    &mut arbiter,
-                    intent,
-                    &connection_router,
-                    &serial_connections,
-                );
-
-                let _ = response_sender.send(result);
-            }
-
-            OutputCommand::RequestAutomatic {
-                controller,
-                response_sender,
-            } => {
-                let result = arbiter.request_automatic(&controller);
-
-                let _ = response_sender.send(result);
-            }
-
-            OutputCommand::WriteInstrument {
-                connection_id,
-                request,
-                instrument_response_sender,
-                response_sender,
-            } => {
-                let result = write_instrument(
-                    &mut arbiter,
-                    connection_id,
-                    request,
-                    instrument_response_sender,
-                    &connection_router,
-                    &serial_connections,
-                );
-
-                let _ = response_sender.send(result);
-            }
-
-            OutputCommand::ApplySafe {
-                controller,
-                response_sender,
-            } => {
-                let result = apply_safe(
-                    &mut arbiter,
-                    &controller,
-                    &connection_router,
-                    &serial_connections,
-                );
-
-                let _ = response_sender.send(result);
-            }
-
-            OutputCommand::ReleaseController {
-                controller,
-                response_sender,
-            } => {
-                let result = arbiter.release_controller(&controller);
-
-                let _ = response_sender.send(result);
-            }
-
-            OutputCommand::Shutdown => {
-                break;
             }
         }
     }
 }
 
+fn handle_write_completion(
+    arbiter: &mut OutputArbiter,
+    pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
+    completion: InstrumentWriteCompletion,
+) {
+    let Some(pending) = pending_writes.remove(&completion.id) else {
+        return;
+    };
+
+    let Ok(actual_value) = completion.result else {
+        return;
+    };
+
+    let _ = arbiter.acknowledge_write(
+        pending.target,
+        pending.instance_id,
+        completion.id,
+        actual_value,
+    );
+}
+
 fn apply_automatic(
     arbiter: &mut OutputArbiter,
     intent: AutomaticOutputIntent,
+    completion_sender: &Sender<InstrumentWriteCompletion>,
+    pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
+    next_completion_id: &mut u64,
     connection_router: &ConnectionRouter,
     serial_connections: &SerialConnectionRegistry,
 ) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
@@ -498,7 +621,16 @@ fn apply_automatic(
 
     validate_request_target(target, request)?;
 
-    let response_receiver = dispatch_write(target, request, connection_router, serial_connections)?;
+    let response_receiver = dispatch_tracked_write(
+        target,
+        request,
+        instance_id,
+        completion_sender,
+        pending_writes,
+        next_completion_id,
+        connection_router,
+        serial_connections,
+    )?;
 
     arbiter.complete_automatic_transition(target, &controller)?;
 
@@ -508,6 +640,9 @@ fn apply_automatic(
 fn apply_manual(
     arbiter: &mut OutputArbiter,
     intent: ManualOutputIntent,
+    completion_sender: &Sender<InstrumentWriteCompletion>,
+    pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
+    next_completion_id: &mut u64,
     connection_router: &ConnectionRouter,
     serial_connections: &SerialConnectionRegistry,
 ) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
@@ -515,9 +650,20 @@ fn apply_manual(
 
     arbiter.mode(target)?;
 
+    let instance_id = arbiter.controller_instance_id(target)?;
+
     validate_request_target(target, request)?;
 
-    let response_receiver = dispatch_write(target, request, connection_router, serial_connections)?;
+    let response_receiver = dispatch_tracked_write(
+        target,
+        request,
+        instance_id,
+        completion_sender,
+        pending_writes,
+        next_completion_id,
+        connection_router,
+        serial_connections,
+    )?;
 
     arbiter.set_mode(target, OutputMode::Manual)?;
 
@@ -527,16 +673,30 @@ fn apply_manual(
 fn apply_safe(
     arbiter: &mut OutputArbiter,
     controller: &str,
+    completion_sender: &Sender<InstrumentWriteCompletion>,
+    pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
+    next_completion_id: &mut u64,
     connection_router: &ConnectionRouter,
     serial_connections: &SerialConnectionRegistry,
 ) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
     let (target, request) = arbiter.safe_output(controller)?;
 
+    let instance_id = arbiter.controller_instance_id(target)?;
+
     arbiter.authorize(target, &OutputSource::Safety)?;
 
     validate_request_target(target, request)?;
 
-    let response_receiver = dispatch_write(target, request, connection_router, serial_connections)?;
+    let response_receiver = dispatch_tracked_write(
+        target,
+        request,
+        instance_id,
+        completion_sender,
+        pending_writes,
+        next_completion_id,
+        connection_router,
+        serial_connections,
+    )?;
 
     arbiter.set_mode(target, OutputMode::Manual)?;
 
@@ -548,23 +708,38 @@ fn write_instrument(
     connection_id: ConnectionId,
     request: InstrumentWriteRequest,
     instrument_response_sender: Sender<InstrumentWriteResult>,
+    completion_sender: &Sender<InstrumentWriteCompletion>,
+    pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
+    next_completion_id: &mut u64,
     connection_router: &ConnectionRouter,
     serial_connections: &SerialConnectionRegistry,
 ) -> Result<(), OutputRequestError> {
     let target = ConnectedParameterAddress::new(connection_id, request.parameter_address());
 
-    let controlled = arbiter.contains(target);
+    if arbiter.contains(target) {
+        let instance_id = arbiter.controller_instance_id(target)?;
 
-    dispatch_write_to_sender(
-        target,
-        request,
-        instrument_response_sender,
-        connection_router,
-        serial_connections,
-    )?;
+        dispatch_tracked_write_to_sender(
+            target,
+            request,
+            instance_id,
+            completion_sender,
+            pending_writes,
+            next_completion_id,
+            instrument_response_sender,
+            connection_router,
+            serial_connections,
+        )?;
 
-    if controlled {
         arbiter.set_mode(target, OutputMode::Manual)?;
+    } else {
+        dispatch_write_to_sender(
+            target,
+            request,
+            instrument_response_sender,
+            connection_router,
+            serial_connections,
+        )?;
     }
 
     Ok(())
@@ -575,7 +750,6 @@ fn validate_request_target(
     request: InstrumentWriteRequest,
 ) -> Result<(), OutputRequestError> {
     let expected = target.parameter();
-
     let actual = request.parameter_address();
 
     if actual != expected {
@@ -585,23 +759,89 @@ fn validate_request_target(
     Ok(())
 }
 
-fn dispatch_write(
+fn dispatch_tracked_write(
     target: ConnectedParameterAddress,
     request: InstrumentWriteRequest,
+    instance_id: ControllerInstanceId,
+    completion_sender: &Sender<InstrumentWriteCompletion>,
+    pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
+    next_completion_id: &mut u64,
     connection_router: &ConnectionRouter,
     serial_connections: &SerialConnectionRegistry,
 ) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
     let (response_sender, response_receiver) = bounded(1);
 
-    dispatch_write_to_sender(
+    dispatch_tracked_write_to_sender(
         target,
         request,
+        instance_id,
+        completion_sender,
+        pending_writes,
+        next_completion_id,
         response_sender,
         connection_router,
         serial_connections,
     )?;
 
     Ok(response_receiver)
+}
+
+fn dispatch_tracked_write_to_sender(
+    target: ConnectedParameterAddress,
+    request: InstrumentWriteRequest,
+    instance_id: ControllerInstanceId,
+    completion_sender: &Sender<InstrumentWriteCompletion>,
+    pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
+    next_completion_id: &mut u64,
+    response_sender: Sender<InstrumentWriteResult>,
+    connection_router: &ConnectionRouter,
+    serial_connections: &SerialConnectionRegistry,
+) -> Result<(), OutputRequestError> {
+    let connection_id = target.connection_id();
+
+    let worker = connection_router.handle(connection_id).ok_or_else(|| {
+        OutputRequestError::Transport(format!(
+            "connection {connection_id} does not have a registered worker",
+        ))
+    })?;
+
+    let serial_config_store = serial_connections.store(connection_id).ok_or_else(|| {
+        OutputRequestError::Transport(format!(
+            "connection {connection_id} does not have a serial configuration store",
+        ))
+    })?;
+
+    let serial_config = serial_config_store.snapshot().ok_or_else(|| {
+        OutputRequestError::Transport(format!(
+            "connection {connection_id} does not have a selected COM port",
+        ))
+    })?;
+
+    let completion_id = allocate_completion_id(next_completion_id);
+
+    worker
+        .write_instrument_quiet_tracked(
+            serial_config.port_name().to_owned(),
+            request,
+            completion_id,
+            completion_sender.clone(),
+            response_sender,
+        )
+        .map_err(|error| {
+            OutputRequestError::Transport(format!(
+                "cannot enqueue instrument write for connection {connection_id}: {error}",
+            ))
+        })?;
+
+    pending_writes.insert(
+        completion_id,
+        PendingWrite {
+            target,
+            instance_id,
+        },
+    );
+
+    Ok(())
 }
 
 fn dispatch_write_to_sender(
@@ -615,26 +855,19 @@ fn dispatch_write_to_sender(
 
     let worker = connection_router.handle(connection_id).ok_or_else(|| {
         OutputRequestError::Transport(format!(
-            "connection \
-                         {connection_id} does not \
-                         have a registered worker",
+            "connection {connection_id} does not have a registered worker",
         ))
     })?;
 
     let serial_config_store = serial_connections.store(connection_id).ok_or_else(|| {
         OutputRequestError::Transport(format!(
-            "connection \
-                         {connection_id} does not \
-                         have a serial \
-                         configuration store",
+            "connection {connection_id} does not have a serial configuration store",
         ))
     })?;
 
     let serial_config = serial_config_store.snapshot().ok_or_else(|| {
         OutputRequestError::Transport(format!(
-            "connection \
-                         {connection_id} does not \
-                         have a selected COM port",
+            "connection {connection_id} does not have a selected COM port",
         ))
     })?;
 
@@ -646,9 +879,7 @@ fn dispatch_write_to_sender(
         )
         .map_err(|error| {
             OutputRequestError::Transport(format!(
-                "cannot enqueue instrument \
-                     write for connection \
-                     {connection_id}: {error}",
+                "cannot enqueue instrument write for connection {connection_id}: {error}",
             ))
         })
 }
@@ -672,9 +903,7 @@ impl fmt::Display for OutputRequestError {
             Self::RequestTargetMismatch { expected, actual } => {
                 write!(
                     formatter,
-                    "Output request targets \
-                     {actual:?}, but output ownership \
-                     belongs to {expected:?}",
+                    "Output request targets {actual:?}, but output ownership belongs to {expected:?}",
                 )
             }
 
@@ -689,7 +918,6 @@ impl Error for OutputRequestError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Arbiter(error) => Some(error),
-
             Self::RequestTargetMismatch { .. } | Self::Transport(_) | Self::Disconnected => None,
         }
     }
@@ -708,6 +936,7 @@ mod tests {
     use serialport::{DataBits, FlowControl, Parity, StopBits};
 
     use crate::{
+        acquisition::InstrumentWriteCompletion,
         connection::ConnectionId,
         instrument::{
             ConnectedParameterAddress, InstrumentParameterAddress, InstrumentValue,
@@ -738,6 +967,10 @@ mod tests {
         ControllerInstanceId::for_test(1)
     }
 
+    fn other_instance_id() -> ControllerInstanceId {
+        ControllerInstanceId::for_test(2)
+    }
+
     fn service() -> OutputService {
         OutputService::spawn(ConnectionRouter::default(), SerialConnectionRegistry::new()).unwrap()
     }
@@ -757,24 +990,20 @@ mod tests {
     #[test]
     fn owns_registered_output_state() {
         let service = service();
-
         let handle = service.handle();
-
         let target = target();
 
         handle
             .register_controller(target, "heater", instance_id(), None)
             .unwrap();
 
-        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
+        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic));
     }
 
     #[test]
     fn rejects_duplicate_registration() {
         let service = service();
-
         let handle = service.handle();
-
         let target = target();
 
         handle
@@ -782,21 +1011,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            handle.register_controller(target, "other", instance_id(), None),
+            handle.register_controller(target, "other", other_instance_id(), None),
             Err(OutputRequestError::Arbiter(
                 OutputArbiterError::AlreadyRegistered {
                     controller: "heater".to_owned(),
                 },
-            ),),
+            )),
         );
     }
 
     #[test]
     fn rolls_back_controller_registration() {
         let service = service();
-
         let handle = service.handle();
-
         let target = target();
 
         handle
@@ -808,32 +1035,26 @@ mod tests {
             .unwrap();
 
         handle
-            .register_controller(target, "other", instance_id(), None)
+            .register_controller(target, "other", other_instance_id(), None)
             .unwrap();
 
-        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
+        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic));
     }
 
     #[test]
     fn reports_disconnected_service() {
         let handle = {
             let service = service();
-
             service.handle()
         };
 
-        assert_eq!(
-            handle.mode(target()),
-            Err(OutputRequestError::Disconnected,),
-        );
+        assert_eq!(handle.mode(target()), Err(OutputRequestError::Disconnected),);
     }
 
     #[test]
     fn rejects_request_for_another_parameter() {
         let service = service();
-
         let handle = service.handle();
-
         let target = target();
 
         handle
@@ -852,7 +1073,7 @@ mod tests {
                 "heater",
                 instance_id(),
                 request,
-            ),),
+            )),
             Err(OutputRequestError::RequestTargetMismatch { .. }),
         ));
     }
@@ -860,24 +1081,19 @@ mod tests {
     #[test]
     fn routes_automatic_output_to_connection_worker() {
         let target = target();
-
         let connection_id = target.connection_id();
 
         let serial_connections = SerialConnectionRegistry::new();
-
         serial_connections
             .register(connection_id)
             .unwrap()
             .set(Some(serial_config("COM9")));
 
         let connection_router = ConnectionRouter::default();
-
         let (command_sender, command_receiver) = unbounded();
-
         connection_router.insert(WorkerHandle::new(connection_id, command_sender));
 
         let service = OutputService::spawn(connection_router, serial_connections).unwrap();
-
         let handle = service.handle();
 
         handle
@@ -905,40 +1121,34 @@ mod tests {
             port_name,
             request: received_request,
             emit_event,
+            completion: Some(_),
             ..
         }) = command
         else {
-            panic!("expected instrument write command",);
+            panic!("expected tracked instrument write command");
         };
 
-        assert_eq!(port_name, "COM9",);
-
-        assert_eq!(received_request, request,);
-
+        assert_eq!(port_name, "COM9");
+        assert_eq!(received_request, request);
         assert!(!emit_event);
     }
 
     #[test]
     fn enters_manual_after_enqueuing_write() {
         let target = target();
-
         let connection_id = target.connection_id();
 
         let serial_connections = SerialConnectionRegistry::new();
-
         serial_connections
             .register(connection_id)
             .unwrap()
             .set(Some(serial_config("COM9")));
 
         let connection_router = ConnectionRouter::default();
-
         let (command_sender, command_receiver) = unbounded();
-
         connection_router.insert(WorkerHandle::new(connection_id, command_sender));
 
         let service = OutputService::spawn(connection_router, serial_connections).unwrap();
-
         let handle = service.handle();
 
         handle
@@ -951,31 +1161,30 @@ mod tests {
             InstrumentValue::Number(35.0),
         );
 
-        let _response_receiver = handle
+        let _response = handle
             .apply_manual(ManualOutputIntent::new(target, request))
             .unwrap();
 
-        assert_eq!(handle.mode(target), Ok(OutputMode::Manual),);
+        assert_eq!(handle.mode(target), Ok(OutputMode::Manual));
 
         let command = command_receiver.try_recv().unwrap();
 
         let WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
             request: received_request,
+            completion: Some(_),
             ..
         }) = command
         else {
-            panic!("expected instrument write command",);
+            panic!("expected tracked instrument write command");
         };
 
-        assert_eq!(received_request, request,);
+        assert_eq!(received_request, request);
     }
 
     #[test]
     fn keeps_automatic_mode_when_manual_write_cannot_be_enqueued() {
         let service = service();
-
         let handle = service.handle();
-
         let target = target();
 
         handle
@@ -989,34 +1198,29 @@ mod tests {
         );
 
         assert!(matches!(
-            handle.apply_manual(ManualOutputIntent::new(target, request,),),
+            handle.apply_manual(ManualOutputIntent::new(target, request)),
             Err(OutputRequestError::Transport(_)),
         ));
 
-        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
+        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic));
     }
 
     #[test]
     fn rejects_automatic_output_in_manual_mode() {
         let target = target();
-
         let connection_id = target.connection_id();
 
         let serial_connections = SerialConnectionRegistry::new();
-
         serial_connections
             .register(connection_id)
             .unwrap()
             .set(Some(serial_config("COM9")));
 
         let connection_router = ConnectionRouter::default();
-
         let (command_sender, _command_receiver) = unbounded();
-
         connection_router.insert(WorkerHandle::new(connection_id, command_sender));
 
         let service = OutputService::spawn(connection_router, serial_connections).unwrap();
-
         let handle = service.handle();
 
         handle
@@ -1039,12 +1243,12 @@ mod tests {
                 "heater",
                 instance_id(),
                 request,
-            ),),
+            )),
             Err(OutputRequestError::Arbiter(
                 OutputArbiterError::SourceNotAllowed {
                     mode: OutputMode::Manual,
                     ..
-                }
+                },
             )),
         ));
     }
@@ -1052,24 +1256,19 @@ mod tests {
     #[test]
     fn routes_uncontrolled_instrument_write_without_changing_ownership() {
         let target = target();
-
         let connection_id = target.connection_id();
 
         let serial_connections = SerialConnectionRegistry::new();
-
         serial_connections
             .register(connection_id)
             .unwrap()
             .set(Some(serial_config("COM9")));
 
         let connection_router = ConnectionRouter::default();
-
         let (command_sender, command_receiver) = unbounded();
-
         connection_router.insert(WorkerHandle::new(connection_id, command_sender));
 
         let service = OutputService::spawn(connection_router, serial_connections).unwrap();
-
         let handle = service.handle();
 
         let request = InstrumentWriteRequest::virtual_instrument(
@@ -1087,44 +1286,40 @@ mod tests {
         assert_eq!(
             handle.mode(target),
             Err(OutputRequestError::Arbiter(
-                OutputArbiterError::NotRegistered,
-            ),),
+                OutputArbiterError::NotRegistered
+            )),
         );
 
         let command = command_receiver.try_recv().unwrap();
 
         let WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
             request: received_request,
+            completion: None,
             ..
         }) = command
         else {
-            panic!("expected instrument write command",);
+            panic!("expected untracked instrument write command");
         };
 
-        assert_eq!(received_request, request,);
+        assert_eq!(received_request, request);
     }
 
     #[test]
     fn explicit_write_to_controlled_output_enters_manual_mode() {
         let target = target();
-
         let connection_id = target.connection_id();
 
         let serial_connections = SerialConnectionRegistry::new();
-
         serial_connections
             .register(connection_id)
             .unwrap()
             .set(Some(serial_config("COM9")));
 
         let connection_router = ConnectionRouter::default();
-
-        let (command_sender, _command_receiver) = unbounded();
-
+        let (command_sender, command_receiver) = unbounded();
         connection_router.insert(WorkerHandle::new(connection_id, command_sender));
 
         let service = OutputService::spawn(connection_router, serial_connections).unwrap();
-
         let handle = service.handle();
 
         handle
@@ -1143,30 +1338,35 @@ mod tests {
             .write_instrument(connection_id, request, instrument_response_sender)
             .unwrap();
 
-        assert_eq!(handle.mode(target), Ok(OutputMode::Manual),);
+        assert_eq!(handle.mode(target), Ok(OutputMode::Manual));
+
+        let command = command_receiver.try_recv().unwrap();
+
+        assert!(matches!(
+            command,
+            WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
+                completion: Some(_),
+                ..
+            }),
+        ));
     }
 
     #[test]
     fn completes_automatic_takeover_on_first_successful_output() {
         let target = target();
-
         let connection_id = target.connection_id();
 
         let serial_connections = SerialConnectionRegistry::new();
-
         serial_connections
             .register(connection_id)
             .unwrap()
             .set(Some(serial_config("COM9")));
 
         let connection_router = ConnectionRouter::default();
-
         let (command_sender, _command_receiver) = unbounded();
-
         connection_router.insert(WorkerHandle::new(connection_id, command_sender));
 
         let service = OutputService::spawn(connection_router, serial_connections).unwrap();
-
         let handle = service.handle();
 
         handle
@@ -1183,11 +1383,11 @@ mod tests {
             .apply_manual(ManualOutputIntent::new(target, request))
             .unwrap();
 
-        assert_eq!(handle.mode(target), Ok(OutputMode::Manual),);
+        assert_eq!(handle.mode(target), Ok(OutputMode::Manual));
 
         handle.request_automatic("heater").unwrap();
 
-        assert_eq!(handle.mode(target), Ok(OutputMode::AutomaticPending,),);
+        assert_eq!(handle.mode(target), Ok(OutputMode::AutomaticPending));
 
         let _ = handle
             .apply_automatic(AutomaticOutputIntent::new(
@@ -1198,30 +1398,25 @@ mod tests {
             ))
             .unwrap();
 
-        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
+        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic));
     }
 
     #[test]
     fn applies_configured_safe_output_and_enters_manual_mode() {
         let target = target();
-
         let connection_id = target.connection_id();
 
         let serial_connections = SerialConnectionRegistry::new();
-
         serial_connections
             .register(connection_id)
             .unwrap()
             .set(Some(serial_config("COM9")));
 
         let connection_router = ConnectionRouter::default();
-
         let (command_sender, command_receiver) = unbounded();
-
         connection_router.insert(WorkerHandle::new(connection_id, command_sender));
 
         let service = OutputService::spawn(connection_router, serial_connections).unwrap();
-
         let handle = service.handle();
 
         let safe_request = InstrumentWriteRequest::virtual_instrument(
@@ -1234,26 +1429,28 @@ mod tests {
             .register_controller(target, "heater", instance_id(), Some(safe_request))
             .unwrap();
 
-        let _response_receiver = handle.apply_safe("heater").unwrap();
+        let _response = handle.apply_safe("heater").unwrap();
 
-        assert_eq!(handle.mode(target), Ok(OutputMode::Manual),);
+        assert_eq!(handle.mode(target), Ok(OutputMode::Manual));
 
         let command = command_receiver.try_recv().unwrap();
 
-        let WorkerCommand::Connection(ConnectionCommand::WriteInstrument { request, .. }) = command
+        let WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
+            request,
+            completion: Some(_),
+            ..
+        }) = command
         else {
-            panic!("expected instrument write command",);
+            panic!("expected tracked instrument write command");
         };
 
-        assert_eq!(request, safe_request,);
+        assert_eq!(request, safe_request);
     }
 
     #[test]
     fn rejects_safe_output_without_configuration() {
         let service = service();
-
         let handle = service.handle();
-
         let target = target();
 
         handle
@@ -1263,58 +1460,11 @@ mod tests {
         assert!(matches!(
             handle.apply_safe("heater"),
             Err(OutputRequestError::Arbiter(
-                OutputArbiterError::SafeOutputNotConfigured(
-                    controller,
-                ),
+                OutputArbiterError::SafeOutputNotConfigured(controller),
             )) if controller == "heater"
         ));
 
-        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
-    }
-
-    #[test]
-    fn releases_output_after_safe_transition() {
-        let target = target();
-
-        let connection_id = target.connection_id();
-
-        let serial_connections = SerialConnectionRegistry::new();
-
-        serial_connections
-            .register(connection_id)
-            .unwrap()
-            .set(Some(serial_config("COM9")));
-
-        let connection_router = ConnectionRouter::default();
-
-        let (command_sender, _command_receiver) = unbounded();
-
-        connection_router.insert(WorkerHandle::new(connection_id, command_sender));
-
-        let service = OutputService::spawn(connection_router, serial_connections).unwrap();
-
-        let handle = service.handle();
-
-        let safe_request = InstrumentWriteRequest::virtual_instrument(
-            VirtualInstrumentId::new(7),
-            VirtualParameterId::new(4),
-            InstrumentValue::Number(0.0),
-        );
-
-        handle
-            .register_controller(target, "heater", instance_id(), Some(safe_request))
-            .unwrap();
-
-        let _ = handle.apply_safe("heater").unwrap();
-
-        handle.release_controller("heater").unwrap();
-
-        assert_eq!(
-            handle.mode(target),
-            Err(OutputRequestError::Arbiter(
-                OutputArbiterError::NotRegistered,
-            ),),
-        );
+        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic));
     }
 
     #[test]
@@ -1323,27 +1473,23 @@ mod tests {
         let connection_id = target.connection_id();
 
         let serial_connections = SerialConnectionRegistry::new();
-
         serial_connections
             .register(connection_id)
             .unwrap()
             .set(Some(serial_config("COM9")));
 
         let connection_router = ConnectionRouter::default();
-
         let (command_sender, command_receiver) = unbounded();
-
         connection_router.insert(WorkerHandle::new(connection_id, command_sender));
 
         let service = OutputService::spawn(connection_router, serial_connections).unwrap();
-
         let handle = service.handle();
 
         handle
             .register_controller(target, "heater", instance_id(), None)
             .unwrap();
 
-        let stale_instance = ControllerInstanceId::for_test(2);
+        let stale_instance = other_instance_id();
 
         let request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -1360,20 +1506,18 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(
-                OutputRequestError::Arbiter(
-                    OutputArbiterError::ControllerInstanceMismatch {
-                        controller,
-                        expected,
-                        actual,
-                    },
-                ),
-            ) if controller == "heater"
+            Err(OutputRequestError::Arbiter(
+                OutputArbiterError::ControllerInstanceMismatch {
+                    controller,
+                    expected,
+                    actual,
+                },
+            )) if controller == "heater"
                 && expected == instance_id()
                 && actual == stale_instance
         ));
 
-        assert!(command_receiver.try_recv().is_err(),);
+        assert!(command_receiver.try_recv().is_err());
     }
 
     #[test]
@@ -1382,25 +1526,20 @@ mod tests {
         let connection_id = target.connection_id();
 
         let serial_connections = SerialConnectionRegistry::new();
-
         serial_connections
             .register(connection_id)
             .unwrap()
             .set(Some(serial_config("COM9")));
 
         let connection_router = ConnectionRouter::default();
-
         let (command_sender, command_receiver) = unbounded();
-
         connection_router.insert(WorkerHandle::new(connection_id, command_sender));
 
         let service = OutputService::spawn(connection_router, serial_connections).unwrap();
-
         let handle = service.handle();
 
-        let old_instance = ControllerInstanceId::for_test(1);
-
-        let new_instance = ControllerInstanceId::for_test(2);
+        let old_instance = instance_id();
+        let new_instance = other_instance_id();
 
         let safe_request = InstrumentWriteRequest::virtual_instrument(
             VirtualInstrumentId::new(7),
@@ -1414,28 +1553,16 @@ mod tests {
             InstrumentValue::Number(42.5),
         );
 
-        /*
-         * First incarnation owns the output.
-         */
         handle
             .register_controller(target, "heater", old_instance, Some(safe_request))
             .unwrap();
 
-        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
+        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic));
 
-        /*
-         * Simulate controller removal:
-         *
-         * Automatic -> safe write -> Manual
-         */
         let _safe_response = handle.apply_safe("heater").unwrap();
 
-        assert_eq!(handle.mode(target), Ok(OutputMode::Manual),);
+        assert_eq!(handle.mode(target), Ok(OutputMode::Manual));
 
-        /*
-         * Drain the safe write that was sent
-         * to the connection worker.
-         */
         let safe_command = command_receiver.try_recv().unwrap();
 
         let WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
@@ -1446,37 +1573,23 @@ mod tests {
             panic!("expected safe instrument write");
         };
 
-        assert_eq!(received_safe_request, safe_request,);
+        assert_eq!(received_safe_request, safe_request);
 
-        /*
-         * Manual ownership may now be
-         * released.
-         */
         handle.release_controller("heater").unwrap();
 
         assert_eq!(
             handle.mode(target),
             Err(OutputRequestError::Arbiter(
-                OutputArbiterError::NotRegistered,
-            ),),
+                OutputArbiterError::NotRegistered
+            )),
         );
 
-        /*
-         * A new controller with the same
-         * human-readable name takes over
-         * the same physical output.
-         */
         handle
             .register_controller(target, "heater", new_instance, Some(safe_request))
             .unwrap();
 
-        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic),);
+        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic));
 
-        /*
-         * An old event was already queued
-         * before the first controller was
-         * removed.
-         */
         let stale_result = handle.apply_automatic(AutomaticOutputIntent::new(
             target,
             "heater",
@@ -1486,29 +1599,19 @@ mod tests {
 
         assert!(matches!(
             stale_result,
-            Err(
-                OutputRequestError::Arbiter(
-                    OutputArbiterError::ControllerInstanceMismatch {
-                        controller,
-                        expected,
-                        actual,
-                    },
-                ),
-            ) if controller == "heater"
+            Err(OutputRequestError::Arbiter(
+                OutputArbiterError::ControllerInstanceMismatch {
+                    controller,
+                    expected,
+                    actual,
+                },
+            )) if controller == "heater"
                 && expected == new_instance
                 && actual == old_instance
         ));
 
-        /*
-         * Most importantly, stale output
-         * must not reach the worker.
-         */
-        assert!(command_receiver.try_recv().is_err(),);
+        assert!(command_receiver.try_recv().is_err());
 
-        /*
-         * Output from the current
-         * incarnation must still work.
-         */
         let _current_response = handle
             .apply_automatic(AutomaticOutputIntent::new(
                 target,
@@ -1525,12 +1628,78 @@ mod tests {
             ..
         }) = current_command
         else {
-            panic!(
-                "expected current controller \
-                 instrument write"
-            );
+            panic!("expected current controller instrument write");
         };
 
-        assert_eq!(received_request, automatic_request,);
+        assert_eq!(received_request, automatic_request);
+    }
+
+    #[test]
+    fn records_hardware_confirmed_automatic_output() {
+        let target = target();
+        let connection_id = target.connection_id();
+
+        let serial_connections = SerialConnectionRegistry::new();
+        serial_connections
+            .register(connection_id)
+            .unwrap()
+            .set(Some(serial_config("COM9")));
+
+        let connection_router = ConnectionRouter::default();
+        let (command_sender, command_receiver) = unbounded();
+        connection_router.insert(WorkerHandle::new(connection_id, command_sender));
+
+        let service = OutputService::spawn(connection_router, serial_connections).unwrap();
+        let handle = service.handle();
+
+        handle
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
+
+        let request = InstrumentWriteRequest::virtual_instrument(
+            VirtualInstrumentId::new(7),
+            VirtualParameterId::new(4),
+            InstrumentValue::Number(42.5),
+        );
+
+        let _response = handle
+            .apply_automatic(AutomaticOutputIntent::new(
+                target,
+                "heater",
+                instance_id(),
+                request,
+            ))
+            .unwrap();
+
+        let command = command_receiver.try_recv().unwrap();
+
+        let WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
+            completion: Some((completion_id, completion_sender)),
+            ..
+        }) = command
+        else {
+            panic!("expected tracked instrument write");
+        };
+
+        completion_sender
+            .send(InstrumentWriteCompletion {
+                id: completion_id,
+                result: Ok(InstrumentValue::Number(41.75)),
+            })
+            .unwrap();
+
+        let mut confirmed = None;
+
+        for _ in 0..100 {
+            confirmed = handle.last_applied(target).unwrap();
+
+            if confirmed.is_some() {
+                break;
+            }
+
+            std::thread::yield_now();
+        }
+
+        assert_eq!(confirmed, Some(InstrumentValue::Number(41.75)));
     }
 }
