@@ -27,6 +27,17 @@ use super::{
     acquisition_controller::AcquisitionController, device_emulator_service::DeviceEmulatorService,
 };
 
+pub(crate) struct CommandDispatcherConnections {
+    router: ConnectionRouter,
+    serial: SerialConnectionRegistry,
+}
+
+impl CommandDispatcherConnections {
+    pub(crate) fn new(router: ConnectionRouter, serial: SerialConnectionRegistry) -> Self {
+        Self { router, serial }
+    }
+}
+
 pub(crate) struct CommandDispatcher {
     connections: ConnectionRouter,
     serial_connections: SerialConnectionRegistry,
@@ -40,8 +51,7 @@ pub(crate) struct CommandDispatcher {
 
 impl CommandDispatcher {
     pub fn new(
-        connections: ConnectionRouter,
-        serial_connections: SerialConnectionRegistry,
+        connections: CommandDispatcherConnections,
         application_definition: ApplicationDefinition,
         series: SeriesStore,
         processing: ProcessingHandle<SeriesId>,
@@ -50,8 +60,8 @@ impl CommandDispatcher {
         log: LogHandle,
     ) -> Self {
         Self {
-            connections,
-            serial_connections,
+            connections: connections.router,
+            serial_connections: connections.serial,
             application_definition,
             series,
             processing,
@@ -151,13 +161,13 @@ impl CommandDispatcher {
         self.processing.resume_controller(name)?;
 
         if let Err(output_error) = self.output_control.request_automatic(name) {
-            if previous_state == ControlLoopState::Paused {
-                if let Err(rollback_error) = self.processing.pause_controller(name) {
-                    return Err(ResumeControllerError::Rollback {
-                        output: output_error,
-                        rollback: rollback_error,
-                    });
-                }
+            if previous_state == ControlLoopState::Paused
+                && let Err(rollback_error) = self.processing.pause_controller(name)
+            {
+                return Err(ResumeControllerError::Rollback {
+                    output: output_error,
+                    rollback: rollback_error,
+                });
             }
 
             return Err(ResumeControllerError::Output(output_error));

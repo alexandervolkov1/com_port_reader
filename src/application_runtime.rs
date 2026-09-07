@@ -31,7 +31,7 @@ mod device_emulator_service;
 mod process_control_dispatcher;
 
 pub(crate) use acquisition_controller::AcquisitionController;
-pub(crate) use command_dispatcher::CommandDispatcher;
+pub(crate) use command_dispatcher::{CommandDispatcher, CommandDispatcherConnections};
 pub(crate) use device_emulator_service::DeviceEmulatorService;
 use process_control_dispatcher::ProcessControlDispatcher;
 
@@ -184,8 +184,7 @@ impl ApplicationRuntime {
         let acquisition = AcquisitionController::new(workers, log.clone());
 
         let dispatcher = CommandDispatcher::new(
-            connection_router,
-            serial_connections,
+            CommandDispatcherConnections::new(connection_router, serial_connections),
             definition.clone(),
             series.clone(),
             processing_handle,
