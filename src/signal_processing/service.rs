@@ -1867,6 +1867,110 @@ mod tests {
     }
 
     #[test]
+    fn replacing_filter_preserves_pid_integral() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        let control_events = service.control_event_receiver();
+
+        handle
+            .add_filter(1, 2, SignalFilterDefinition::moving_average(2).unwrap())
+            .unwrap();
+
+        handle
+            .add_filter(2, 3, SignalFilterDefinition::moving_average(2).unwrap())
+            .unwrap();
+
+        handle
+            .add_control_loop(pid_definition("heater", 3, 1))
+            .unwrap();
+
+        /*
+         * Isolate the integral term.
+         */
+        handle
+            .configure_controller(
+                "heater",
+                [
+                    ("kp", InstrumentValue::Number(0.0)),
+                    ("ki", InstrumentValue::Number(1.0)),
+                    ("kd", InstrumentValue::Number(0.0)),
+                ],
+            )
+            .unwrap();
+
+        /*
+         * First sample establishes the
+         * PID time base.
+         */
+        handle.process(1, 0.0, 90.0).unwrap();
+
+        let first = receive_pid_output(&control_events);
+
+        assert_eq!(first.output.integral(), Some(0.0),);
+
+        /*
+         * One second at error = 10:
+         *
+         * I = 1 * 10 * 1 = 10
+         */
+        handle.process(1, 1.0, 90.0).unwrap();
+
+        let accumulated = receive_pid_output(&control_events);
+
+        assert_eq!(accumulated.output.integral(), Some(10.0),);
+
+        /*
+         * Replace an upstream filter.
+         *
+         * This must discard PID timing
+         * history, but preserve I = 10.
+         */
+        handle
+            .replace_filter(2, SignalFilterDefinition::median(3).unwrap())
+            .unwrap();
+
+        /*
+         * Both filters have fresh state,
+         * so the chain immediately emits
+         * 80.
+         *
+         * Because the PID was
+         * resynchronized, this sample must
+         * establish a new time base and
+         * must not integrate the new error
+         * yet.
+         */
+        handle.process(1, 2.0, 80.0).unwrap();
+
+        let resumed = receive_pid_output(&control_events);
+
+        assert_eq!(resumed.measurement, 80.0,);
+
+        assert_eq!(resumed.output.integral(), Some(10.0),);
+
+        assert_eq!(resumed.output.value(), 10.0,);
+
+        /*
+         * Normal integration resumes from
+         * the following sample.
+         *
+         * error = 20
+         * dt    = 1
+         *
+         * I = 10 + 20 = 30
+         */
+        handle.process(1, 3.0, 80.0).unwrap();
+
+        let next = receive_pid_output(&control_events);
+
+        assert_eq!(next.output.integral(), Some(30.0),);
+
+        assert_eq!(next.output.value(), 30.0,);
+    }
+
+    #[test]
     fn rejects_replacing_unknown_service_filter() {
         let service = ProcessingService::<u64>::spawn().unwrap();
 
