@@ -884,7 +884,15 @@ fn run_processing<SignalId>(
                 definition,
                 response_sender,
             } => {
+                let affected_signals = graph.removal_set_from(output);
+
                 let result = graph.replace_filter(output, definition);
+
+                if result.is_ok() {
+                    for signal_id in affected_signals {
+                        registry.resynchronize_from(signal_id);
+                    }
+                }
 
                 let _ = response_sender.send(result);
             }
@@ -1765,6 +1773,97 @@ mod tests {
                 value: 100.0,
             },])),
         );
+    }
+
+    #[test]
+    fn replacing_filter_resynchronizes_downstream_pid() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+
+        let handle = service.handle();
+
+        let control_events = service.control_event_receiver();
+
+        /*
+         * 1 -> filter 2 -> filter 3 -> PID
+         *
+         * Replacing filter 2 must also
+         * resynchronize the PID attached
+         * to downstream signal 3.
+         */
+        handle
+            .add_filter(1, 2, SignalFilterDefinition::moving_average(2).unwrap())
+            .unwrap();
+
+        handle
+            .add_filter(2, 3, SignalFilterDefinition::moving_average(2).unwrap())
+            .unwrap();
+
+        handle
+            .add_control_loop(pid_definition("heater", 3, 1))
+            .unwrap();
+
+        /*
+         * Isolate the derivative term.
+         */
+        handle
+            .configure_controller(
+                "heater",
+                [
+                    ("kp", InstrumentValue::Number(0.0)),
+                    ("kd", InstrumentValue::Number(1.0)),
+                ],
+            )
+            .unwrap();
+
+        /*
+         * Establish previous PID state at
+         * measurement = 90.
+         */
+        handle.process(1, 0.0, 90.0).unwrap();
+
+        let first = receive_pid_output(&control_events);
+
+        assert_eq!(first.measurement, 90.0,);
+
+        assert_eq!(first.output.derivative(), Some(0.0),);
+
+        handle.process(1, 1.0, 90.0).unwrap();
+
+        let second = receive_pid_output(&control_events);
+
+        assert_eq!(second.measurement, 90.0,);
+
+        assert_eq!(second.output.derivative(), Some(0.0),);
+
+        /*
+         * Replacing filter 2 resets both
+         * filter 2 and downstream filter 3.
+         */
+        handle
+            .replace_filter(2, SignalFilterDefinition::median(3).unwrap())
+            .unwrap();
+
+        /*
+         * The new filter chain now outputs
+         * 0 immediately.
+         *
+         * Without PID resynchronization the
+         * derivative would see:
+         *
+         *     90 -> 0 in 1 second
+         *
+         * and produce a large artificial
+         * kick.
+         */
+        handle.process(1, 2.0, 0.0).unwrap();
+
+        let after_replacement = receive_pid_output(&control_events);
+
+        assert_eq!(after_replacement.measurement, 0.0,);
+
+        assert_eq!(after_replacement.output.derivative(), Some(0.0),);
+
+        assert_eq!(after_replacement.output.value(), 0.0,);
     }
 
     #[test]
