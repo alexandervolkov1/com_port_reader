@@ -47,16 +47,19 @@ enum OutputCommand {
         response_sender: Sender<Result<(), OutputArbiterError>>,
     },
 
+    #[cfg(test)]
     Mode {
         target: ConnectedParameterAddress,
         response_sender: Sender<Result<OutputMode, OutputArbiterError>>,
     },
 
+    #[cfg(test)]
     LastApplied {
         target: ConnectedParameterAddress,
         response_sender: Sender<Result<Option<InstrumentValue>, OutputArbiterError>>,
     },
 
+    #[cfg(test)]
     LastWriteFailure {
         target: ConnectedParameterAddress,
         response_sender: Sender<Result<Option<AcquisitionError>, OutputArbiterError>>,
@@ -92,6 +95,41 @@ struct PendingWrite {
     target: ConnectedParameterAddress,
     instance_id: ControllerInstanceId,
     automatic_transition_id: Option<AutomaticTransitionId>,
+}
+
+struct OutputWriteContext<'a> {
+    completion_sender: &'a Sender<InstrumentWriteCompletion>,
+    pending_writes: HashMap<InstrumentWriteCompletionId, PendingWrite>,
+    next_completion_id: u64,
+    connection_router: &'a ConnectionRouter,
+    serial_connections: &'a SerialConnectionRegistry,
+}
+
+impl<'a> OutputWriteContext<'a> {
+    fn new(
+        completion_sender: &'a Sender<InstrumentWriteCompletion>,
+        connection_router: &'a ConnectionRouter,
+        serial_connections: &'a SerialConnectionRegistry,
+    ) -> Self {
+        Self {
+            completion_sender,
+            pending_writes: HashMap::new(),
+            next_completion_id: 1,
+            connection_router,
+            serial_connections,
+        }
+    }
+
+    fn allocate_completion_id(&mut self) -> InstrumentWriteCompletionId {
+        let id = InstrumentWriteCompletionId(self.next_completion_id);
+
+        self.next_completion_id = self
+            .next_completion_id
+            .checked_add(1)
+            .expect("instrument write completion id overflow");
+
+        id
+    }
 }
 
 pub(crate) struct OutputWriteResponse {
@@ -208,6 +246,7 @@ impl OutputHandle {
             .map_err(Into::into)
     }
 
+    #[cfg(test)]
     pub(crate) fn mode(
         &self,
         target: ConnectedParameterAddress,
@@ -227,6 +266,7 @@ impl OutputHandle {
             .map_err(Into::into)
     }
 
+    #[cfg(test)]
     pub(crate) fn last_applied(
         &self,
         target: ConnectedParameterAddress,
@@ -246,6 +286,7 @@ impl OutputHandle {
             .map_err(Into::into)
     }
 
+    #[cfg(test)]
     pub(crate) fn last_write_failure(
         &self,
         target: ConnectedParameterAddress,
@@ -395,16 +436,6 @@ impl Drop for OutputService {
     }
 }
 
-fn allocate_completion_id(next_id: &mut u64) -> InstrumentWriteCompletionId {
-    let id = InstrumentWriteCompletionId(*next_id);
-
-    *next_id = next_id
-        .checked_add(1)
-        .expect("instrument write completion id overflow");
-
-    id
-}
-
 fn run(
     command_receiver: Receiver<OutputCommand>,
     completion_sender: Sender<InstrumentWriteCompletion>,
@@ -414,9 +445,8 @@ fn run(
 ) {
     let mut arbiter = OutputArbiter::new();
 
-    let mut pending_writes: HashMap<InstrumentWriteCompletionId, PendingWrite> = HashMap::new();
-
-    let mut next_write_completion_id = 1_u64;
+    let mut write_context =
+        OutputWriteContext::new(&completion_sender, &connection_router, &serial_connections);
 
     'run: loop {
         crossbeam_channel::select! {
@@ -462,6 +492,7 @@ fn run(
                         let _ = response_sender.send(result);
                     }
 
+                    #[cfg(test)]
                     OutputCommand::Mode {
                         target,
                         response_sender,
@@ -471,6 +502,7 @@ fn run(
                         let _ = response_sender.send(result);
                     }
 
+                    #[cfg(test)]
                     OutputCommand::LastApplied {
                         target,
                         response_sender,
@@ -480,6 +512,7 @@ fn run(
                         let _ = response_sender.send(result);
                     }
 
+                    #[cfg(test)]
                     OutputCommand::LastWriteFailure {
                         target,
                         response_sender,
@@ -496,11 +529,7 @@ fn run(
                         let result = apply_automatic(
                             &mut arbiter,
                             intent,
-                            &completion_sender,
-                            &mut pending_writes,
-                            &mut next_write_completion_id,
-                            &connection_router,
-                            &serial_connections,
+                            &mut write_context,
                         );
 
                         let _ = response_sender.send(result);
@@ -527,11 +556,7 @@ fn run(
                             connection_id,
                             request,
                             instrument_response_sender,
-                            &completion_sender,
-                            &mut pending_writes,
-                            &mut next_write_completion_id,
-                            &connection_router,
-                            &serial_connections,
+                            &mut write_context,
                         );
 
                         let _ = response_sender.send(result);
@@ -544,11 +569,7 @@ fn run(
                         let result = apply_safe(
                             &mut arbiter,
                             &controller,
-                            &completion_sender,
-                            &mut pending_writes,
-                            &mut next_write_completion_id,
-                            &connection_router,
-                            &serial_connections,
+                            &mut write_context,
                         );
 
                         let _ = response_sender.send(result);
@@ -567,7 +588,7 @@ fn run(
 
                 handle_write_completion(
                     &mut arbiter,
-                    &mut pending_writes,
+                    &mut write_context.pending_writes,
                     completion,
                 );
             }
@@ -620,46 +641,29 @@ fn handle_write_completion(
 fn apply_automatic(
     arbiter: &mut OutputArbiter,
     intent: AutomaticOutputIntent,
-    completion_sender: &Sender<InstrumentWriteCompletion>,
-    pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
-    next_completion_id: &mut u64,
-    connection_router: &ConnectionRouter,
-    serial_connections: &SerialConnectionRegistry,
+    write_context: &mut OutputWriteContext<'_>,
 ) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
     let (target, controller, instance_id, request) = intent.into_parts();
 
-    arbiter.authorize(
-        target,
-        &OutputSource::controller(controller.clone(), instance_id),
-    )?;
+    arbiter.authorize(target, &OutputSource::controller(controller, instance_id))?;
 
     let automatic_transition_id = arbiter.automatic_transition_id(target)?;
 
     validate_request_target(target, request)?;
 
-    let response_receiver = dispatch_tracked_write(
+    dispatch_tracked_write(
         target,
         request,
         instance_id,
         automatic_transition_id,
-        completion_sender,
-        pending_writes,
-        next_completion_id,
-        connection_router,
-        serial_connections,
-    )?;
-
-    Ok(response_receiver)
+        write_context,
+    )
 }
 
 fn apply_safe(
     arbiter: &mut OutputArbiter,
     controller: &str,
-    completion_sender: &Sender<InstrumentWriteCompletion>,
-    pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
-    next_completion_id: &mut u64,
-    connection_router: &ConnectionRouter,
-    serial_connections: &SerialConnectionRegistry,
+    write_context: &mut OutputWriteContext<'_>,
 ) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
     let (target, request) = arbiter.safe_output(controller)?;
 
@@ -669,17 +673,8 @@ fn apply_safe(
 
     validate_request_target(target, request)?;
 
-    let response_receiver = dispatch_tracked_write(
-        target,
-        request,
-        instance_id,
-        None,
-        completion_sender,
-        pending_writes,
-        next_completion_id,
-        connection_router,
-        serial_connections,
-    )?;
+    let response_receiver =
+        dispatch_tracked_write(target, request, instance_id, None, write_context)?;
 
     arbiter.set_mode(target, OutputMode::Manual)?;
 
@@ -691,11 +686,7 @@ fn write_instrument(
     connection_id: ConnectionId,
     request: InstrumentWriteRequest,
     instrument_response_sender: Sender<InstrumentWriteResult>,
-    completion_sender: &Sender<InstrumentWriteCompletion>,
-    pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
-    next_completion_id: &mut u64,
-    connection_router: &ConnectionRouter,
-    serial_connections: &SerialConnectionRegistry,
+    write_context: &mut OutputWriteContext<'_>,
 ) -> Result<(), OutputRequestError> {
     let target = ConnectedParameterAddress::new(connection_id, request.parameter_address());
 
@@ -707,12 +698,8 @@ fn write_instrument(
             request,
             instance_id,
             None,
-            completion_sender,
-            pending_writes,
-            next_completion_id,
             instrument_response_sender,
-            connection_router,
-            serial_connections,
+            write_context,
         )?;
 
         arbiter.set_mode(target, OutputMode::Manual)?;
@@ -721,8 +708,8 @@ fn write_instrument(
             target,
             request,
             instrument_response_sender,
-            connection_router,
-            serial_connections,
+            write_context.connection_router,
+            write_context.serial_connections,
         )?;
     }
 
@@ -748,11 +735,7 @@ fn dispatch_tracked_write(
     request: InstrumentWriteRequest,
     instance_id: ControllerInstanceId,
     automatic_transition_id: Option<AutomaticTransitionId>,
-    completion_sender: &Sender<InstrumentWriteCompletion>,
-    pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
-    next_completion_id: &mut u64,
-    connection_router: &ConnectionRouter,
-    serial_connections: &SerialConnectionRegistry,
+    write_context: &mut OutputWriteContext<'_>,
 ) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
     let (response_sender, response_receiver) = bounded(1);
 
@@ -761,12 +744,8 @@ fn dispatch_tracked_write(
         request,
         instance_id,
         automatic_transition_id,
-        completion_sender,
-        pending_writes,
-        next_completion_id,
         response_sender,
-        connection_router,
-        serial_connections,
+        write_context,
     )?;
 
     Ok(response_receiver)
@@ -777,50 +756,59 @@ fn dispatch_tracked_write_to_sender(
     request: InstrumentWriteRequest,
     instance_id: ControllerInstanceId,
     automatic_transition_id: Option<AutomaticTransitionId>,
-    completion_sender: &Sender<InstrumentWriteCompletion>,
-    pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
-    next_completion_id: &mut u64,
     response_sender: Sender<InstrumentWriteResult>,
-    connection_router: &ConnectionRouter,
-    serial_connections: &SerialConnectionRegistry,
+    write_context: &mut OutputWriteContext<'_>,
 ) -> Result<(), OutputRequestError> {
     let connection_id = target.connection_id();
 
-    let worker = connection_router.handle(connection_id).ok_or_else(|| {
-        OutputRequestError::Transport(format!(
-            "connection {connection_id} does not have a registered worker",
-        ))
-    })?;
+    let worker = write_context
+        .connection_router
+        .handle(connection_id)
+        .ok_or_else(|| {
+            OutputRequestError::Transport(format!(
+                "connection {connection_id} \
+                     does not have a registered worker",
+            ))
+        })?;
 
-    let serial_config_store = serial_connections.store(connection_id).ok_or_else(|| {
-        OutputRequestError::Transport(format!(
-            "connection {connection_id} does not have a serial configuration store",
-        ))
-    })?;
+    let serial_config_store = write_context
+        .serial_connections
+        .store(connection_id)
+        .ok_or_else(|| {
+            OutputRequestError::Transport(format!(
+                "connection {connection_id} \
+                         does not have a serial \
+                         configuration store",
+            ))
+        })?;
 
     let serial_config = serial_config_store.snapshot().ok_or_else(|| {
         OutputRequestError::Transport(format!(
-            "connection {connection_id} does not have a selected COM port",
+            "connection {connection_id} \
+                         does not have a selected \
+                         COM port",
         ))
     })?;
 
-    let completion_id = allocate_completion_id(next_completion_id);
+    let completion_id = write_context.allocate_completion_id();
 
     worker
         .write_instrument_quiet_tracked(
             serial_config.port_name().to_owned(),
             request,
             completion_id,
-            completion_sender.clone(),
+            write_context.completion_sender.clone(),
             response_sender,
         )
         .map_err(|error| {
             OutputRequestError::Transport(format!(
-                "cannot enqueue instrument write for connection {connection_id}: {error}",
+                "cannot enqueue instrument \
+                     write for connection \
+                     {connection_id}: {error}",
             ))
         })?;
 
-    pending_writes.insert(
+    write_context.pending_writes.insert(
         completion_id,
         PendingWrite {
             target,

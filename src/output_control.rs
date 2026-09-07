@@ -278,6 +278,7 @@ impl OutputArbiter {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn mode(
         &self,
         target: ConnectedParameterAddress,
@@ -359,6 +360,7 @@ impl OutputArbiter {
         true
     }
 
+    #[cfg(test)]
     pub(crate) fn last_write_failure(
         &self,
         target: ConnectedParameterAddress,
@@ -374,6 +376,7 @@ impl OutputArbiter {
             .ok_or(OutputArbiterError::NotRegistered)
     }
 
+    #[cfg(test)]
     pub(crate) fn last_applied(
         &self,
         target: ConnectedParameterAddress,
@@ -592,7 +595,7 @@ mod tests {
         process_control::ControllerInstanceId,
     };
 
-    use super::{OutputArbiter, OutputArbiterError, OutputMode, OutputSource, OutputSourceKind};
+    use super::{OutputArbiter, OutputArbiterError, OutputMode, OutputSource};
 
     fn target() -> ConnectedParameterAddress {
         ConnectedParameterAddress::new(
