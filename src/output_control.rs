@@ -1,7 +1,7 @@
 use std::{collections::HashMap, error::Error, fmt};
 
 use crate::{
-    acquisition::InstrumentWriteCompletionId,
+    acquisition::{AcquisitionError, InstrumentWriteCompletionId},
     instrument::{ConnectedParameterAddress, InstrumentValue, InstrumentWriteRequest},
     process_control::ControllerInstanceId,
 };
@@ -87,6 +87,12 @@ struct AppliedOutput {
     value: InstrumentValue,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OutputWriteFailure {
+    completion_id: InstrumentWriteCompletionId,
+    error: AcquisitionError,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct OutputState {
     mode: OutputMode,
@@ -94,6 +100,7 @@ struct OutputState {
     instance_id: ControllerInstanceId,
     safe_request: Option<InstrumentWriteRequest>,
     last_applied: Option<AppliedOutput>,
+    last_write_failure: Option<OutputWriteFailure>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -220,6 +227,7 @@ impl OutputArbiter {
                 instance_id,
                 safe_request,
                 last_applied: None,
+                last_write_failure: None,
             },
         );
 
@@ -330,6 +338,61 @@ impl OutputArbiter {
         });
 
         true
+    }
+
+    pub(crate) fn acknowledge_write_failure(
+        &mut self,
+        target: ConnectedParameterAddress,
+        instance_id: ControllerInstanceId,
+        completion_id: InstrumentWriteCompletionId,
+        error: AcquisitionError,
+    ) -> bool {
+        let Some(state) = self.outputs.get_mut(&target) else {
+            return false;
+        };
+
+        /*
+         * Ignore failures belonging to an
+         * output incarnation that has
+         * already been replaced.
+         */
+        if state.instance_id != instance_id {
+            return false;
+        }
+
+        /*
+         * Do not let an older failure
+         * replace a newer one.
+         */
+        if state
+            .last_write_failure
+            .as_ref()
+            .is_some_and(|failure| completion_id <= failure.completion_id)
+        {
+            return false;
+        }
+
+        state.last_write_failure = Some(OutputWriteFailure {
+            completion_id,
+            error,
+        });
+
+        true
+    }
+
+    pub(crate) fn last_write_failure(
+        &self,
+        target: ConnectedParameterAddress,
+    ) -> Result<Option<AcquisitionError>, OutputArbiterError> {
+        self.outputs
+            .get(&target)
+            .map(|state| {
+                state
+                    .last_write_failure
+                    .as_ref()
+                    .map(|failure| failure.error.clone())
+            })
+            .ok_or(OutputArbiterError::NotRegistered)
     }
 
     pub(crate) fn last_applied(
@@ -540,7 +603,7 @@ impl Error for OutputArbiterError {}
 #[cfg(test)]
 mod tests {
     use crate::{
-        acquisition::InstrumentWriteCompletionId,
+        acquisition::{AcquisitionError, InstrumentWriteCompletionId},
         connection::ConnectionId,
         instrument::{
             ConnectedParameterAddress, InstrumentParameterAddress, InstrumentValue,
@@ -894,5 +957,57 @@ mod tests {
             arbiter.last_applied(target),
             Ok(Some(InstrumentValue::Number(20.0),)),
         );
+    }
+
+    #[test]
+    fn records_output_write_failure() {
+        let mut arbiter = OutputArbiter::new();
+
+        let target = target();
+
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
+
+        let error = AcquisitionError::from("instrument rejected write");
+
+        assert!(arbiter.acknowledge_write_failure(
+            target,
+            instance_id(),
+            completion_id(1),
+            error.clone(),
+        ),);
+
+        assert_eq!(arbiter.last_write_failure(target), Ok(Some(error)),);
+
+        assert_eq!(arbiter.last_applied(target), Ok(None),);
+    }
+
+    #[test]
+    fn ignores_write_failure_from_old_controller_instance() {
+        let mut arbiter = OutputArbiter::new();
+
+        let target = target();
+
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
+
+        arbiter.set_mode(target, OutputMode::Manual).unwrap();
+
+        arbiter.release_controller("heater").unwrap();
+
+        arbiter
+            .register_controller(target, "heater", other_instance_id(), None)
+            .unwrap();
+
+        assert!(!arbiter.acknowledge_write_failure(
+            target,
+            instance_id(),
+            completion_id(1),
+            AcquisitionError::from("stale failure",),
+        ),);
+
+        assert_eq!(arbiter.last_write_failure(target), Ok(None),);
     }
 }

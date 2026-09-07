@@ -57,6 +57,11 @@ enum OutputCommand {
         response_sender: Sender<Result<Option<InstrumentValue>, OutputArbiterError>>,
     },
 
+    LastWriteFailure {
+        target: ConnectedParameterAddress,
+        response_sender: Sender<Result<Option<AcquisitionError>, OutputArbiterError>>,
+    },
+
     ApplyAutomatic {
         intent: AutomaticOutputIntent,
         response_sender: Sender<Result<Receiver<InstrumentWriteResult>, OutputRequestError>>,
@@ -234,6 +239,25 @@ impl OutputHandle {
 
         self.command_sender
             .send(OutputCommand::LastApplied {
+                target,
+                response_sender,
+            })
+            .map_err(|_| OutputRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| OutputRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub(crate) fn last_write_failure(
+        &self,
+        target: ConnectedParameterAddress,
+    ) -> Result<Option<AcquisitionError>, OutputRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(OutputCommand::LastWriteFailure {
                 target,
                 response_sender,
             })
@@ -480,6 +504,20 @@ fn run(
                         let _ = response_sender.send(result);
                     }
 
+                    OutputCommand::LastWriteFailure {
+                        target,
+                        response_sender,
+                    } => {
+                        let result =
+                            arbiter
+                                .last_write_failure(
+                                    target,
+                                );
+
+                        let _ =
+                            response_sender.send(result);
+                    }
+
                     OutputCommand::ApplyAutomatic {
                         intent,
                         response_sender,
@@ -584,23 +622,34 @@ fn run(
 
 fn handle_write_completion(
     arbiter: &mut OutputArbiter,
+
     pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
+
     completion: InstrumentWriteCompletion,
 ) {
     let Some(pending) = pending_writes.remove(&completion.id) else {
         return;
     };
 
-    let Ok(actual_value) = completion.result else {
-        return;
-    };
+    match completion.result {
+        Ok(actual_value) => {
+            let _ = arbiter.acknowledge_write(
+                pending.target,
+                pending.instance_id,
+                completion.id,
+                actual_value,
+            );
+        }
 
-    let _ = arbiter.acknowledge_write(
-        pending.target,
-        pending.instance_id,
-        completion.id,
-        actual_value,
-    );
+        Err(error) => {
+            let _ = arbiter.acknowledge_write_failure(
+                pending.target,
+                pending.instance_id,
+                completion.id,
+                error,
+            );
+        }
+    }
 }
 
 fn apply_automatic(
@@ -936,7 +985,7 @@ mod tests {
     use serialport::{DataBits, FlowControl, Parity, StopBits};
 
     use crate::{
-        acquisition::InstrumentWriteCompletion,
+        acquisition::{AcquisitionError, InstrumentWriteCompletion},
         connection::ConnectionId,
         instrument::{
             ConnectedParameterAddress, InstrumentParameterAddress, InstrumentValue,
@@ -1701,5 +1750,83 @@ mod tests {
         }
 
         assert_eq!(confirmed, Some(InstrumentValue::Number(41.75)));
+    }
+
+    #[test]
+    fn records_hardware_write_failure() {
+        let target = target();
+
+        let connection_id = target.connection_id();
+
+        let serial_connections = SerialConnectionRegistry::new();
+
+        serial_connections
+            .register(connection_id)
+            .unwrap()
+            .set(Some(serial_config("COM9")));
+
+        let connection_router = ConnectionRouter::default();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        connection_router.insert(WorkerHandle::new(connection_id, command_sender));
+
+        let service = OutputService::spawn(connection_router, serial_connections).unwrap();
+
+        let handle = service.handle();
+
+        handle
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
+
+        let request = InstrumentWriteRequest::virtual_instrument(
+            VirtualInstrumentId::new(7),
+            VirtualParameterId::new(4),
+            InstrumentValue::Number(42.5),
+        );
+
+        let _response = handle
+            .apply_automatic(AutomaticOutputIntent::new(
+                target,
+                "heater",
+                instance_id(),
+                request,
+            ))
+            .unwrap();
+
+        let command = command_receiver.try_recv().unwrap();
+
+        let WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
+            completion: Some((completion_id, completion_sender)),
+            ..
+        }) = command
+        else {
+            panic!("expected tracked instrument write",);
+        };
+
+        let error = AcquisitionError::from("write failed");
+
+        completion_sender
+            .send(InstrumentWriteCompletion {
+                id: completion_id,
+                result: Err(error.clone()),
+            })
+            .unwrap();
+
+        let mut failure = None;
+
+        for _ in 0..100 {
+            failure = handle.last_write_failure(target).unwrap();
+
+            if failure.is_some() {
+                break;
+            }
+
+            std::thread::yield_now();
+        }
+
+        assert_eq!(failure, Some(error),);
+
+        assert_eq!(handle.last_applied(target), Ok(None),);
     }
 }
