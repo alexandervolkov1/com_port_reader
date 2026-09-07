@@ -115,33 +115,20 @@ fn run(
                             match output_control
                                 .apply_automatic(intent)
                             {
-                                Ok(response_receiver) => {
-                                    match response_receiver.recv() {
-                                        Ok(Ok(actual_value)) => {
+                                Ok(response) => {
+                                    match response.recv() {
+                                        Ok(actual_value) => {
                                             Some(
                                                 actual_value.as_f64(),
                                             )
                                         }
 
-                                        Ok(Err(error)) => {
+                                        Err(error) => {
                                             log.error(format!(
                                                 "Control loop \
                                                  '{loop_name}' \
                                                  output failed: \
                                                  {error}",
-                                            ));
-
-                                            None
-                                        }
-
-                                        Err(_) => {
-                                            log.error(format!(
-                                                "Control loop \
-                                                 '{loop_name}' \
-                                                 output failed: \
-                                                 instrument write \
-                                                 response channel \
-                                                 is disconnected",
                                             ));
 
                                             None

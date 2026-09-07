@@ -7,10 +7,13 @@ use std::{
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 
 use crate::{
-    acquisition::InstrumentWriteResult,
+    acquisition::{AcquisitionError, InstrumentWriteResult},
     connection::ConnectionId,
-    instrument::{ConnectedParameterAddress, InstrumentParameterAddress, InstrumentWriteRequest},
-    process_control::ControllerInstanceId,
+    instrument::{
+        ConnectedParameterAddress, InstrumentParameterAddress, InstrumentValue,
+        InstrumentWriteRequest,
+    },
+    output_control::ControllerInstanceId,
     serial_connection::SerialConnectionRegistry,
     worker::ConnectionRouter,
 };
@@ -73,6 +76,52 @@ enum OutputCommand {
     },
 
     Shutdown,
+}
+
+pub(crate) struct OutputWriteResponse {
+    receiver: Receiver<InstrumentWriteResult>,
+}
+
+impl OutputWriteResponse {
+    fn new(receiver: Receiver<InstrumentWriteResult>) -> Self {
+        Self { receiver }
+    }
+
+    pub(crate) fn recv(&self) -> Result<InstrumentValue, OutputWriteError> {
+        self.receiver
+            .recv()
+            .map_err(|_| OutputWriteError::Disconnected)?
+            .map_err(OutputWriteError::Instrument)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum OutputWriteError {
+    Instrument(AcquisitionError),
+    Disconnected,
+}
+
+impl fmt::Display for OutputWriteError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Instrument(error) => error.fmt(formatter),
+
+            Self::Disconnected => formatter.write_str(
+                "instrument write response \
+                     channel is disconnected",
+            ),
+        }
+    }
+}
+
+impl Error for OutputWriteError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Instrument(error) => Some(error),
+
+            Self::Disconnected => None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -149,7 +198,7 @@ impl OutputHandle {
     pub(crate) fn apply_automatic(
         &self,
         intent: AutomaticOutputIntent,
-    ) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
+    ) -> Result<OutputWriteResponse, OutputRequestError> {
         let (response_sender, response_receiver) = bounded(1);
 
         self.command_sender
@@ -159,9 +208,11 @@ impl OutputHandle {
             })
             .map_err(|_| OutputRequestError::Disconnected)?;
 
-        response_receiver
+        let result = response_receiver
             .recv()
-            .map_err(|_| OutputRequestError::Disconnected)?
+            .map_err(|_| OutputRequestError::Disconnected)?;
+
+        result.map(OutputWriteResponse::new)
     }
 
     pub(crate) fn apply_manual(
