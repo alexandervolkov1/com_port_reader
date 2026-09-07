@@ -50,7 +50,6 @@ impl AutomaticTransitionId {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum OutputSource {
-    Manual,
     Controller {
         name: String,
         instance_id: ControllerInstanceId,
@@ -68,8 +67,6 @@ impl OutputSource {
 
     const fn kind(&self) -> OutputSourceKind {
         match self {
-            Self::Manual => OutputSourceKind::Manual,
-
             Self::Controller { .. } => OutputSourceKind::Controller,
 
             Self::Safety => OutputSourceKind::Safety,
@@ -79,7 +76,6 @@ impl OutputSource {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OutputSourceKind {
-    Manual,
     Controller,
     Safety,
 }
@@ -87,7 +83,6 @@ pub(crate) enum OutputSourceKind {
 impl OutputSourceKind {
     const fn as_str(self) -> &'static str {
         match self {
-            Self::Manual => "manual",
             Self::Controller => "controller",
             Self::Safety => "safety",
         }
@@ -149,22 +144,6 @@ impl AutomaticOutputIntent {
         InstrumentWriteRequest,
     ) {
         (self.target, self.controller, self.instance_id, self.request)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ManualOutputIntent {
-    target: ConnectedParameterAddress,
-    request: InstrumentWriteRequest,
-}
-
-impl ManualOutputIntent {
-    pub(crate) fn new(target: ConnectedParameterAddress, request: InstrumentWriteRequest) -> Self {
-        Self { target, request }
-    }
-
-    fn into_parts(self) -> (ConnectedParameterAddress, InstrumentWriteRequest) {
-        (self.target, self.request)
     }
 }
 
@@ -433,17 +412,6 @@ impl OutputArbiter {
         match source {
             OutputSource::Safety => Ok(()),
 
-            OutputSource::Manual => {
-                if state.mode == OutputMode::Manual {
-                    Ok(())
-                } else {
-                    Err(OutputArbiterError::SourceNotAllowed {
-                        mode: state.mode,
-                        source: source.kind(),
-                    })
-                }
-            }
-
             OutputSource::Controller { name, instance_id } => {
                 if name != &state.controller {
                     return Err(OutputArbiterError::ControllerMismatch {
@@ -667,7 +635,7 @@ mod tests {
     }
 
     #[test]
-    fn switches_authority_between_automatic_and_manual() {
+    fn manual_mode_blocks_controller_output() {
         let mut arbiter = OutputArbiter::new();
 
         let target = target();
@@ -677,24 +645,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            arbiter.authorize(target, &OutputSource::Manual,),
-            Err(OutputArbiterError::SourceNotAllowed {
-                mode: OutputMode::Automatic,
-                source: OutputSourceKind::Manual,
-            },),
+            arbiter.authorize(target, &OutputSource::controller("heater", instance_id(),),),
+            Ok(()),
         );
 
         arbiter.set_mode(target, OutputMode::Manual).unwrap();
 
-        assert_eq!(arbiter.authorize(target, &OutputSource::Manual,), Ok(()),);
-
-        assert_eq!(
+        assert!(matches!(
             arbiter.authorize(target, &OutputSource::controller("heater", instance_id(),),),
             Err(OutputArbiterError::SourceNotAllowed {
                 mode: OutputMode::Manual,
-                source: OutputSourceKind::Controller,
+                ..
             },),
-        );
+        ));
     }
 
     #[test]
@@ -756,7 +719,7 @@ mod tests {
         let arbiter = OutputArbiter::new();
 
         assert_eq!(
-            arbiter.authorize(target(), &OutputSource::Manual,),
+            arbiter.authorize(target(), &OutputSource::Safety,),
             Err(OutputArbiterError::NotRegistered,),
         );
     }

@@ -23,8 +23,8 @@ use crate::{
 };
 
 use super::{
-    AutomaticOutputIntent, AutomaticTransitionId, ManualOutputIntent, OutputArbiter,
-    OutputArbiterError, OutputMode, OutputSource,
+    AutomaticOutputIntent, AutomaticTransitionId, OutputArbiter, OutputArbiterError, OutputMode,
+    OutputSource,
 };
 
 enum OutputCommand {
@@ -64,11 +64,6 @@ enum OutputCommand {
 
     ApplyAutomatic {
         intent: AutomaticOutputIntent,
-        response_sender: Sender<Result<Receiver<InstrumentWriteResult>, OutputRequestError>>,
-    },
-
-    ApplyManual {
-        intent: ManualOutputIntent,
         response_sender: Sender<Result<Receiver<InstrumentWriteResult>, OutputRequestError>>,
     },
 
@@ -278,26 +273,6 @@ impl OutputHandle {
 
         self.command_sender
             .send(OutputCommand::ApplyAutomatic {
-                intent,
-                response_sender,
-            })
-            .map_err(|_| OutputRequestError::Disconnected)?;
-
-        let result = response_receiver
-            .recv()
-            .map_err(|_| OutputRequestError::Disconnected)?;
-
-        result.map(OutputWriteResponse::new)
-    }
-
-    pub(crate) fn apply_manual(
-        &self,
-        intent: ManualOutputIntent,
-    ) -> Result<OutputWriteResponse, OutputRequestError> {
-        let (response_sender, response_receiver) = bounded(1);
-
-        self.command_sender
-            .send(OutputCommand::ApplyManual {
                 intent,
                 response_sender,
             })
@@ -531,22 +506,6 @@ fn run(
                         let _ = response_sender.send(result);
                     }
 
-                    OutputCommand::ApplyManual {
-                        intent,
-                        response_sender,
-                    } => {
-                        let result = apply_manual(
-                            &mut arbiter,
-                            intent,
-                            &completion_sender,
-                            &mut pending_writes,
-                            &mut next_write_completion_id,
-                            &connection_router,
-                            &serial_connections,
-                        );
-
-                        let _ = response_sender.send(result);
-                    }
 
                     OutputCommand::RequestAutomatic {
                         controller,
@@ -689,40 +648,6 @@ fn apply_automatic(
         connection_router,
         serial_connections,
     )?;
-
-    Ok(response_receiver)
-}
-
-fn apply_manual(
-    arbiter: &mut OutputArbiter,
-    intent: ManualOutputIntent,
-    completion_sender: &Sender<InstrumentWriteCompletion>,
-    pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
-    next_completion_id: &mut u64,
-    connection_router: &ConnectionRouter,
-    serial_connections: &SerialConnectionRegistry,
-) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
-    let (target, request) = intent.into_parts();
-
-    arbiter.mode(target)?;
-
-    let instance_id = arbiter.controller_instance_id(target)?;
-
-    validate_request_target(target, request)?;
-
-    let response_receiver = dispatch_tracked_write(
-        target,
-        request,
-        instance_id,
-        None,
-        completion_sender,
-        pending_writes,
-        next_completion_id,
-        connection_router,
-        serial_connections,
-    )?;
-
-    arbiter.set_mode(target, OutputMode::Manual)?;
 
     Ok(response_receiver)
 }
@@ -1012,8 +937,7 @@ mod tests {
     };
 
     use super::{
-        AutomaticOutputIntent, ManualOutputIntent, OutputArbiterError, OutputMode,
-        OutputRequestError, OutputService,
+        AutomaticOutputIntent, OutputArbiterError, OutputMode, OutputRequestError, OutputService,
     };
 
     fn target() -> ConnectedParameterAddress {
@@ -1224,8 +1148,10 @@ mod tests {
             InstrumentValue::Number(35.0),
         );
 
-        let _response = handle
-            .apply_manual(ManualOutputIntent::new(target, request))
+        let (response_sender, _response_receiver) = bounded(1);
+
+        handle
+            .write_instrument(connection_id, request, response_sender)
             .unwrap();
 
         assert_eq!(handle.mode(target), Ok(OutputMode::Manual));
@@ -1260,8 +1186,10 @@ mod tests {
             InstrumentValue::Number(35.0),
         );
 
+        let (response_sender, _response_receiver) = bounded(1);
+
         assert!(matches!(
-            handle.apply_manual(ManualOutputIntent::new(target, request)),
+            handle.write_instrument(target.connection_id(), request, response_sender,),
             Err(OutputRequestError::Transport(_)),
         ));
 
@@ -1296,8 +1224,10 @@ mod tests {
             InstrumentValue::Number(35.0),
         );
 
-        let _ = handle
-            .apply_manual(ManualOutputIntent::new(target, request))
+        let (response_sender, _response_receiver) = bounded(1);
+
+        handle
+            .write_instrument(connection_id, request, response_sender)
             .unwrap();
 
         assert!(matches!(
@@ -1442,8 +1372,10 @@ mod tests {
             InstrumentValue::Number(35.0),
         );
 
-        let _ = handle
-            .apply_manual(ManualOutputIntent::new(target, request))
+        let (response_sender, _response_receiver) = bounded(1);
+
+        handle
+            .write_instrument(connection_id, request, response_sender)
             .unwrap();
 
         assert_eq!(handle.mode(target), Ok(OutputMode::Manual));
