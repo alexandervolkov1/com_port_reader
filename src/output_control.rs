@@ -8,7 +8,7 @@ use crate::{
 
 mod service;
 
-pub(crate) use service::{OutputHandle, OutputRequestError, OutputService, OutputWriteError};
+pub(crate) use service::{OutputHandle, OutputRequestError, OutputService};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum OutputMode {
@@ -78,7 +78,7 @@ impl OutputSource {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OutputSourceKind {
+pub(crate) enum OutputSourceKind {
     Manual,
     Controller,
     Safety,
