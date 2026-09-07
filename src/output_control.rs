@@ -35,6 +35,19 @@ impl fmt::Display for OutputMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AutomaticTransitionId(u64);
+
+impl AutomaticTransitionId {
+    fn next(self) -> Self {
+        Self(
+            self.0
+                .checked_add(1)
+                .expect("automatic transition id overflow"),
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum OutputSource {
     Manual,
@@ -98,6 +111,7 @@ struct OutputState {
     mode: OutputMode,
     controller: String,
     instance_id: ControllerInstanceId,
+    automatic_transition_id: AutomaticTransitionId,
     safe_request: Option<InstrumentWriteRequest>,
     last_applied: Option<AppliedOutput>,
     last_write_failure: Option<OutputWriteFailure>,
@@ -176,6 +190,8 @@ impl OutputArbiter {
             .ok_or_else(|| OutputArbiterError::ControllerNotRegistered(controller.to_owned()))?;
 
         if state.mode == OutputMode::Manual {
+            state.automatic_transition_id = state.automatic_transition_id.next();
+
             state.mode = OutputMode::AutomaticPending;
         }
 
@@ -185,25 +201,28 @@ impl OutputArbiter {
     pub(crate) fn complete_automatic_transition(
         &mut self,
         target: ConnectedParameterAddress,
-        controller: &str,
-    ) -> Result<(), OutputArbiterError> {
-        let state = self
-            .outputs
-            .get_mut(&target)
-            .ok_or(OutputArbiterError::NotRegistered)?;
+        instance_id: ControllerInstanceId,
+        transition_id: AutomaticTransitionId,
+    ) -> bool {
+        let Some(state) = self.outputs.get_mut(&target) else {
+            return false;
+        };
 
-        if state.controller != controller {
-            return Err(OutputArbiterError::ControllerMismatch {
-                expected: state.controller.clone(),
-                actual: controller.to_owned(),
-            });
+        if state.instance_id != instance_id {
+            return false;
         }
 
-        if state.mode == OutputMode::AutomaticPending {
-            state.mode = OutputMode::Automatic;
+        if state.mode != OutputMode::AutomaticPending {
+            return false;
         }
 
-        Ok(())
+        if state.automatic_transition_id != transition_id {
+            return false;
+        }
+
+        state.mode = OutputMode::Automatic;
+
+        true
     }
 
     pub(crate) fn register_controller(
@@ -225,6 +244,7 @@ impl OutputArbiter {
                 mode: OutputMode::Automatic,
                 controller: controller.into(),
                 instance_id,
+                automatic_transition_id: AutomaticTransitionId::default(),
                 safe_request,
                 last_applied: None,
                 last_write_failure: None,
@@ -310,21 +330,10 @@ impl OutputArbiter {
             return false;
         };
 
-        /*
-         * The output may have been released
-         * and registered again before the
-         * hardware response arrived.
-         */
         if state.instance_id != instance_id {
             return false;
         }
 
-        /*
-         * Hardware responses can arrive out
-         * of order. Never let an older
-         * completion replace a newer
-         * confirmed value.
-         */
         if state
             .last_applied
             .is_some_and(|last| completion_id <= last.completion_id)
@@ -351,19 +360,10 @@ impl OutputArbiter {
             return false;
         };
 
-        /*
-         * Ignore failures belonging to an
-         * output incarnation that has
-         * already been replaced.
-         */
         if state.instance_id != instance_id {
             return false;
         }
 
-        /*
-         * Do not let an older failure
-         * replace a newer one.
-         */
         if state
             .last_write_failure
             .as_ref()
@@ -473,6 +473,18 @@ impl OutputArbiter {
                 }
             }
         }
+    }
+
+    pub(crate) fn automatic_transition_id(
+        &self,
+        target: ConnectedParameterAddress,
+    ) -> Result<Option<AutomaticTransitionId>, OutputArbiterError> {
+        let state = self
+            .outputs
+            .get(&target)
+            .ok_or(OutputArbiterError::NotRegistered)?;
+
+        Ok((state.mode == OutputMode::AutomaticPending).then_some(state.automatic_transition_id))
     }
 
     fn safe_output(

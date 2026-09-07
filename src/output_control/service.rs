@@ -23,8 +23,8 @@ use crate::{
 };
 
 use super::{
-    AutomaticOutputIntent, ManualOutputIntent, OutputArbiter, OutputArbiterError, OutputMode,
-    OutputSource,
+    AutomaticOutputIntent, AutomaticTransitionId, ManualOutputIntent, OutputArbiter,
+    OutputArbiterError, OutputMode, OutputSource,
 };
 
 enum OutputCommand {
@@ -96,6 +96,7 @@ enum OutputCommand {
 struct PendingWrite {
     target: ConnectedParameterAddress,
     instance_id: ControllerInstanceId,
+    automatic_transition_id: Option<AutomaticTransitionId>,
 }
 
 pub(crate) struct OutputWriteResponse {
@@ -508,14 +509,9 @@ fn run(
                         target,
                         response_sender,
                     } => {
-                        let result =
-                            arbiter
-                                .last_write_failure(
-                                    target,
-                                );
+                        let result = arbiter.last_write_failure(target);
 
-                        let _ =
-                            response_sender.send(result);
+                        let _ = response_sender.send(result);
                     }
 
                     OutputCommand::ApplyAutomatic {
@@ -622,9 +618,7 @@ fn run(
 
 fn handle_write_completion(
     arbiter: &mut OutputArbiter,
-
     pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
-
     completion: InstrumentWriteCompletion,
 ) {
     let Some(pending) = pending_writes.remove(&completion.id) else {
@@ -633,12 +627,24 @@ fn handle_write_completion(
 
     match completion.result {
         Ok(actual_value) => {
-            let _ = arbiter.acknowledge_write(
+            let acknowledged = arbiter.acknowledge_write(
                 pending.target,
                 pending.instance_id,
                 completion.id,
                 actual_value,
             );
+
+            if !acknowledged {
+                return;
+            }
+
+            if let Some(transition_id) = pending.automatic_transition_id {
+                let _ = arbiter.complete_automatic_transition(
+                    pending.target,
+                    pending.instance_id,
+                    transition_id,
+                );
+            }
         }
 
         Err(error) => {
@@ -668,20 +674,21 @@ fn apply_automatic(
         &OutputSource::controller(controller.clone(), instance_id),
     )?;
 
+    let automatic_transition_id = arbiter.automatic_transition_id(target)?;
+
     validate_request_target(target, request)?;
 
     let response_receiver = dispatch_tracked_write(
         target,
         request,
         instance_id,
+        automatic_transition_id,
         completion_sender,
         pending_writes,
         next_completion_id,
         connection_router,
         serial_connections,
     )?;
-
-    arbiter.complete_automatic_transition(target, &controller)?;
 
     Ok(response_receiver)
 }
@@ -707,6 +714,7 @@ fn apply_manual(
         target,
         request,
         instance_id,
+        None,
         completion_sender,
         pending_writes,
         next_completion_id,
@@ -740,6 +748,7 @@ fn apply_safe(
         target,
         request,
         instance_id,
+        None,
         completion_sender,
         pending_writes,
         next_completion_id,
@@ -772,6 +781,7 @@ fn write_instrument(
             target,
             request,
             instance_id,
+            None,
             completion_sender,
             pending_writes,
             next_completion_id,
@@ -812,6 +822,7 @@ fn dispatch_tracked_write(
     target: ConnectedParameterAddress,
     request: InstrumentWriteRequest,
     instance_id: ControllerInstanceId,
+    automatic_transition_id: Option<AutomaticTransitionId>,
     completion_sender: &Sender<InstrumentWriteCompletion>,
     pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
     next_completion_id: &mut u64,
@@ -824,6 +835,7 @@ fn dispatch_tracked_write(
         target,
         request,
         instance_id,
+        automatic_transition_id,
         completion_sender,
         pending_writes,
         next_completion_id,
@@ -839,6 +851,7 @@ fn dispatch_tracked_write_to_sender(
     target: ConnectedParameterAddress,
     request: InstrumentWriteRequest,
     instance_id: ControllerInstanceId,
+    automatic_transition_id: Option<AutomaticTransitionId>,
     completion_sender: &Sender<InstrumentWriteCompletion>,
     pending_writes: &mut HashMap<InstrumentWriteCompletionId, PendingWrite>,
     next_completion_id: &mut u64,
@@ -887,6 +900,7 @@ fn dispatch_tracked_write_to_sender(
         PendingWrite {
             target,
             instance_id,
+            automatic_transition_id,
         },
     );
 
@@ -1401,7 +1415,7 @@ mod tests {
     }
 
     #[test]
-    fn completes_automatic_takeover_on_first_successful_output() {
+    fn completes_automatic_takeover_only_after_hardware_acknowledgement() {
         let target = target();
         let connection_id = target.connection_id();
 
@@ -1412,7 +1426,7 @@ mod tests {
             .set(Some(serial_config("COM9")));
 
         let connection_router = ConnectionRouter::default();
-        let (command_sender, _command_receiver) = unbounded();
+        let (command_sender, command_receiver) = unbounded();
         connection_router.insert(WorkerHandle::new(connection_id, command_sender));
 
         let service = OutputService::spawn(connection_router, serial_connections).unwrap();
@@ -1434,6 +1448,8 @@ mod tests {
 
         assert_eq!(handle.mode(target), Ok(OutputMode::Manual));
 
+        let _manual_command = command_receiver.try_recv().unwrap();
+
         handle.request_automatic("heater").unwrap();
 
         assert_eq!(handle.mode(target), Ok(OutputMode::AutomaticPending));
@@ -1447,7 +1463,38 @@ mod tests {
             ))
             .unwrap();
 
-        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic));
+        assert_eq!(handle.mode(target), Ok(OutputMode::AutomaticPending));
+
+        let command = command_receiver.try_recv().unwrap();
+
+        let WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
+            completion: Some((completion_id, completion_sender)),
+            ..
+        }) = command
+        else {
+            panic!("expected tracked automatic write");
+        };
+
+        completion_sender
+            .send(InstrumentWriteCompletion {
+                id: completion_id,
+                result: Ok(InstrumentValue::Number(35.0)),
+            })
+            .unwrap();
+
+        let mut mode = OutputMode::AutomaticPending;
+
+        for _ in 0..100 {
+            mode = handle.mode(target).unwrap();
+
+            if mode == OutputMode::Automatic {
+                break;
+            }
+
+            std::thread::yield_now();
+        }
+
+        assert_eq!(mode, OutputMode::Automatic);
     }
 
     #[test]
@@ -1751,28 +1798,22 @@ mod tests {
 
         assert_eq!(confirmed, Some(InstrumentValue::Number(41.75)));
     }
-
     #[test]
     fn records_hardware_write_failure() {
         let target = target();
-
         let connection_id = target.connection_id();
 
         let serial_connections = SerialConnectionRegistry::new();
-
         serial_connections
             .register(connection_id)
             .unwrap()
             .set(Some(serial_config("COM9")));
 
         let connection_router = ConnectionRouter::default();
-
         let (command_sender, command_receiver) = unbounded();
-
         connection_router.insert(WorkerHandle::new(connection_id, command_sender));
 
         let service = OutputService::spawn(connection_router, serial_connections).unwrap();
-
         let handle = service.handle();
 
         handle
@@ -1801,7 +1842,7 @@ mod tests {
             ..
         }) = command
         else {
-            panic!("expected tracked instrument write",);
+            panic!("expected tracked instrument write");
         };
 
         let error = AcquisitionError::from("write failed");
@@ -1825,8 +1866,7 @@ mod tests {
             std::thread::yield_now();
         }
 
-        assert_eq!(failure, Some(error),);
-
-        assert_eq!(handle.last_applied(target), Ok(None),);
+        assert_eq!(failure, Some(error));
+        assert_eq!(handle.last_applied(target), Ok(None));
     }
 }
