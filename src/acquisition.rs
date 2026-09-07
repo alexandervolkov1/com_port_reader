@@ -51,7 +51,7 @@ pub type InstrumentWriteResult = Result<InstrumentValue, AcquisitionError>;
 pub type VirtualInstrumentDescribeResult =
     Result<Vec<VirtualInstrumentDescriptor>, AcquisitionError>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstrumentWriteCompletionId(pub(crate) u64);
 
 #[derive(Clone, Debug, PartialEq)]

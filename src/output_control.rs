@@ -1,7 +1,8 @@
 use std::{collections::HashMap, error::Error, fmt};
 
 use crate::{
-    instrument::{ConnectedParameterAddress, InstrumentWriteRequest},
+    acquisition::InstrumentWriteCompletionId,
+    instrument::{ConnectedParameterAddress, InstrumentValue, InstrumentWriteRequest},
     process_control::ControllerInstanceId,
 };
 
@@ -80,12 +81,19 @@ impl OutputSourceKind {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AppliedOutput {
+    completion_id: InstrumentWriteCompletionId,
+    value: InstrumentValue,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct OutputState {
     mode: OutputMode,
     controller: String,
     instance_id: ControllerInstanceId,
     safe_request: Option<InstrumentWriteRequest>,
+    last_applied: Option<AppliedOutput>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -211,6 +219,7 @@ impl OutputArbiter {
                 controller: controller.into(),
                 instance_id,
                 safe_request,
+                last_applied: None,
             },
         );
 
@@ -269,6 +278,67 @@ impl OutputArbiter {
         self.outputs
             .get(&target)
             .map(|state| state.mode)
+            .ok_or(OutputArbiterError::NotRegistered)
+    }
+
+    pub(crate) fn controller_instance_id(
+        &self,
+        target: ConnectedParameterAddress,
+    ) -> Result<ControllerInstanceId, OutputArbiterError> {
+        self.outputs
+            .get(&target)
+            .map(|state| state.instance_id)
+            .ok_or(OutputArbiterError::NotRegistered)
+    }
+
+    pub(crate) fn acknowledge_write(
+        &mut self,
+        target: ConnectedParameterAddress,
+        instance_id: ControllerInstanceId,
+        completion_id: InstrumentWriteCompletionId,
+        value: InstrumentValue,
+    ) -> bool {
+        let Some(state) = self.outputs.get_mut(&target) else {
+            return false;
+        };
+
+        /*
+         * The output may have been released
+         * and registered again before the
+         * hardware response arrived.
+         */
+        if state.instance_id != instance_id {
+            return false;
+        }
+
+        /*
+         * Hardware responses can arrive out
+         * of order. Never let an older
+         * completion replace a newer
+         * confirmed value.
+         */
+        if state
+            .last_applied
+            .is_some_and(|last| completion_id <= last.completion_id)
+        {
+            return false;
+        }
+
+        state.last_applied = Some(AppliedOutput {
+            completion_id,
+            value,
+        });
+
+        true
+    }
+
+    pub(crate) fn last_applied(
+        &self,
+        target: ConnectedParameterAddress,
+    ) -> Result<Option<InstrumentValue>, OutputArbiterError> {
+        self.outputs
+            .get(&target)
+            .map(|state| state.last_applied.map(|applied| applied.value))
             .ok_or(OutputArbiterError::NotRegistered)
     }
 
@@ -470,9 +540,10 @@ impl Error for OutputArbiterError {}
 #[cfg(test)]
 mod tests {
     use crate::{
+        acquisition::InstrumentWriteCompletionId,
         connection::ConnectionId,
         instrument::{
-            ConnectedParameterAddress, InstrumentParameterAddress,
+            ConnectedParameterAddress, InstrumentParameterAddress, InstrumentValue,
             virtual_instrument::{VirtualInstrumentId, VirtualParameterId},
         },
         process_control::ControllerInstanceId,
@@ -496,6 +567,10 @@ mod tests {
 
     fn other_instance_id() -> ControllerInstanceId {
         ControllerInstanceId::for_test(2)
+    }
+
+    fn completion_id(value: u64) -> InstrumentWriteCompletionId {
+        InstrumentWriteCompletionId(value)
     }
 
     #[test]
@@ -736,5 +811,88 @@ mod tests {
         );
 
         assert_eq!(arbiter.mode(target), Ok(OutputMode::Automatic),);
+    }
+
+    #[test]
+    fn records_confirmed_output() {
+        let mut arbiter = OutputArbiter::new();
+
+        let target = target();
+
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
+
+        assert_eq!(arbiter.last_applied(target), Ok(None),);
+
+        assert!(arbiter.acknowledge_write(
+            target,
+            instance_id(),
+            completion_id(1),
+            InstrumentValue::Number(42.5),
+        ),);
+
+        assert_eq!(
+            arbiter.last_applied(target),
+            Ok(Some(InstrumentValue::Number(42.5),)),
+        );
+    }
+
+    #[test]
+    fn ignores_acknowledgement_from_old_controller_instance() {
+        let mut arbiter = OutputArbiter::new();
+
+        let target = target();
+
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
+
+        arbiter.set_mode(target, OutputMode::Manual).unwrap();
+
+        arbiter.release_controller("heater").unwrap();
+
+        arbiter
+            .register_controller(target, "heater", other_instance_id(), None)
+            .unwrap();
+
+        assert!(!arbiter.acknowledge_write(
+            target,
+            instance_id(),
+            completion_id(1),
+            InstrumentValue::Number(90.0),
+        ),);
+
+        assert_eq!(arbiter.last_applied(target), Ok(None),);
+    }
+
+    #[test]
+    fn ignores_out_of_order_acknowledgement() {
+        let mut arbiter = OutputArbiter::new();
+
+        let target = target();
+
+        arbiter
+            .register_controller(target, "heater", instance_id(), None)
+            .unwrap();
+
+        assert!(arbiter.acknowledge_write(
+            target,
+            instance_id(),
+            completion_id(2),
+            InstrumentValue::Number(20.0),
+        ),);
+
+        assert!(!arbiter.acknowledge_write(
+            target,
+            instance_id(),
+            completion_id(1),
+            InstrumentValue::Number(10.0),
+        ),);
+
+        assert_eq!(
+            arbiter.last_applied(target),
+            Ok(Some(InstrumentValue::Number(20.0),)),
+        );
     }
 }
