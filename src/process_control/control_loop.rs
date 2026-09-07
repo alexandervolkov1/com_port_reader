@@ -179,6 +179,10 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         }
 
         self.input = input;
+        self.resynchronize_input();
+    }
+
+    pub fn resynchronize_input(&mut self) {
         self.controller.resynchronize();
     }
 

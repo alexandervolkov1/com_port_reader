@@ -214,6 +214,20 @@ where
         Ok(())
     }
 
+    pub fn resynchronize_from(&mut self, signal_id: SignalId) -> usize {
+        let mut resynchronized = 0;
+
+        for control_loop in &mut self.loops {
+            if *control_loop.input() == signal_id {
+                control_loop.resynchronize_input();
+
+                resynchronized += 1;
+            }
+        }
+
+        resynchronized
+    }
+
     pub fn state(&self, name: &str) -> Result<ControlLoopState, ControllerAccessError> {
         Ok(self.control_loop(name)?.state())
     }
@@ -1411,6 +1425,48 @@ mod tests {
         };
 
         assert_eq!(output.output.integral(), Some(0.0),);
+    }
+
+    #[test]
+    fn resynchronizes_controller_input_without_losing_integral() {
+        let mut registry = ControllerRegistry::new();
+
+        let controller = PidController::with_output_limits(
+            100.0,
+            PidGains::new(0.0, 1.0, 1.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        )
+        .unwrap()
+        .into();
+
+        let definition =
+            ControlLoopDefinition::new("heater", 1, virtual_target(1, 1, 1), controller).unwrap();
+
+        registry.add(definition).unwrap();
+
+        let first = registry.process(1, 0.0, 90.0);
+
+        assert_eq!(first.len(), 1);
+
+        let accumulated = registry.process(1, 1.0, 90.0);
+
+        let [ControlEvent::Output(accumulated)] = accumulated.as_slice() else {
+            panic!("expected one control output");
+        };
+
+        assert_eq!(accumulated.output.integral(), Some(10.0),);
+
+        assert_eq!(registry.resynchronize_from(1), 1,);
+
+        let resumed = registry.process(1, 100.0, 80.0);
+
+        let [ControlEvent::Output(resumed)] = resumed.as_slice() else {
+            panic!("expected one control output");
+        };
+
+        assert_eq!(resumed.output.integral(), Some(10.0),);
+
+        assert_eq!(resumed.output.derivative(), Some(0.0),);
     }
 
     #[test]
