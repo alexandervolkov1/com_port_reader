@@ -1,7 +1,10 @@
 use crossbeam_channel::Sender;
 
 use crate::{
-    acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
+    acquisition::{
+        InstrumentReadResult, InstrumentWriteCompletion, InstrumentWriteCompletionId,
+        InstrumentWriteResult, VirtualInstrumentDescribeResult,
+    },
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     serial_connection::SerialPortConfig,
 };
@@ -30,6 +33,10 @@ pub enum ConnectionCommand {
         port_name: String,
         request: InstrumentWriteRequest,
         emit_event: bool,
+        completion: Option<(
+            InstrumentWriteCompletionId,
+            Sender<InstrumentWriteCompletion>,
+        )>,
         response_sender: Sender<InstrumentWriteResult>,
     },
 

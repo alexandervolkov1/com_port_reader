@@ -3,7 +3,10 @@ use std::{error::Error, fmt};
 use crossbeam_channel::Sender;
 
 use crate::{
-    acquisition::{InstrumentReadResult, InstrumentWriteResult, VirtualInstrumentDescribeResult},
+    acquisition::{
+        InstrumentReadResult, InstrumentWriteCompletion, InstrumentWriteCompletionId,
+        InstrumentWriteResult, VirtualInstrumentDescribeResult,
+    },
     connection::ConnectionId,
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
     serial_connection::SerialPortConfig,
@@ -81,6 +84,7 @@ impl WorkerHandle {
                 port_name,
                 request,
                 emit_event: true,
+                completion: None,
                 response_sender,
             },
         ))
@@ -97,6 +101,26 @@ impl WorkerHandle {
                 port_name,
                 request,
                 emit_event: false,
+                completion: None,
+                response_sender,
+            },
+        ))
+    }
+
+    pub(crate) fn write_instrument_quiet_tracked(
+        &self,
+        port_name: String,
+        request: InstrumentWriteRequest,
+        completion_id: InstrumentWriteCompletionId,
+        completion_sender: Sender<InstrumentWriteCompletion>,
+        response_sender: Sender<InstrumentWriteResult>,
+    ) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::Connection(
+            ConnectionCommand::WriteInstrument {
+                port_name,
+                request,
+                emit_event: false,
+                completion: Some((completion_id, completion_sender)),
                 response_sender,
             },
         ))
@@ -129,11 +153,19 @@ impl Error for WorkerHandleError {}
 
 #[cfg(test)]
 mod tests {
-    use crossbeam_channel::unbounded;
+    use crossbeam_channel::{bounded, unbounded};
 
     use super::WorkerHandle;
 
-    use crate::{connection::ConnectionId, worker::WorkerCommand};
+    use crate::{
+        acquisition::InstrumentWriteCompletionId,
+        connection::ConnectionId,
+        instrument::{
+            InstrumentValue, InstrumentWriteRequest,
+            virtual_instrument::{VirtualInstrumentId, VirtualParameterId},
+        },
+        worker::{ConnectionCommand, WorkerCommand},
+    };
 
     #[test]
     fn stores_connection_id() {
@@ -158,5 +190,52 @@ mod tests {
             receiver.try_recv().unwrap(),
             WorkerCommand::RefreshSeriesSchedule,
         ));
+    }
+
+    #[test]
+    fn attaches_completion_tracking_to_quiet_write() {
+        let (sender, receiver) = unbounded();
+
+        let handle = WorkerHandle::new(ConnectionId::new(7), sender);
+
+        let request = InstrumentWriteRequest::virtual_instrument(
+            VirtualInstrumentId::new(3),
+            VirtualParameterId::new(4),
+            InstrumentValue::Number(42.0),
+        );
+
+        let (response_sender, _response_receiver) = bounded(1);
+
+        let (completion_sender, _completion_receiver) = unbounded();
+
+        let completion_id = InstrumentWriteCompletionId(17);
+
+        handle
+            .write_instrument_quiet_tracked(
+                "COM9".to_owned(),
+                request,
+                completion_id,
+                completion_sender,
+                response_sender,
+            )
+            .unwrap();
+
+        let command = receiver.try_recv().unwrap();
+
+        let WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
+            request: actual_request,
+            emit_event,
+            completion: Some((actual_completion_id, _)),
+            ..
+        }) = command
+        else {
+            panic!("expected tracked instrument write",);
+        };
+
+        assert_eq!(actual_request, request,);
+
+        assert!(!emit_event);
+
+        assert_eq!(actual_completion_id, completion_id,);
     }
 }

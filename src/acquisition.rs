@@ -51,6 +51,16 @@ pub type InstrumentWriteResult = Result<InstrumentValue, AcquisitionError>;
 pub type VirtualInstrumentDescribeResult =
     Result<Vec<VirtualInstrumentDescriptor>, AcquisitionError>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct InstrumentWriteCompletionId(pub(crate) u64);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct InstrumentWriteCompletion {
+    pub(crate) id: InstrumentWriteCompletionId,
+
+    pub(crate) result: InstrumentWriteResult,
+}
+
 pub trait AcquisitionSource: Send {
     fn start(&mut self) -> Result<(), AcquisitionError> {
         Ok(())

@@ -12,8 +12,8 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 
 use crate::{
     acquisition::{
-        AcquisitionError, AcquisitionSource, InstrumentReadResult, SeriesAcquisitionFailure,
-        VirtualInstrumentDescribeResult,
+        AcquisitionError, AcquisitionSource, InstrumentReadResult, InstrumentWriteCompletion,
+        SeriesAcquisitionFailure, VirtualInstrumentDescribeResult,
     },
     connection::ConnectionId,
     data::{SeriesId, SeriesMetadata, SeriesSample, SeriesStore},
@@ -620,6 +620,7 @@ fn handle_connection_command(
             port_name,
             request,
             emit_event,
+            completion,
             response_sender,
         } => {
             let result = write_instrument_to_source(source, request);
@@ -651,6 +652,13 @@ fn handle_connection_command(
                 };
 
                 let _ = event_sender.send(event);
+            }
+
+            if let Some((completion_id, completion_sender)) = completion {
+                let _ = completion_sender.send(InstrumentWriteCompletion {
+                    id: completion_id,
+                    result: result.clone(),
+                });
             }
 
             let _ = response_sender.send(result);
