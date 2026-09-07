@@ -218,7 +218,7 @@ impl OutputHandle {
     pub(crate) fn apply_manual(
         &self,
         intent: ManualOutputIntent,
-    ) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
+    ) -> Result<OutputWriteResponse, OutputRequestError> {
         let (response_sender, response_receiver) = bounded(1);
 
         self.command_sender
@@ -228,9 +228,11 @@ impl OutputHandle {
             })
             .map_err(|_| OutputRequestError::Disconnected)?;
 
-        response_receiver
+        let result = response_receiver
             .recv()
-            .map_err(|_| OutputRequestError::Disconnected)?
+            .map_err(|_| OutputRequestError::Disconnected)?;
+
+        result.map(OutputWriteResponse::new)
     }
 
     pub(crate) fn write_instrument(
@@ -277,7 +279,7 @@ impl OutputHandle {
     pub(crate) fn apply_safe(
         &self,
         controller: impl Into<String>,
-    ) -> Result<Receiver<InstrumentWriteResult>, OutputRequestError> {
+    ) -> Result<OutputWriteResponse, OutputRequestError> {
         let (response_sender, response_receiver) = bounded(1);
 
         self.command_sender
@@ -287,9 +289,11 @@ impl OutputHandle {
             })
             .map_err(|_| OutputRequestError::Disconnected)?;
 
-        response_receiver
+        let result = response_receiver
             .recv()
-            .map_err(|_| OutputRequestError::Disconnected)?
+            .map_err(|_| OutputRequestError::Disconnected)?;
+
+        result.map(OutputWriteResponse::new)
     }
 
     pub(crate) fn release_controller(
