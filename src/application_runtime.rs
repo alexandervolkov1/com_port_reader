@@ -17,7 +17,9 @@ use crate::{
     lua_application_script::{LuaApplicationEvent, LuaControlInvocation},
     lua_worker::{LuaEvent, LuaWorker, LuaWorkerHandle, LuaWorkerHandleError},
     output_control::{OutputHandle, OutputService},
-    process_recorder::{ProcessAction, ProcessActionOrigin, ProcessRecord, ProcessRecorder},
+    process_recorder::{
+        ProcessAction, ProcessActionContext, ProcessActionOrigin, ProcessRecord, ProcessRecorder,
+    },
     serial_connection::SerialConnectionRegistry,
     signal_processing::{ProcessingEvent, ProcessingService},
     user_command::UserCommand,
@@ -180,15 +182,19 @@ impl ApplicationRuntime {
             log.clone(),
         )?;
 
-        let acquisition = AcquisitionController::new(workers, log.clone());
+        let acquisition = AcquisitionController::new(workers);
 
         let dispatcher = CommandDispatcher::new(
-            CommandDispatcherConnections::new(connection_router, serial_connections),
+            CommandDispatcherConnections::new(
+                connection_router,
+                serial_connections,
+                event_receiver,
+            ),
             definition.clone(),
             series.clone(),
             processing_handle,
             output_handle.clone(),
-            event_receiver,
+            process_recorder.clone(),
             log.clone(),
         );
 
@@ -339,14 +345,20 @@ impl ApplicationRuntime {
     }
 
     fn execute_from(&mut self, command: UserCommand, origin: ProcessActionOrigin) {
-        if let Some(mut action) = process_action_from_command(&command) {
+        let action_context = process_action_from_command(&command).map(|mut action| {
             resolve_action_series_id(&mut action, &self.series);
 
-            self.process_recorder.record_action(origin, action);
-        }
+            let action_id = self.process_recorder.record_action(origin, action);
 
-        self.dispatcher
-            .execute(command, &mut self.acquisition, &mut self.device_emulator);
+            ProcessActionContext::new(action_id)
+        });
+
+        self.dispatcher.execute(
+            command,
+            action_context,
+            &mut self.acquisition,
+            &mut self.device_emulator,
+        );
     }
 
     pub fn is_running(&self) -> bool {
@@ -361,16 +373,22 @@ impl ApplicationRuntime {
             .find(|series| series.id == id)
             .map(|series| series.name);
 
-        self.process_recorder.record_action(
+        let action_id = self.process_recorder.record_action(
             ProcessActionOrigin::UserInterface,
             ProcessAction::SetSeriesVisibility {
                 series_id: id,
-                series_name,
+                series_name: series_name.clone(),
                 visible,
             },
         );
 
-        self.dispatcher.set_visibility(id, visible);
+        if self.dispatcher.set_visibility(id, visible) {
+            self.process_recorder
+                .record_action_applied(action_id, Some(id), series_name);
+        } else {
+            self.process_recorder
+                .record_action_failed(action_id, format!("Series {id} not found."));
+        }
     }
 
     pub(crate) fn lua_handle(&self) -> LuaWorkerHandle {
@@ -638,13 +656,6 @@ impl ApplicationRuntime {
                 .iter()
                 .find(|metadata| metadata.id == series_sample.series_id)
             else {
-                /*
-                 * This should now be practically unreachable:
-                 * stale series were filtered above.
-                 *
-                 * Keep the guard anyway because SeriesStore
-                 * can change independently.
-                 */
                 continue;
             };
 
@@ -1310,5 +1321,14 @@ mod tests {
                 ],
             },),
         );
+    }
+
+    #[test]
+    fn process_action_context_preserves_action_id() {
+        let action_id = crate::process_recorder::ProcessActionId::new(42);
+
+        let context = crate::process_recorder::ProcessActionContext::new(action_id);
+
+        assert_eq!(context.action_id(), action_id);
     }
 }

@@ -9,7 +9,7 @@ use crate::{
     instrument::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterDescriptor,
     },
-    output_control::OutputRequestError,
+    output_control::{OutputRequestError, OutputWriteError},
     process_control::{
         ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewController, ReferenceKind,
         ReferenceSource,
@@ -53,7 +53,11 @@ impl From<ControllerRequestError> for SetControllerInputError {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PauseControllerError {
     Output(OutputRequestError),
-
+    SafeOutputWrite(OutputWriteError),
+    SafeOutputWriteAndControllerPause {
+        write: OutputWriteError,
+        pause: ControllerRequestError,
+    },
     ControllerAfterSafeOutput(ControllerRequestError),
 }
 
@@ -65,6 +69,23 @@ impl fmt::Display for PauseControllerError {
                     formatter,
                     "Safe controller output \
                      failed: {error}",
+                )
+            }
+
+            Self::SafeOutputWrite(error) => {
+                write!(
+                    formatter,
+                    "Safe controller output write \
+                     failed: {error}",
+                )
+            }
+
+            Self::SafeOutputWriteAndControllerPause { write, pause } => {
+                write!(
+                    formatter,
+                    "Safe controller output write failed: \
+                     {write}; controller pause also failed: \
+                     {pause}",
                 )
             }
 
@@ -85,6 +106,10 @@ impl Error for PauseControllerError {
         match self {
             Self::Output(error) => Some(error),
 
+            Self::SafeOutputWrite(error) => Some(error),
+
+            Self::SafeOutputWriteAndControllerPause { write, .. } => Some(write),
+
             Self::ControllerAfterSafeOutput(error) => Some(error),
         }
     }
@@ -102,8 +127,8 @@ pub enum ResumeControllerError {
     Output(OutputRequestError),
 
     Rollback {
-        output: OutputRequestError,
-        rollback: ControllerRequestError,
+        controller: ControllerRequestError,
+        rollback: OutputRequestError,
     },
 }
 
@@ -120,11 +145,14 @@ impl fmt::Display for ResumeControllerError {
                 )
             }
 
-            Self::Rollback { output, rollback } => {
+            Self::Rollback {
+                controller,
+                rollback,
+            } => {
                 write!(
                     formatter,
-                    "Automatic output takeover \
-                     failed: {output}; controller \
+                    "Controller resume failed: \
+                     {controller}; automatic output \
                      rollback also failed: \
                      {rollback}",
                 )
@@ -140,7 +168,7 @@ impl Error for ResumeControllerError {
 
             Self::Output(error) => Some(error),
 
-            Self::Rollback { output, .. } => Some(output),
+            Self::Rollback { controller, .. } => Some(controller),
         }
     }
 }

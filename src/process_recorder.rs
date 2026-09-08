@@ -1,7 +1,10 @@
 use std::{
     io,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     thread::{self, JoinHandle},
     time::SystemTime,
 };
@@ -29,6 +32,34 @@ pub enum ProcessLogLevel {
 pub enum ProcessActionOrigin {
     UserInterface,
     Lua,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ProcessActionId(u64);
+
+impl ProcessActionId {
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProcessActionContext {
+    action_id: ProcessActionId,
+}
+
+impl ProcessActionContext {
+    pub const fn new(action_id: ProcessActionId) -> Self {
+        Self { action_id }
+    }
+
+    pub const fn action_id(self) -> ProcessActionId {
+        self.action_id
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -206,9 +237,23 @@ pub enum ProcessRecord {
         output: ProcessControlOutput,
     },
     ActionRequested {
+        action_id: ProcessActionId,
         timestamp: SystemTime,
         origin: ProcessActionOrigin,
         action: ProcessAction,
+    },
+
+    ActionApplied {
+        action_id: ProcessActionId,
+        timestamp: SystemTime,
+        series_id: Option<SeriesId>,
+        series_name: Option<String>,
+    },
+
+    ActionFailed {
+        action_id: ProcessActionId,
+        timestamp: SystemTime,
+        error: String,
     },
 }
 
@@ -351,12 +396,15 @@ fn store_first_error(destination: &Mutex<Option<String>>, error: impl Into<Strin
 #[derive(Clone)]
 pub struct ProcessRecorder {
     sink: Arc<dyn ProcessRecordSink>,
+    next_action_id: Arc<AtomicU64>,
 }
 
 impl ProcessRecorder {
     pub fn spawn(writer: impl ProcessRecordWriter + 'static) -> io::Result<Self> {
         Ok(Self {
             sink: Arc::new(AsyncProcessRecordSink::spawn(writer)?),
+
+            next_action_id: Arc::new(AtomicU64::new(1)),
         })
     }
 
@@ -364,11 +412,42 @@ impl ProcessRecorder {
         self.sink.record(record);
     }
 
-    pub fn record_action(&self, origin: ProcessActionOrigin, action: ProcessAction) {
+    pub fn record_action(
+        &self,
+        origin: ProcessActionOrigin,
+        action: ProcessAction,
+    ) -> ProcessActionId {
+        let action_id = ProcessActionId::new(self.next_action_id.fetch_add(1, Ordering::Relaxed));
+
         self.record(ProcessRecord::ActionRequested {
+            action_id,
             timestamp: SystemTime::now(),
             origin,
             action,
+        });
+
+        action_id
+    }
+
+    pub fn record_action_applied(
+        &self,
+        action_id: ProcessActionId,
+        series_id: Option<SeriesId>,
+        series_name: Option<String>,
+    ) {
+        self.record(ProcessRecord::ActionApplied {
+            action_id,
+            timestamp: SystemTime::now(),
+            series_id,
+            series_name,
+        });
+    }
+
+    pub fn record_action_failed(&self, action_id: ProcessActionId, error: impl Into<String>) {
+        self.record(ProcessRecord::ActionFailed {
+            action_id,
+            timestamp: SystemTime::now(),
+            error: error.into(),
         });
     }
 
@@ -420,6 +499,8 @@ impl Default for ProcessRecorder {
     fn default() -> Self {
         Self {
             sink: Arc::new(DisabledProcessRecordSink),
+
+            next_action_id: Arc::new(AtomicU64::new(1)),
         }
     }
 }

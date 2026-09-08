@@ -9,6 +9,7 @@ use crate::{
     },
     connection::ConnectionId,
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
+    process_recorder::ProcessActionId,
     serial_connection::SerialPortConfig,
 };
 
@@ -32,12 +33,12 @@ impl WorkerHandle {
         self.connection_id
     }
 
-    pub fn start(&self) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::Start)
+    pub fn start(&self, action_id: Option<ProcessActionId>) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::Start { action_id })
     }
 
-    pub fn stop(&self) -> Result<(), WorkerHandleError> {
-        self.send(WorkerCommand::Stop)
+    pub fn stop(&self, action_id: Option<ProcessActionId>) -> Result<(), WorkerHandleError> {
+        self.send(WorkerCommand::Stop { action_id })
     }
 
     pub(super) fn shutdown(&self) -> Result<(), WorkerHandleError> {
@@ -50,22 +51,29 @@ impl WorkerHandle {
 
     pub fn send_serial_text(
         &self,
+        action_id: Option<ProcessActionId>,
         config: SerialPortConfig,
         command: String,
     ) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::Connection(
-            ConnectionCommand::SendSerialText { config, command },
+            ConnectionCommand::SendSerialText {
+                action_id,
+                config,
+                command,
+            },
         ))
     }
 
     pub fn read_instrument(
         &self,
+        action_id: Option<ProcessActionId>,
         port_name: String,
         request: InstrumentReadRequest,
         response_sender: Sender<InstrumentReadResult>,
     ) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::Connection(
             ConnectionCommand::ReadInstrument {
+                action_id,
                 port_name,
                 request,
                 response_sender,
@@ -75,12 +83,14 @@ impl WorkerHandle {
 
     pub(crate) fn write_instrument_quiet(
         &self,
+        action_id: Option<ProcessActionId>,
         port_name: String,
         request: InstrumentWriteRequest,
         response_sender: Sender<InstrumentWriteResult>,
     ) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::Connection(
             ConnectionCommand::WriteInstrument {
+                action_id,
                 port_name,
                 request,
                 emit_event: false,
@@ -92,6 +102,7 @@ impl WorkerHandle {
 
     pub(crate) fn write_instrument_quiet_tracked(
         &self,
+        action_id: Option<ProcessActionId>,
         port_name: String,
         request: InstrumentWriteRequest,
         completion_id: InstrumentWriteCompletionId,
@@ -100,6 +111,7 @@ impl WorkerHandle {
     ) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::Connection(
             ConnectionCommand::WriteInstrument {
+                action_id,
                 port_name,
                 request,
                 emit_event: false,
@@ -111,10 +123,14 @@ impl WorkerHandle {
 
     pub fn describe_virtual_instruments(
         &self,
+        action_id: Option<ProcessActionId>,
         response_sender: Sender<VirtualInstrumentDescribeResult>,
     ) -> Result<(), WorkerHandleError> {
         self.send(WorkerCommand::Connection(
-            ConnectionCommand::DescribeVirtualInstruments { response_sender },
+            ConnectionCommand::DescribeVirtualInstruments {
+                action_id,
+                response_sender,
+            },
         ))
     }
 
@@ -195,6 +211,7 @@ mod tests {
 
         handle
             .write_instrument_quiet_tracked(
+                None,
                 "COM9".to_owned(),
                 request,
                 completion_id,

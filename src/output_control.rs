@@ -8,7 +8,7 @@ use crate::{
 
 mod service;
 
-pub(crate) use service::{OutputHandle, OutputRequestError, OutputService};
+pub(crate) use service::{OutputHandle, OutputRequestError, OutputService, OutputWriteError};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum OutputMode {
@@ -172,6 +172,23 @@ impl OutputArbiter {
             state.automatic_transition_id = state.automatic_transition_id.next();
 
             state.mode = OutputMode::AutomaticPending;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn rollback_automatic_request(
+        &mut self,
+        controller: &str,
+    ) -> Result<(), OutputArbiterError> {
+        let state = self
+            .outputs
+            .values_mut()
+            .find(|state| state.controller == controller)
+            .ok_or_else(|| OutputArbiterError::ControllerNotRegistered(controller.to_owned()))?;
+
+        if state.mode == OutputMode::AutomaticPending {
+            state.mode = OutputMode::Manual;
         }
 
         Ok(())

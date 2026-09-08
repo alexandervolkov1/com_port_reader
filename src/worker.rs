@@ -18,7 +18,7 @@ use crate::{
     connection::ConnectionId,
     data::{SeriesId, SeriesMetadata, SeriesSample, SeriesStore},
     instrument::{InstrumentReadRequest, InstrumentWriteRequest},
-    process_recorder::ProcessRecorder,
+    process_recorder::{ProcessActionId, ProcessRecorder},
     serial_connection::SerialConnectionError,
     signal_processing::{ProcessingHandle, ProcessingInput},
 };
@@ -59,8 +59,19 @@ impl WorkerEventSender {
         &self,
         event: WorkerEvent,
     ) -> Result<(), crossbeam_channel::SendError<ConnectionWorkerEvent>> {
-        self.sender
-            .send(ConnectionWorkerEvent::new(self.connection_id, event))
+        self.send_for_action(None, event)
+    }
+
+    fn send_for_action(
+        &self,
+        action_id: Option<ProcessActionId>,
+        event: WorkerEvent,
+    ) -> Result<(), crossbeam_channel::SendError<ConnectionWorkerEvent>> {
+        self.sender.send(ConnectionWorkerEvent::new(
+            self.connection_id,
+            action_id,
+            event,
+        ))
     }
 
     const fn connection_id(&self) -> ConnectionId {
@@ -299,7 +310,7 @@ impl Worker {
                 };
 
                 match command_result {
-                    Ok(WorkerCommand::Start) => {
+                    Ok(WorkerCommand::Start { action_id }) => {
                         if matches!(state, AcquisitionState::Stopped) {
                             match source.start() {
                                 Ok(()) => {
@@ -313,18 +324,26 @@ impl Worker {
 
                                     thread_running.store(true, Ordering::Release);
 
-                                    let _ = event_sender.send(WorkerEvent::AcquisitionStarted);
+                                    let _ = event_sender.send_for_action(
+                                        action_id,
+                                        WorkerEvent::AcquisitionStarted,
+                                    );
                                 }
 
                                 Err(error) => {
-                                    let _ = event_sender
-                                        .send(WorkerEvent::AcquisitionStartFailed(error));
+                                    let _ = event_sender.send_for_action(
+                                        action_id,
+                                        WorkerEvent::AcquisitionStartFailed(error),
+                                    );
                                 }
                             }
+                        } else {
+                            let _ = event_sender
+                                .send_for_action(action_id, WorkerEvent::AcquisitionStarted);
                         }
                     }
 
-                    Ok(WorkerCommand::Stop) => {
+                    Ok(WorkerCommand::Stop { action_id }) => {
                         if matches!(state, AcquisitionState::Running { .. }) {
                             state = AcquisitionState::Stopped;
 
@@ -334,14 +353,22 @@ impl Worker {
 
                             match source.stop() {
                                 Ok(()) => {
-                                    let _ = event_sender.send(WorkerEvent::AcquisitionStopped);
+                                    let _ = event_sender.send_for_action(
+                                        action_id,
+                                        WorkerEvent::AcquisitionStopped,
+                                    );
                                 }
 
                                 Err(error) => {
-                                    let _ = event_sender
-                                        .send(WorkerEvent::AcquisitionStopFailed(error));
+                                    let _ = event_sender.send_for_action(
+                                        action_id,
+                                        WorkerEvent::AcquisitionStopFailed(error),
+                                    );
                                 }
                             }
+                        } else {
+                            let _ = event_sender
+                                .send_for_action(action_id, WorkerEvent::AcquisitionStopped);
                         }
                     }
 
@@ -385,12 +412,12 @@ impl Worker {
         }
     }
 
-    pub fn start(&self) -> Result<(), WorkerHandleError> {
-        self.commands.start()
+    pub fn start(&self, action_id: Option<ProcessActionId>) -> Result<(), WorkerHandleError> {
+        self.commands.start(action_id)
     }
 
-    pub fn stop(&self) -> Result<(), WorkerHandleError> {
-        self.commands.stop()
+    pub fn stop(&self, action_id: Option<ProcessActionId>) -> Result<(), WorkerHandleError> {
+        self.commands.stop(action_id)
     }
 
     pub fn is_running(&self) -> bool {
@@ -552,7 +579,11 @@ fn handle_connection_command(
     event_sender: &WorkerEventSender,
 ) {
     match command {
-        ConnectionCommand::SendSerialText { config, command } => {
+        ConnectionCommand::SendSerialText {
+            action_id,
+            config,
+            command,
+        } => {
             let port_name = config.port_name().to_owned();
 
             let result = if acquisition_running {
@@ -577,10 +608,11 @@ fn handle_connection_command(
                 },
             };
 
-            let _ = event_sender.send(event);
+            let _ = event_sender.send_for_action(action_id, event);
         }
 
         ConnectionCommand::ReadInstrument {
+            action_id,
             port_name,
             request,
             response_sender,
@@ -612,11 +644,13 @@ fn handle_connection_command(
                 },
             };
 
-            let _ = event_sender.send(event);
+            let _ = event_sender.send_for_action(action_id, event);
+
             let _ = response_sender.send(result);
         }
 
         ConnectionCommand::WriteInstrument {
+            action_id,
             port_name,
             request,
             emit_event,
@@ -636,7 +670,7 @@ fn handle_connection_command(
                 );
             }
 
-            if emit_event {
+            if emit_event || action_id.is_some() {
                 let event = match &result {
                     Ok(actual_value) => WorkerEvent::InstrumentWriteSucceeded {
                         port_name,
@@ -651,7 +685,7 @@ fn handle_connection_command(
                     },
                 };
 
-                let _ = event_sender.send(event);
+                let _ = event_sender.send_for_action(action_id, event);
             }
 
             if let Some((completion_id, completion_sender)) = completion {
@@ -664,10 +698,25 @@ fn handle_connection_command(
             let _ = response_sender.send(result);
         }
 
-        ConnectionCommand::DescribeVirtualInstruments { response_sender } => {
+        ConnectionCommand::DescribeVirtualInstruments {
+            action_id,
+            response_sender,
+        } => {
             let result = describe_virtual_instruments_from_source(source);
 
             let result = close_source_after_one_shot(result, acquisition_running, source);
+
+            let event = match &result {
+                Ok(descriptors) => WorkerEvent::VirtualInstrumentDescribeSucceeded {
+                    count: descriptors.len(),
+                },
+
+                Err(error) => WorkerEvent::VirtualInstrumentDescribeFailed {
+                    error: error.clone(),
+                },
+            };
+
+            let _ = event_sender.send_for_action(action_id, event);
 
             let _ = response_sender.send(result);
         }

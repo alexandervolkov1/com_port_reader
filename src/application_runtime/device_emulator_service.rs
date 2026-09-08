@@ -33,34 +33,27 @@ impl DeviceEmulatorService {
             .is_some_and(DeviceEmulatorHandle::is_running)
     }
 
-    pub fn start(&mut self, serial_config: &SerialPortConfig) {
+    pub fn start(&mut self, serial_config: &SerialPortConfig) -> Result<(), String> {
         self.poll();
 
         if self.handle.is_some() {
-            return;
+            return Ok(());
         }
 
         let Some(port_name) = self.selected_port.clone() else {
-            self.report_error("Select an emulator COM port first.");
-
-            return;
+            return Err("Select an emulator COM port first.".to_owned());
         };
 
         let Some(script_path) = self.script_path.clone() else {
-            self.report_error("Select a Lua device model first.");
-
-            return;
+            return Err("Select a Lua device model first.".to_owned());
         };
 
         let client_port = serial_config.port_name();
 
         if port_name.eq_ignore_ascii_case(client_port) {
-            self.report_error(
-                "The application and emulator must use \
-                 different COM ports.",
-            );
-
-            return;
+            return Err("The application and emulator must use \
+                 different COM ports."
+                .to_owned());
         }
 
         let config = DeviceEmulatorPortConfig {
@@ -72,24 +65,23 @@ impl DeviceEmulatorService {
             flow_control: serial_config.flow_control(),
         };
 
-        let model_description = format!("Lua model '{}'", script_path.display(),);
+        let model_description = format!("Lua model '{}'", script_path.display());
 
-        match DeviceEmulatorHandle::start(config, script_path) {
-            Ok(handle) => {
-                self.handle = Some(handle);
-                self.log.info(format!(
-                    "Device emulator started on {port_name} \
-                     using {model_description}.",
-                ));
-            }
+        let handle = DeviceEmulatorHandle::start(config, script_path).map_err(|error| {
+            format!(
+                "Failed to start device emulator on \
+                         {port_name}: {error}",
+            )
+        })?;
 
-            Err(error) => {
-                self.report_error(format!(
-                    "Failed to start device emulator on \
-                     {port_name}: {error}",
-                ));
-            }
-        }
+        self.handle = Some(handle);
+
+        self.log.info(format!(
+            "Device emulator started on {port_name} \
+             using {model_description}.",
+        ));
+
+        Ok(())
     }
 
     pub fn stop(&mut self) {
@@ -99,22 +91,27 @@ impl DeviceEmulatorService {
 
         let port_name = self.selected_port.clone();
 
-        match handle.stop() {
-            Ok(()) => match port_name {
-                Some(port_name) => {
-                    self.log.info(format!(
-                        "Device emulator stopped on \
-                             {port_name}.",
-                    ));
-                }
+        if let Err(error) = handle.stop() {
+            let location = port_name
+                .as_deref()
+                .map_or(String::new(), |port| format!(" on {port}"));
 
-                None => {
-                    self.log.info("Device emulator stopped.");
-                }
-            },
+            self.report_error(format!(
+                "Device emulator{location} stopped \
+                 with an error: {error}",
+            ));
+        }
 
-            Err(error) => {
-                self.report_error(format!("Device emulator failed: {error}",));
+        match port_name {
+            Some(port_name) => {
+                self.log.info(format!(
+                    "Device emulator stopped on \
+                     {port_name}.",
+                ));
+            }
+
+            None => {
+                self.log.info("Device emulator stopped.");
             }
         }
     }

@@ -1,33 +1,37 @@
+use std::collections::BTreeSet;
+
 use crate::{
-    app_log::LogHandle,
+    connection::ConnectionId,
+    process_recorder::ProcessActionId,
     worker::{ConnectionWorkers, ConnectionWorkersError},
 };
 
 pub(crate) struct AcquisitionController {
     workers: ConnectionWorkers,
-    log: LogHandle,
 }
 
 impl AcquisitionController {
-    pub fn new(workers: ConnectionWorkers, log: LogHandle) -> Self {
-        Self { workers, log }
+    pub fn new(workers: ConnectionWorkers) -> Self {
+        Self { workers }
     }
 
-    pub fn start(&self) {
-        self.report_worker_error("start acquisition", self.workers.start());
+    pub fn start(&self, action_id: Option<ProcessActionId>) -> Result<(), ConnectionWorkersError> {
+        self.workers.start(action_id)
     }
 
-    pub fn stop(&self) {
-        self.report_worker_error("stop acquisition", self.workers.stop());
+    pub fn stop(&self, action_id: Option<ProcessActionId>) -> Result<(), ConnectionWorkersError> {
+        self.workers.stop(action_id)
     }
 
     pub fn is_running(&self) -> bool {
         self.workers.is_running()
     }
 
-    fn report_worker_error(&self, action: &str, result: Result<(), ConnectionWorkersError>) {
-        if let Err(error) = result {
-            self.log.error(format!("Failed to {action}: {error}",));
-        }
+    pub fn worker_count(&self) -> usize {
+        self.workers.len()
+    }
+
+    pub fn stopped_connection_ids(&self) -> BTreeSet<ConnectionId> {
+        self.workers.stopped_connection_ids()
     }
 }

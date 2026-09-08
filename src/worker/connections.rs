@@ -1,10 +1,10 @@
 use std::{
-    collections::{BTreeMap, btree_map::Entry},
+    collections::{BTreeMap, BTreeSet, btree_map::Entry},
     error::Error,
     fmt,
 };
 
-use crate::connection::ConnectionId;
+use crate::{connection::ConnectionId, process_recorder::ProcessActionId};
 
 use super::{ConnectionRouter, Worker, WorkerHandleError};
 
@@ -56,12 +56,23 @@ impl ConnectionWorkers {
         self.router.clone()
     }
 
-    pub fn start(&self) -> Result<(), ConnectionWorkersError> {
-        self.apply_to_all(Worker::start)
+    pub fn len(&self) -> usize {
+        self.workers.len()
     }
 
-    pub fn stop(&self) -> Result<(), ConnectionWorkersError> {
-        self.apply_to_all(Worker::stop)
+    pub fn stopped_connection_ids(&self) -> BTreeSet<ConnectionId> {
+        self.workers
+            .iter()
+            .filter_map(|(&connection_id, worker)| (!worker.is_running()).then_some(connection_id))
+            .collect()
+    }
+
+    pub fn start(&self, action_id: Option<ProcessActionId>) -> Result<(), ConnectionWorkersError> {
+        self.apply_to_all(|worker| worker.start(action_id))
+    }
+
+    pub fn stop(&self, action_id: Option<ProcessActionId>) -> Result<(), ConnectionWorkersError> {
+        self.apply_to_all(|worker| worker.stop(action_id))
     }
 
     pub fn is_running(&self) -> bool {
@@ -252,7 +263,7 @@ mod tests {
 
         workers.insert(secondary_worker).unwrap();
 
-        workers.start().unwrap();
+        workers.start(None).unwrap();
 
         let deadline = Instant::now() + Duration::from_secs(1);
 
@@ -272,6 +283,6 @@ mod tests {
 
         assert_eq!(last_value(&series, secondary_series_id), Some(20.0),);
 
-        workers.stop().unwrap();
+        workers.stop(None).unwrap();
     }
 }

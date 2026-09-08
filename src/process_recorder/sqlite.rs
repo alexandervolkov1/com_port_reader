@@ -7,9 +7,11 @@ use std::{
 
 use rusqlite::{Connection, params};
 
+use crate::data::SeriesId;
+
 use super::{
-    ProcessAction, ProcessActionOrigin, ProcessControlOutput, ProcessLogLevel, ProcessMeasurement,
-    ProcessRecord, ProcessRecordWriter, ProcessRecorderError,
+    ProcessAction, ProcessActionId, ProcessActionOrigin, ProcessControlOutput, ProcessLogLevel,
+    ProcessMeasurement, ProcessRecord, ProcessRecordWriter, ProcessRecorderError,
 };
 
 pub(crate) struct SqliteProcessRecordWriter {
@@ -71,14 +73,17 @@ impl SqliteProcessRecordWriter {
                 );
 
                 CREATE TABLE IF NOT EXISTS actions (
-                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id            INTEGER PRIMARY KEY,
                     timestamp     REAL NOT NULL,
                     origin        TEXT NOT NULL,
                     action_type   TEXT NOT NULL,
                     connection_id TEXT,
                     series_id     TEXT,
                     series_name   TEXT,
-                    details       TEXT NOT NULL
+                    details       TEXT NOT NULL,
+                    status        TEXT NOT NULL,
+                    completed_at  REAL,
+                    error         TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS measurements (
@@ -207,10 +212,13 @@ impl SqliteProcessRecordWriter {
 
     fn write_action(
         &self,
+        action_id: ProcessActionId,
         timestamp: SystemTime,
         origin: ProcessActionOrigin,
         action: ProcessAction,
     ) -> Result<(), ProcessRecorderError> {
+        let action_id = sqlite_action_id(action_id)?;
+
         let action_type = action_type_name(&action);
         let connection_id = action_connection_id(&action);
         let series_id = action_series_id(&action);
@@ -221,17 +229,20 @@ impl SqliteProcessRecordWriter {
             .execute(
                 "
                 INSERT INTO actions (
+                    id,
                     timestamp,
                     origin,
                     action_type,
                     connection_id,
                     series_id,
                     series_name,
-                    details
+                    details,
+                    status
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                 ",
                 params![
+                    action_id,
                     system_time_seconds(timestamp)?,
                     action_origin_name(origin),
                     action_type,
@@ -239,9 +250,76 @@ impl SqliteProcessRecordWriter {
                     series_id,
                     series_name,
                     details,
+                    "requested",
                 ],
             )
             .map_err(|error| recorder_error("Failed to write action record", error))?;
+
+        Ok(())
+    }
+
+    fn write_action_applied(
+        &self,
+        action_id: ProcessActionId,
+        timestamp: SystemTime,
+        series_id: Option<SeriesId>,
+        series_name: Option<String>,
+    ) -> Result<(), ProcessRecorderError> {
+        let action_id = sqlite_action_id(action_id)?;
+        let series_id = series_id.map(|series_id| series_id.to_string());
+
+        self.connection
+            .execute(
+                "
+                UPDATE actions
+                SET
+                    status = 'applied',
+                    completed_at = ?2,
+                    error = NULL,
+                    series_id =
+                        COALESCE(
+                            ?3,
+                            series_id
+                        ),
+                    series_name =
+                        COALESCE(
+                            ?4,
+                            series_name
+                        )
+                WHERE id = ?1
+                ",
+                params![
+                    action_id,
+                    system_time_seconds(timestamp)?,
+                    series_id,
+                    series_name,
+                ],
+            )
+            .map_err(|error| recorder_error("Failed to complete action record", error))?;
+
+        Ok(())
+    }
+
+    fn write_action_failed(
+        &self,
+        action_id: ProcessActionId,
+        timestamp: SystemTime,
+        error: String,
+    ) -> Result<(), ProcessRecorderError> {
+        let action_id = sqlite_action_id(action_id)?;
+        self.connection
+            .execute(
+                "
+                UPDATE actions
+                SET
+                    status = 'failed',
+                    completed_at = ?2,
+                    error = ?3
+                WHERE id = ?1
+                ",
+                params![action_id, system_time_seconds(timestamp)?, error,],
+            )
+            .map_err(|error| recorder_error("Failed to fail action record", error))?;
 
         Ok(())
     }
@@ -364,10 +442,24 @@ impl ProcessRecordWriter for SqliteProcessRecordWriter {
             } => self.write_log(timestamp, level, message),
 
             ProcessRecord::ActionRequested {
+                action_id,
                 timestamp,
                 origin,
                 action,
-            } => self.write_action(timestamp, origin, action),
+            } => self.write_action(action_id, timestamp, origin, action),
+
+            ProcessRecord::ActionApplied {
+                action_id,
+                timestamp,
+                series_id,
+                series_name,
+            } => self.write_action_applied(action_id, timestamp, series_id, series_name),
+
+            ProcessRecord::ActionFailed {
+                action_id,
+                timestamp,
+                error,
+            } => self.write_action_failed(action_id, timestamp, error),
 
             ProcessRecord::ControlOutput { output } => self.write_control_output(output),
 
@@ -532,6 +624,15 @@ fn action_series_name(action: &ProcessAction) -> Option<&str> {
     }
 }
 
+fn sqlite_action_id(action_id: ProcessActionId) -> Result<i64, ProcessRecorderError> {
+    i64::try_from(action_id.value()).map_err(|_| {
+        ProcessRecorderError::new(format!(
+            "Process action id {} exceeds SQLite INTEGER range",
+            action_id.value(),
+        ))
+    })
+}
+
 fn recorder_error(context: impl Display, error: impl Display) -> ProcessRecorderError {
     ProcessRecorderError::new(format!("{context}: {error}"))
 }
@@ -673,14 +774,12 @@ mod tests {
 
         writer
             .write(ProcessRecord::ActionRequested {
+                action_id: ProcessActionId::new(1),
                 timestamp: UNIX_EPOCH,
                 origin: ProcessActionOrigin::UserInterface,
-
                 action: ProcessAction::SetSeriesVisibility {
                     series_id: SeriesId::new(17),
-
                     series_name: Some("temperature_filtered".to_owned()),
-
                     visible: false,
                 },
             })
@@ -714,6 +813,170 @@ mod tests {
                 "temperature_filtered".to_owned(),
             ),
         );
+    }
+
+    #[test]
+    fn updates_action_lifecycle() {
+        let path = temporary_database_path();
+
+        let mut writer = SqliteProcessRecordWriter::create(&path).unwrap();
+
+        let action_id = ProcessActionId::new(7);
+
+        writer
+            .write(ProcessRecord::ActionRequested {
+                action_id,
+                timestamp: UNIX_EPOCH,
+                origin: ProcessActionOrigin::UserInterface,
+                action: ProcessAction::DeleteSeriesByName {
+                    series_id: Some(SeriesId::new(17)),
+                    name: "temperature".to_owned(),
+                },
+            })
+            .unwrap();
+
+        writer
+            .write(ProcessRecord::ActionApplied {
+                action_id,
+                timestamp: UNIX_EPOCH + std::time::Duration::from_secs(1),
+                series_id: Some(SeriesId::new(17)),
+                series_name: Some("temperature".to_owned()),
+            })
+            .unwrap();
+
+        drop(writer);
+
+        let connection = Connection::open(&path).unwrap();
+
+        let row: (String, Option<f64>, String, String) = connection
+            .query_row(
+                "
+                SELECT
+                    status,
+                    completed_at,
+                    series_id,
+                    series_name
+                FROM actions
+                WHERE id = 7
+                ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+
+        drop(connection);
+
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(
+            row,
+            (
+                "applied".to_owned(),
+                Some(1.0),
+                SeriesId::new(17).to_string(),
+                "temperature".to_owned(),
+            ),
+        );
+    }
+
+    #[test]
+    fn records_failed_action() {
+        let path = temporary_database_path();
+
+        let mut writer = SqliteProcessRecordWriter::create(&path).unwrap();
+
+        let action_id = ProcessActionId::new(3);
+
+        writer
+            .write(ProcessRecord::ActionRequested {
+                action_id,
+                timestamp: UNIX_EPOCH,
+                origin: ProcessActionOrigin::Lua,
+                action: ProcessAction::DeleteSeriesByName {
+                    series_id: None,
+                    name: "missing".to_owned(),
+                },
+            })
+            .unwrap();
+
+        writer
+            .write(ProcessRecord::ActionFailed {
+                action_id,
+                timestamp: UNIX_EPOCH,
+                error: "Series 'missing' not found".to_owned(),
+            })
+            .unwrap();
+
+        drop(writer);
+
+        let connection = Connection::open(&path).unwrap();
+
+        let row: (String, String) = connection
+            .query_row(
+                "
+                    SELECT
+                        status,
+                        error
+                    FROM actions
+                    WHERE id = 3
+                    ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        drop(connection);
+
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(
+            row,
+            ("failed".to_owned(), "Series 'missing' not found".to_owned(),),
+        );
+    }
+
+    #[test]
+    fn stores_requested_action_status() {
+        let path = temporary_database_path();
+
+        let mut writer = SqliteProcessRecordWriter::create(&path).unwrap();
+
+        writer
+            .write(ProcessRecord::ActionRequested {
+                action_id: ProcessActionId::new(5),
+                timestamp: UNIX_EPOCH,
+                origin: ProcessActionOrigin::UserInterface,
+                action: ProcessAction::DeleteSeriesByName {
+                    series_id: None,
+                    name: "temperature".to_owned(),
+                },
+            })
+            .unwrap();
+
+        drop(writer);
+
+        let connection = Connection::open(&path).unwrap();
+
+        let row: (String, Option<f64>, Option<String>) = connection
+            .query_row(
+                "
+                SELECT
+                    status,
+                    completed_at,
+                    error
+                FROM actions
+                WHERE id = 5
+                ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+
+        drop(connection);
+
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(row, ("requested".to_owned(), None, None,),);
     }
 
     fn temporary_database_path() -> PathBuf {

@@ -18,6 +18,7 @@ use crate::{
         InstrumentWriteRequest,
     },
     process_control::ControllerInstanceId,
+    process_recorder::ProcessActionId,
     serial_connection::SerialConnectionRegistry,
     worker::ConnectionRouter,
 };
@@ -75,7 +76,13 @@ enum OutputCommand {
         response_sender: Sender<Result<(), OutputArbiterError>>,
     },
 
+    RollbackAutomaticRequest {
+        controller: String,
+        response_sender: Sender<Result<(), OutputArbiterError>>,
+    },
+
     WriteInstrument {
+        action_id: Option<ProcessActionId>,
         connection_id: ConnectionId,
         request: InstrumentWriteRequest,
         instrument_response_sender: Sender<InstrumentWriteResult>,
@@ -328,6 +335,7 @@ impl OutputHandle {
 
     pub(crate) fn write_instrument(
         &self,
+        action_id: Option<ProcessActionId>,
         connection_id: ConnectionId,
         request: InstrumentWriteRequest,
         instrument_response_sender: Sender<InstrumentWriteResult>,
@@ -336,6 +344,7 @@ impl OutputHandle {
 
         self.command_sender
             .send(OutputCommand::WriteInstrument {
+                action_id,
                 connection_id,
                 request,
                 instrument_response_sender,
@@ -356,6 +365,25 @@ impl OutputHandle {
 
         self.command_sender
             .send(OutputCommand::RequestAutomatic {
+                controller: controller.into(),
+                response_sender,
+            })
+            .map_err(|_| OutputRequestError::Disconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| OutputRequestError::Disconnected)?
+            .map_err(Into::into)
+    }
+
+    pub(crate) fn rollback_automatic_request(
+        &self,
+        controller: impl Into<String>,
+    ) -> Result<(), OutputRequestError> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(OutputCommand::RollbackAutomaticRequest {
                 controller: controller.into(),
                 response_sender,
             })
@@ -545,7 +573,20 @@ fn run(
                         let _ = response_sender.send(result);
                     }
 
+                    OutputCommand::RollbackAutomaticRequest {
+                        controller,
+                        response_sender,
+                    } => {
+                        let result =
+                            arbiter.rollback_automatic_request(
+                                &controller,
+                            );
+
+                        let _ = response_sender.send(result);
+                    }
+
                     OutputCommand::WriteInstrument {
+                        action_id,
                         connection_id,
                         request,
                         instrument_response_sender,
@@ -553,6 +594,7 @@ fn run(
                     } => {
                         let result = write_instrument(
                             &mut arbiter,
+                            action_id,
                             connection_id,
                             request,
                             instrument_response_sender,
@@ -683,6 +725,7 @@ fn apply_safe(
 
 fn write_instrument(
     arbiter: &mut OutputArbiter,
+    action_id: Option<ProcessActionId>,
     connection_id: ConnectionId,
     request: InstrumentWriteRequest,
     instrument_response_sender: Sender<InstrumentWriteResult>,
@@ -698,6 +741,7 @@ fn write_instrument(
             request,
             instance_id,
             None,
+            action_id,
             instrument_response_sender,
             write_context,
         )?;
@@ -707,6 +751,7 @@ fn write_instrument(
         dispatch_write_to_sender(
             target,
             request,
+            action_id,
             instrument_response_sender,
             write_context.connection_router,
             write_context.serial_connections,
@@ -744,6 +789,7 @@ fn dispatch_tracked_write(
         request,
         instance_id,
         automatic_transition_id,
+        None,
         response_sender,
         write_context,
     )?;
@@ -756,6 +802,7 @@ fn dispatch_tracked_write_to_sender(
     request: InstrumentWriteRequest,
     instance_id: ControllerInstanceId,
     automatic_transition_id: Option<AutomaticTransitionId>,
+    action_id: Option<ProcessActionId>,
     response_sender: Sender<InstrumentWriteResult>,
     write_context: &mut OutputWriteContext<'_>,
 ) -> Result<(), OutputRequestError> {
@@ -794,6 +841,7 @@ fn dispatch_tracked_write_to_sender(
 
     worker
         .write_instrument_quiet_tracked(
+            action_id,
             serial_config.port_name().to_owned(),
             request,
             completion_id,
@@ -823,6 +871,7 @@ fn dispatch_tracked_write_to_sender(
 fn dispatch_write_to_sender(
     target: ConnectedParameterAddress,
     request: InstrumentWriteRequest,
+    action_id: Option<ProcessActionId>,
     response_sender: Sender<InstrumentWriteResult>,
     connection_router: &ConnectionRouter,
     serial_connections: &SerialConnectionRegistry,
@@ -849,6 +898,7 @@ fn dispatch_write_to_sender(
 
     worker
         .write_instrument_quiet(
+            action_id,
             serial_config.port_name().to_owned(),
             request,
             response_sender,
@@ -1139,7 +1189,7 @@ mod tests {
         let (response_sender, _response_receiver) = bounded(1);
 
         handle
-            .write_instrument(connection_id, request, response_sender)
+            .write_instrument(None, connection_id, request, response_sender)
             .unwrap();
 
         assert_eq!(handle.mode(target), Ok(OutputMode::Manual));
@@ -1177,7 +1227,7 @@ mod tests {
         let (response_sender, _response_receiver) = bounded(1);
 
         assert!(matches!(
-            handle.write_instrument(target.connection_id(), request, response_sender,),
+            handle.write_instrument(None, target.connection_id(), request, response_sender,),
             Err(OutputRequestError::Transport(_)),
         ));
 
@@ -1215,7 +1265,7 @@ mod tests {
         let (response_sender, _response_receiver) = bounded(1);
 
         handle
-            .write_instrument(connection_id, request, response_sender)
+            .write_instrument(None, connection_id, request, response_sender)
             .unwrap();
 
         assert!(matches!(
@@ -1261,7 +1311,7 @@ mod tests {
         let (instrument_response_sender, _instrument_response_receiver) = bounded(1);
 
         handle
-            .write_instrument(connection_id, request, instrument_response_sender)
+            .write_instrument(None, connection_id, request, instrument_response_sender)
             .unwrap();
 
         assert_eq!(
@@ -1316,7 +1366,7 @@ mod tests {
         let (instrument_response_sender, _instrument_response_receiver) = bounded(1);
 
         handle
-            .write_instrument(connection_id, request, instrument_response_sender)
+            .write_instrument(None, connection_id, request, instrument_response_sender)
             .unwrap();
 
         assert_eq!(handle.mode(target), Ok(OutputMode::Manual));
@@ -1363,7 +1413,7 @@ mod tests {
         let (response_sender, _response_receiver) = bounded(1);
 
         handle
-            .write_instrument(connection_id, request, response_sender)
+            .write_instrument(None, connection_id, request, response_sender)
             .unwrap();
 
         assert_eq!(handle.mode(target), Ok(OutputMode::Manual));

@@ -1,17 +1,19 @@
 use crossbeam_channel::Receiver;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::{
     acquisition::AcquisitionError,
     app_log::LogHandle,
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
-    data::{NewControllerDiagnosticSeries, NewFilteredSeries, NewSeries, SeriesId, SeriesStore},
+    data::{
+        NewControllerDiagnosticSeries, NewFilteredSeries, NewSeries, SeriesId, SeriesSource,
+        SeriesStore,
+    },
     instrument::ConnectedParameterAddress,
     output_control::{OutputHandle, OutputRequestError},
-    process_control::{
-        ControlLoopDefinition, ControlLoopState, ControlOutputTarget, NewController,
-    },
+    process_control::{ControlLoopDefinition, ControlOutputTarget, NewController},
+    process_recorder::{ProcessActionContext, ProcessActionId, ProcessRecorder},
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
     signal_processing::{ProcessingHandle, SignalFilterDefinition},
     user_command::{
@@ -29,12 +31,34 @@ use super::{
 pub(crate) struct CommandDispatcherConnections {
     router: ConnectionRouter,
     serial: SerialConnectionRegistry,
+    event_receiver: Receiver<ConnectionWorkerEvent>,
 }
 
 impl CommandDispatcherConnections {
-    pub(crate) fn new(router: ConnectionRouter, serial: SerialConnectionRegistry) -> Self {
-        Self { router, serial }
+    pub(crate) fn new(
+        router: ConnectionRouter,
+        serial: SerialConnectionRegistry,
+        event_receiver: Receiver<ConnectionWorkerEvent>,
+    ) -> Self {
+        Self {
+            router,
+            serial,
+            event_receiver,
+        }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AcquisitionActionKind {
+    Start,
+    Stop,
+}
+
+struct PendingAcquisitionAction {
+    kind: AcquisitionActionKind,
+    expected_responses: usize,
+    responded_connections: BTreeSet<ConnectionId>,
+    rollback_connections: BTreeSet<ConnectionId>,
 }
 
 pub(crate) struct CommandDispatcher {
@@ -44,6 +68,8 @@ pub(crate) struct CommandDispatcher {
     series: SeriesStore,
     processing: ProcessingHandle<SeriesId>,
     output_control: OutputHandle,
+    process_recorder: ProcessRecorder,
+    pending_acquisition_actions: HashMap<ProcessActionId, PendingAcquisitionAction>,
     event_receiver: Receiver<ConnectionWorkerEvent>,
     log: LogHandle,
 }
@@ -55,7 +81,7 @@ impl CommandDispatcher {
         series: SeriesStore,
         processing: ProcessingHandle<SeriesId>,
         output_control: OutputHandle,
-        event_receiver: Receiver<ConnectionWorkerEvent>,
+        process_recorder: ProcessRecorder,
         log: LogHandle,
     ) -> Self {
         Self {
@@ -65,7 +91,9 @@ impl CommandDispatcher {
             series,
             processing,
             output_control,
-            event_receiver,
+            process_recorder,
+            pending_acquisition_actions: HashMap::new(),
+            event_receiver: connections.event_receiver,
             log,
         }
     }
@@ -140,8 +168,132 @@ impl CommandDispatcher {
         }
     }
 
+    fn rollback_acquisition_start(&self, connection_ids: &BTreeSet<ConnectionId>) {
+        for &connection_id in connection_ids {
+            let Some(worker) = self.connections.handle(connection_id) else {
+                self.log.error(format!(
+                    "Failed to roll back acquisition \
+                     start for connection \
+                     {connection_id}: worker is not \
+                     registered.",
+                ));
+
+                continue;
+            };
+
+            if let Err(error) = worker.stop(None) {
+                self.log.error(format!(
+                    "Failed to roll back acquisition \
+                     start for connection \
+                     {connection_id}: {error}",
+                ));
+            }
+        }
+    }
+
+    fn handle_acquisition_action_event(&mut self, connection_event: &ConnectionWorkerEvent) {
+        let Some(action_id) = connection_event.action_id() else {
+            return;
+        };
+
+        let connection_id = connection_event.connection_id();
+
+        let event = connection_event.event();
+
+        let failure = match event {
+            WorkerEvent::AcquisitionStartFailed(_) | WorkerEvent::AcquisitionStopFailed(_) => {
+                Some(self.format_worker_event(connection_event))
+            }
+
+            _ => None,
+        };
+
+        let completed = {
+            let Some(pending) = self.pending_acquisition_actions.get_mut(&action_id) else {
+                return;
+            };
+
+            let relevant = matches!(
+                (pending.kind, event),
+                (
+                    AcquisitionActionKind::Start,
+                    WorkerEvent::AcquisitionStarted | WorkerEvent::AcquisitionStartFailed(_)
+                ) | (
+                    AcquisitionActionKind::Stop,
+                    WorkerEvent::AcquisitionStopped | WorkerEvent::AcquisitionStopFailed(_)
+                )
+            );
+
+            if !relevant {
+                return;
+            }
+
+            if !pending.responded_connections.insert(connection_id) {
+                return;
+            }
+
+            pending.responded_connections.len() == pending.expected_responses
+        };
+
+        if let Some(error) = failure {
+            let rollback_connections = self
+                .pending_acquisition_actions
+                .get(&action_id)
+                .filter(|pending| pending.kind == AcquisitionActionKind::Start)
+                .map(|pending| pending.rollback_connections.clone())
+                .unwrap_or_default();
+
+            self.pending_acquisition_actions.remove(&action_id);
+
+            if !rollback_connections.is_empty() {
+                self.rollback_acquisition_start(&rollback_connections);
+            }
+
+            self.process_recorder.record_action_failed(action_id, error);
+
+            return;
+        }
+
+        if completed {
+            self.pending_acquisition_actions.remove(&action_id);
+
+            self.process_recorder
+                .record_action_applied(action_id, None, None);
+        }
+    }
+
+    fn handle_single_worker_action_event(&self, connection_event: &ConnectionWorkerEvent) {
+        let Some(action_id) = connection_event.action_id() else {
+            return;
+        };
+
+        match connection_event.event() {
+            WorkerEvent::SerialTextCommandSucceeded { .. }
+            | WorkerEvent::InstrumentReadSucceeded { .. }
+            | WorkerEvent::InstrumentWriteSucceeded { .. }
+            | WorkerEvent::VirtualInstrumentDescribeSucceeded { .. } => {
+                self.process_recorder
+                    .record_action_applied(action_id, None, None);
+            }
+
+            WorkerEvent::SerialTextCommandFailed { .. }
+            | WorkerEvent::InstrumentReadFailed { .. }
+            | WorkerEvent::InstrumentWriteFailed { .. }
+            | WorkerEvent::VirtualInstrumentDescribeFailed { .. } => {
+                self.process_recorder
+                    .record_action_failed(action_id, self.format_worker_event(connection_event));
+            }
+
+            _ => {}
+        }
+    }
+
     pub fn poll_events(&mut self) {
         while let Ok(connection_event) = self.event_receiver.try_recv() {
+            self.handle_acquisition_action_event(&connection_event);
+
+            self.handle_single_worker_action_event(&connection_event);
+
             let event = connection_event.event();
 
             let message = self.format_worker_event(&connection_event);
@@ -155,57 +307,131 @@ impl CommandDispatcher {
     }
 
     fn resume_controller(&self, name: &str) -> Result<(), ResumeControllerError> {
-        let previous_state = self.processing.controller_state(name)?;
+        self.output_control.request_automatic(name)?;
 
-        self.processing.resume_controller(name)?;
-
-        if let Err(output_error) = self.output_control.request_automatic(name) {
-            if previous_state == ControlLoopState::Paused
-                && let Err(rollback_error) = self.processing.pause_controller(name)
-            {
+        if let Err(controller_error) = self.processing.resume_controller(name) {
+            if let Err(rollback_error) = self.output_control.rollback_automatic_request(name) {
                 return Err(ResumeControllerError::Rollback {
-                    output: output_error,
+                    controller: controller_error,
                     rollback: rollback_error,
                 });
             }
 
-            return Err(ResumeControllerError::Output(output_error));
+            return Err(ResumeControllerError::Controller(controller_error));
         }
 
         Ok(())
     }
 
     fn pause_controller(&self, name: &str) -> Result<(), PauseControllerError> {
-        let _safe_write_response = self.output_control.apply_safe(name)?;
+        let safe_write_response = self.output_control.apply_safe(name)?;
 
-        self.processing
-            .pause_controller(name)
-            .map_err(PauseControllerError::ControllerAfterSafeOutput)?;
+        let safe_write_result = safe_write_response.recv();
 
-        Ok(())
+        let pause_result = self.processing.pause_controller(name);
+
+        match (safe_write_result, pause_result) {
+            (Ok(_), Ok(())) => Ok(()),
+
+            (Err(write), Ok(())) => Err(PauseControllerError::SafeOutputWrite(write)),
+
+            (Ok(_), Err(pause)) => Err(PauseControllerError::ControllerAfterSafeOutput(pause)),
+
+            (Err(write), Err(pause)) => {
+                Err(PauseControllerError::SafeOutputWriteAndControllerPause { write, pause })
+            }
+        }
     }
 
     pub fn execute(
-        &self,
+        &mut self,
         command: UserCommand,
+        action_context: Option<ProcessActionContext>,
         controls: &mut AcquisitionController,
         device_emulator: &mut DeviceEmulatorService,
     ) {
         match command {
-            UserCommand::Add(new_series) => {
-                self.add_series(new_series);
-            }
+            UserCommand::Add(new_series) => match self.add_series(new_series) {
+                Ok(id) => {
+                    let series_name = self
+                        .series
+                        .metadata()
+                        .into_iter()
+                        .find(|series| series.id == id)
+                        .map(|series| series.name);
 
-            UserCommand::AddFilter(filter) => {
-                self.add_filter(filter);
-            }
+                    if let Some(action_context) = action_context {
+                        self.process_recorder.record_action_applied(
+                            action_context.action_id(),
+                            Some(id),
+                            series_name,
+                        );
+                    }
+                }
+
+                Err(error) => {
+                    self.log.error(error.clone());
+
+                    if let Some(action_context) = action_context {
+                        self.process_recorder
+                            .record_action_failed(action_context.action_id(), error);
+                    }
+                }
+            },
+
+            UserCommand::AddFilter(filter) => match self.add_filter(filter) {
+                Ok(id) => {
+                    let series_name = self
+                        .series
+                        .metadata()
+                        .into_iter()
+                        .find(|series| series.id == id)
+                        .map(|series| series.name);
+
+                    if let Some(action_context) = action_context {
+                        self.process_recorder.record_action_applied(
+                            action_context.action_id(),
+                            Some(id),
+                            series_name,
+                        );
+                    }
+                }
+
+                Err(error) => {
+                    self.log.error(error.clone());
+
+                    if let Some(action_context) = action_context {
+                        self.process_recorder
+                            .record_action_failed(action_context.action_id(), error);
+                    }
+                }
+            },
 
             UserCommand::AddControllerDiagnostic(diagnostic) => {
                 self.add_controller_diagnostic(diagnostic);
             }
 
             UserCommand::AddController(new_controller) => {
-                self.add_controller(new_controller);
+                match self.add_controller(new_controller) {
+                    Ok(()) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_applied(
+                                action_context.action_id(),
+                                None,
+                                None,
+                            );
+                        }
+                    }
+
+                    Err(error) => {
+                        self.log.error(error.clone());
+
+                        if let Some(action_context) = action_context {
+                            self.process_recorder
+                                .record_action_failed(action_context.action_id(), error);
+                        }
+                    }
+                }
             }
 
             UserCommand::ControllerParameters {
@@ -246,6 +472,27 @@ impl CommandDispatcher {
                     .processing
                     .write_controller_parameter(&name, &key, value);
 
+                match &result {
+                    Ok(_) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_applied(
+                                action_context.action_id(),
+                                None,
+                                None,
+                            );
+                        }
+                    }
+
+                    Err(error) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_failed(
+                                action_context.action_id(),
+                                error.to_string(),
+                            );
+                        }
+                    }
+                }
+
                 let _ = response_sender.send(result);
             }
 
@@ -255,6 +502,27 @@ impl CommandDispatcher {
                 response_sender,
             } => {
                 let result = self.processing.configure_controller(&name, updates);
+
+                match &result {
+                    Ok(_) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_applied(
+                                action_context.action_id(),
+                                None,
+                                None,
+                            );
+                        }
+                    }
+
+                    Err(error) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_failed(
+                                action_context.action_id(),
+                                error.to_string(),
+                            );
+                        }
+                    }
+                }
 
                 let _ = response_sender.send(result);
             }
@@ -297,6 +565,27 @@ impl CommandDispatcher {
                     .processing
                     .write_reference_parameter(&name, &key, value);
 
+                match &result {
+                    Ok(_) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_applied(
+                                action_context.action_id(),
+                                None,
+                                None,
+                            );
+                        }
+                    }
+
+                    Err(error) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_failed(
+                                action_context.action_id(),
+                                error.to_string(),
+                            );
+                        }
+                    }
+                }
+
                 let _ = response_sender.send(result);
             }
 
@@ -306,6 +595,27 @@ impl CommandDispatcher {
                 response_sender,
             } => {
                 let result = self.processing.configure_reference(&name, updates);
+
+                match &result {
+                    Ok(_) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_applied(
+                                action_context.action_id(),
+                                None,
+                                None,
+                            );
+                        }
+                    }
+
+                    Err(error) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_failed(
+                                action_context.action_id(),
+                                error.to_string(),
+                            );
+                        }
+                    }
+                }
 
                 let _ = response_sender.send(result);
             }
@@ -317,6 +627,27 @@ impl CommandDispatcher {
             } => {
                 let result = self.processing.set_reference(&name, source);
 
+                match &result {
+                    Ok(()) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_applied(
+                                action_context.action_id(),
+                                None,
+                                None,
+                            );
+                        }
+                    }
+
+                    Err(error) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_failed(
+                                action_context.action_id(),
+                                error.to_string(),
+                            );
+                        }
+                    }
+                }
+
                 let _ = response_sender.send(result);
             }
 
@@ -325,6 +656,27 @@ impl CommandDispatcher {
                 response_sender,
             } => {
                 let result = self.processing.reset_controller(&name);
+
+                match &result {
+                    Ok(()) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_applied(
+                                action_context.action_id(),
+                                None,
+                                None,
+                            );
+                        }
+                    }
+
+                    Err(error) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_failed(
+                                action_context.action_id(),
+                                error.to_string(),
+                            );
+                        }
+                    }
+                }
 
                 let _ = response_sender.send(result);
             }
@@ -342,6 +694,27 @@ impl CommandDispatcher {
 
                     None => Err(SetControllerInputError::SeriesNotFound(input_name)),
                 };
+
+                match &result {
+                    Ok(()) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_applied(
+                                action_context.action_id(),
+                                None,
+                                None,
+                            );
+                        }
+                    }
+
+                    Err(error) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_failed(
+                                action_context.action_id(),
+                                error.to_string(),
+                            );
+                        }
+                    }
+                }
 
                 let _ = response_sender.send(result);
             }
@@ -361,6 +734,27 @@ impl CommandDispatcher {
             } => {
                 let result = self.pause_controller(&name);
 
+                match &result {
+                    Ok(()) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_applied(
+                                action_context.action_id(),
+                                None,
+                                None,
+                            );
+                        }
+                    }
+
+                    Err(error) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_failed(
+                                action_context.action_id(),
+                                error.to_string(),
+                            );
+                        }
+                    }
+                }
+
                 let _ = response_sender.send(result);
             }
 
@@ -369,6 +763,27 @@ impl CommandDispatcher {
                 response_sender,
             } => {
                 let result = self.resume_controller(&name);
+
+                match &result {
+                    Ok(()) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_applied(
+                                action_context.action_id(),
+                                None,
+                                None,
+                            );
+                        }
+                    }
+
+                    Err(error) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_failed(
+                                action_context.action_id(),
+                                error.to_string(),
+                            );
+                        }
+                    }
+                }
 
                 let _ = response_sender.send(result);
             }
@@ -379,16 +794,73 @@ impl CommandDispatcher {
             } => {
                 let result = self.processing.reset_controller_integral(&name);
 
+                match &result {
+                    Ok(()) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_applied(
+                                action_context.action_id(),
+                                None,
+                                None,
+                            );
+                        }
+                    }
+
+                    Err(error) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_failed(
+                                action_context.action_id(),
+                                error.to_string(),
+                            );
+                        }
+                    }
+                }
+
                 let _ = response_sender.send(result);
             }
 
             UserCommand::SetFilter { name, definition } => {
-                self.set_filter(name, definition);
+                match self.set_filter(&name, definition) {
+                    Ok(id) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_applied(
+                                action_context.action_id(),
+                                Some(id),
+                                Some(name),
+                            );
+                        }
+                    }
+
+                    Err(error) => {
+                        self.log.error(error.clone());
+
+                        if let Some(action_context) = action_context {
+                            self.process_recorder
+                                .record_action_failed(action_context.action_id(), error);
+                        }
+                    }
+                }
             }
 
-            UserCommand::Delete { name } => {
-                self.delete_series(name);
-            }
+            UserCommand::Delete { name } => match self.delete_series(&name) {
+                Ok(id) => {
+                    if let Some(action_context) = action_context {
+                        self.process_recorder.record_action_applied(
+                            action_context.action_id(),
+                            Some(id),
+                            Some(name),
+                        );
+                    }
+                }
+
+                Err(error) => {
+                    self.log.error(error.clone());
+
+                    if let Some(action_context) = action_context {
+                        self.process_recorder
+                            .record_action_failed(action_context.action_id(), error);
+                    }
+                }
+            },
 
             UserCommand::Rename {
                 current_name,
@@ -397,45 +869,72 @@ impl CommandDispatcher {
                 Ok(id) => {
                     self.log.info(format!(
                         "Series {id} renamed to \
-                                 '{new_name}'.",
+                         '{new_name}'.",
                     ));
+
+                    if let Some(action_context) = action_context {
+                        self.process_recorder.record_action_applied(
+                            action_context.action_id(),
+                            Some(id),
+                            Some(new_name),
+                        );
+                    }
                 }
 
                 Err(error) => {
                     self.log.error(format!(
                         "Failed to rename series: \
-                                 {error}",
+                         {error}",
                     ));
+
+                    if let Some(action_context) = action_context {
+                        self.process_recorder
+                            .record_action_failed(action_context.action_id(), error.to_string());
+                    }
                 }
             },
 
             UserCommand::SetSeriesColor { name, color } => {
                 match self.series.set_color_by_name(&name, color) {
-                    Some(id) => match color {
-                        Some(color) => {
-                            self.log.info(format!(
-                                "Series '{name}' \
-                                         ({id}) color \
-                                         changed to \
-                                         {color}.",
-                            ));
+                    Some(id) => {
+                        match color {
+                            Some(color) => {
+                                self.log.info(format!(
+                                    "Series '{name}' \
+                                     ({id}) color \
+                                     changed to \
+                                     {color}.",
+                                ));
+                            }
+
+                            None => {
+                                self.log.info(format!(
+                                    "Series '{name}' \
+                                     ({id}) color \
+                                     reset to \
+                                     automatic.",
+                                ));
+                            }
                         }
 
-                        None => {
-                            self.log.info(format!(
-                                "Series '{name}' \
-                                         ({id}) color \
-                                         reset to \
-                                         automatic.",
-                            ));
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_applied(
+                                action_context.action_id(),
+                                Some(id),
+                                Some(name),
+                            );
                         }
-                    },
+                    }
 
                     None => {
-                        self.log.error(format!(
-                            "Series '{name}' \
-                                 not found.",
-                        ));
+                        let error = format!("Series '{name}' not found.");
+
+                        self.log.error(&error);
+
+                        if let Some(action_context) = action_context {
+                            self.process_recorder
+                                .record_action_failed(action_context.action_id(), error);
+                        }
                     }
                 }
             }
@@ -449,36 +948,135 @@ impl CommandDispatcher {
             }
 
             UserCommand::Start => {
-                controls.start();
+                let action_id = action_context.map(|context| context.action_id());
+
+                let rollback_connections = controls.stopped_connection_ids();
+
+                if let Some(action_id) = action_id {
+                    self.pending_acquisition_actions.insert(
+                        action_id,
+                        PendingAcquisitionAction {
+                            kind: AcquisitionActionKind::Start,
+                            expected_responses: controls.worker_count(),
+                            responded_connections: BTreeSet::new(),
+                            rollback_connections: rollback_connections.clone(),
+                        },
+                    );
+                }
+
+                if let Err(error) = controls.start(action_id) {
+                    let error = format!("Failed to start acquisition: {error}",);
+
+                    self.log.error(error.clone());
+
+                    self.rollback_acquisition_start(&rollback_connections);
+
+                    if let Some(action_id) = action_id {
+                        self.pending_acquisition_actions.remove(&action_id);
+
+                        self.process_recorder.record_action_failed(action_id, error);
+                    }
+                }
             }
 
             UserCommand::Stop => {
-                controls.stop();
+                let action_id = action_context.map(|context| context.action_id());
+
+                if let Some(action_id) = action_id {
+                    self.pending_acquisition_actions.insert(
+                        action_id,
+                        PendingAcquisitionAction {
+                            kind: AcquisitionActionKind::Stop,
+                            expected_responses: controls.worker_count(),
+                            responded_connections: BTreeSet::new(),
+                            rollback_connections: BTreeSet::new(),
+                        },
+                    );
+                }
+
+                if let Err(error) = controls.stop(action_id) {
+                    let error = format!("Failed to stop acquisition: {error}",);
+
+                    self.log.error(error.clone());
+
+                    if let Some(action_id) = action_id {
+                        self.pending_acquisition_actions.remove(&action_id);
+
+                        self.process_recorder.record_action_failed(action_id, error);
+                    }
+                }
             }
 
-            UserCommand::Clear => {
-                self.clear_series();
-            }
+            UserCommand::Clear => match self.clear_series() {
+                Ok(()) => {
+                    if let Some(action_context) = action_context {
+                        self.process_recorder.record_action_applied(
+                            action_context.action_id(),
+                            None,
+                            None,
+                        );
+                    }
+                }
+
+                Err(error) => {
+                    self.log.error(error.clone());
+
+                    if let Some(action_context) = action_context {
+                        self.process_recorder
+                            .record_action_failed(action_context.action_id(), error);
+                    }
+                }
+            },
 
             UserCommand::StartEmulator => {
-                let serial_config = match self.emulator_serial_config() {
-                    Ok(serial_config) => serial_config,
+                let result = (|| {
+                    let serial_config = self.emulator_serial_config().map_err(|error| {
+                        format!(
+                            "Cannot start emulator: \
+                                 {error}",
+                        )
+                    })?;
+
+                    device_emulator.start(&serial_config).map_err(|error| {
+                        format!(
+                            "Cannot start emulator: \
+                                 {error}",
+                        )
+                    })
+                })();
+
+                match result {
+                    Ok(()) => {
+                        if let Some(action_context) = action_context {
+                            self.process_recorder.record_action_applied(
+                                action_context.action_id(),
+                                None,
+                                None,
+                            );
+                        }
+                    }
 
                     Err(error) => {
-                        self.log.error(format!(
-                            "Cannot start emulator: \
-                                     {error}",
-                        ));
+                        self.log.error(error.clone());
 
-                        return;
+                        if let Some(action_context) = action_context {
+                            self.process_recorder
+                                .record_action_failed(action_context.action_id(), error);
+                        }
                     }
-                };
-
-                device_emulator.start(&serial_config);
+                }
             }
 
             UserCommand::StopEmulator => {
                 device_emulator.stop();
+
+                if let Some(action_context) = action_context {
+                    self.process_recorder.record_action_applied(
+                        action_context.action_id(),
+                        None,
+                        None,
+                    );
+                }
             }
 
             UserCommand::Log { message } => {
@@ -489,11 +1087,19 @@ impl CommandDispatcher {
                 connection_id,
                 command,
             } => {
+                let action_id = action_context.map(|context| context.action_id());
+
                 let config = match self.serial_config(connection_id) {
                     Ok(config) => config,
 
                     Err(error) => {
-                        self.log.error(error.to_string());
+                        let error = error.to_string();
+
+                        self.log.error(error.clone());
+
+                        if let Some(action_id) = action_id {
+                            self.process_recorder.record_action_failed(action_id, error);
+                        }
 
                         return;
                     }
@@ -503,14 +1109,26 @@ impl CommandDispatcher {
                     Ok(worker_handle) => worker_handle,
 
                     Err(error) => {
-                        self.log.error(error.to_string());
+                        let error = error.to_string();
+
+                        self.log.error(error.clone());
+
+                        if let Some(action_id) = action_id {
+                            self.process_recorder.record_action_failed(action_id, error);
+                        }
 
                         return;
                     }
                 };
 
-                if let Err(error) = worker_handle.send_serial_text(config, command) {
-                    self.set_worker_error(error);
+                if let Err(error) = worker_handle.send_serial_text(action_id, config, command) {
+                    let error = format!("Failed to send serial command: {error}");
+
+                    self.log.error(error.clone());
+
+                    if let Some(action_id) = action_id {
+                        self.process_recorder.record_action_failed(action_id, error);
+                    }
                 }
             }
 
@@ -519,11 +1137,20 @@ impl CommandDispatcher {
                 request,
                 response_sender,
             } => {
+                let action_id = action_context.map(|context| context.action_id());
+
                 let config = match self.serial_config(connection_id) {
                     Ok(config) => config,
 
                     Err(error) => {
-                        self.log.error(error.to_string());
+                        let error_message = error.to_string();
+
+                        self.log.error(error_message.clone());
+
+                        if let Some(action_id) = action_id {
+                            self.process_recorder
+                                .record_action_failed(action_id, error_message);
+                        }
 
                         let _ = response_sender.send(Err(error));
 
@@ -535,7 +1162,14 @@ impl CommandDispatcher {
                     Ok(worker_handle) => worker_handle,
 
                     Err(error) => {
-                        self.log.error(error.to_string());
+                        let error_message = error.to_string();
+
+                        self.log.error(error_message.clone());
+
+                        if let Some(action_id) = action_id {
+                            self.process_recorder
+                                .record_action_failed(action_id, error_message);
+                        }
 
                         let _ = response_sender.send(Err(error));
 
@@ -544,6 +1178,7 @@ impl CommandDispatcher {
                 };
 
                 let send_result = worker_handle.read_instrument(
+                    action_id,
                     config.port_name().to_owned(),
                     request,
                     response_sender.clone(),
@@ -552,10 +1187,17 @@ impl CommandDispatcher {
                 if let Err(send_error) = send_result {
                     let error = AcquisitionError::from(format!(
                         "Failed to request instrument \
-                             read: {send_error}",
+                         read: {send_error}",
                     ));
 
-                    self.log.error(error.to_string());
+                    let error_message = error.to_string();
+
+                    self.log.error(error_message.clone());
+
+                    if let Some(action_id) = action_id {
+                        self.process_recorder
+                            .record_action_failed(action_id, error_message);
+                    }
 
                     let _ = response_sender.send(Err(error));
                 }
@@ -566,14 +1208,23 @@ impl CommandDispatcher {
                 request,
                 response_sender,
             } => {
+                let action_id = action_context.map(|context| context.action_id());
+
                 if let Err(error) = self.output_control.write_instrument(
+                    action_id,
                     connection_id,
                     request,
                     response_sender.clone(),
                 ) {
                     let error = Self::output_write_error(error);
+                    let error_message = error.to_string();
 
-                    self.log.error(error.to_string());
+                    self.log.error(error_message.clone());
+
+                    if let Some(action_id) = action_id {
+                        self.process_recorder
+                            .record_action_failed(action_id, error_message);
+                    }
 
                     let _ = response_sender.send(Err(error));
                 }
@@ -583,8 +1234,17 @@ impl CommandDispatcher {
                 connection_id,
                 response_sender,
             } => {
+                let action_id = action_context.map(|context| context.action_id());
+
                 if let Err(error) = self.serial_config(connection_id) {
-                    self.log.error(error.to_string());
+                    let error_message = error.to_string();
+
+                    self.log.error(error_message.clone());
+
+                    if let Some(action_id) = action_id {
+                        self.process_recorder
+                            .record_action_failed(action_id, error_message);
+                    }
 
                     let _ = response_sender.send(Err(error));
 
@@ -595,7 +1255,14 @@ impl CommandDispatcher {
                     Ok(worker_handle) => worker_handle,
 
                     Err(error) => {
-                        self.log.error(error.to_string());
+                        let error_message = error.to_string();
+
+                        self.log.error(error_message.clone());
+
+                        if let Some(action_id) = action_id {
+                            self.process_recorder
+                                .record_action_failed(action_id, error_message);
+                        }
 
                         let _ = response_sender.send(Err(error));
 
@@ -604,16 +1271,22 @@ impl CommandDispatcher {
                 };
 
                 let send_result =
-                    worker_handle.describe_virtual_instruments(response_sender.clone());
+                    worker_handle.describe_virtual_instruments(action_id, response_sender.clone());
 
                 if let Err(send_error) = send_result {
                     let error = AcquisitionError::from(format!(
                         "Failed to request virtual \
-                             instrument discovery: \
-                             {send_error}",
+                         instrument discovery: {send_error}",
                     ));
 
-                    self.log.error(error.to_string());
+                    let error_message = error.to_string();
+
+                    self.log.error(error_message.clone());
+
+                    if let Some(action_id) = action_id {
+                        self.process_recorder
+                            .record_action_failed(action_id, error_message);
+                    }
 
                     let _ = response_sender.send(Err(error));
                 }
@@ -667,7 +1340,10 @@ impl CommandDispatcher {
         Ok(())
     }
 
-    fn add_controller(&self, new_controller: NewController<ControlOutputTarget>) {
+    fn add_controller(
+        &self,
+        new_controller: NewController<ControlOutputTarget>,
+    ) -> Result<(), String> {
         let (name, input_name, output_target, controller) = new_controller.into_parts();
 
         let kind = controller.kind();
@@ -675,78 +1351,67 @@ impl CommandDispatcher {
         let target = output_target.connected_parameter_address();
 
         let Some(input_id) = self.series.id_by_name(&input_name) else {
-            self.log.error(format!(
+            return Err(format!(
                 "Failed to add {kind} controller \
                  '{name}': input series \
                  '{input_name}' was not found",
             ));
-
-            return;
         };
 
         let definition =
-            match ControlLoopDefinition::new(name.clone(), input_id, output_target, controller) {
-                Ok(definition) => definition,
-
-                Err(error) => {
-                    self.log.error(format!(
+            ControlLoopDefinition::new(name.clone(), input_id, output_target, controller).map_err(
+                |error| {
+                    format!(
                         "Failed to add {kind} controller \
-                         '{name}': {error}",
-                    ));
+                 '{name}': {error}",
+                    )
+                },
+            )?;
 
-                    return;
-                }
-            };
-
-        match self.install_control_loop(&name, target, definition) {
-            Ok(()) => {
-                self.log.info(format!(
-                    "{kind} controller '{name}' \
-                     added for input series \
-                     '{input_name}' ({input_id}).",
-                ));
-            }
-
-            Err(error) => {
-                self.log.error(format!(
+        self.install_control_loop(&name, target, definition)
+            .map_err(|error| {
+                format!(
                     "Failed to add {kind} controller \
-                     '{name}': {error}",
-                ));
-            }
-        }
+                 '{name}': {error}",
+                )
+            })?;
+
+        self.log.info(format!(
+            "{kind} controller '{name}' \
+             added for input series \
+             '{input_name}' ({input_id}).",
+        ));
+
+        Ok(())
     }
 
-    pub fn set_visibility(&self, id: SeriesId, visible: bool) {
-        self.series.set_visibility(id, visible);
+    pub fn set_visibility(&self, id: SeriesId, visible: bool) -> bool {
+        self.series.set_visibility(id, visible)
     }
 
-    pub fn add_series(&self, new_series: NewSeries) {
-        match self.series.add_series(new_series) {
-            Ok(id) => {
-                self.log.info(format!("Series {id} added.",));
-            }
+    pub fn add_series(&self, new_series: NewSeries) -> Result<SeriesId, String> {
+        let id = self.series.add_series(new_series).map_err(|error| {
+            format!(
+                "Failed to add series: \
+                     {error}",
+            )
+        })?;
 
-            Err(error) => {
-                self.log.error(format!(
-                    "Failed to add series: \
-                         {error}",
-                ));
-            }
-        }
+        self.log.info(format!("Series {id} added."));
+
+        Ok(id)
     }
 
-    fn add_filter(&self, filter: NewFilteredSeries) {
+    fn add_filter(&self, filter: NewFilteredSeries) -> Result<SeriesId, String> {
         let (input_name, output_name, definition, color) = filter.into_parts();
 
         let Some(input_id) = self.series.id_by_name(&input_name) else {
-            self.log.error(format!(
+            return Err(format!(
                 "Signal processing failed: \
-                     cannot add filtered series \
-                     '{output_name}': input series \
-                     '{input_name}' was not found",
+                 cannot add filtered series \
+                 '{output_name}': input series \
+                 '{input_name}' was not found",
             ));
-
-            return;
         };
 
         let mut new_series = NewSeries::named_filtered(input_id, definition, output_name.clone());
@@ -755,33 +1420,27 @@ impl CommandDispatcher {
             new_series = new_series.with_color(color);
         }
 
-        let output_id = match self.series.add_series(new_series) {
-            Ok(output_id) => output_id,
-
-            Err(error) => {
-                self.log.error(format!(
-                    "Failed to add series: \
-                             {error}",
-                ));
-
-                return;
-            }
-        };
+        let output_id = self.series.add_series(new_series).map_err(|error| {
+            format!(
+                "Failed to add series: \
+                         {error}",
+            )
+        })?;
 
         if let Err(error) = self.processing.add_filter(input_id, output_id, definition) {
             self.series.remove_series(output_id);
 
-            self.log.error(format!(
+            return Err(format!(
                 "Signal processing failed: \
-                     cannot add filtered series \
-                     '{output_name}' from \
-                     '{input_name}': {error}",
+                 cannot add filtered series \
+                 '{output_name}' from \
+                 '{input_name}': {error}",
             ));
-
-            return;
         }
 
-        self.log.info(format!("Series {output_id} added.",));
+        self.log.info(format!("Series {output_id} added."));
+
+        Ok(output_id)
     }
 
     fn add_controller_diagnostic(&self, diagnostic_series: NewControllerDiagnosticSeries) {
@@ -835,39 +1494,72 @@ impl CommandDispatcher {
         ));
     }
 
-    fn set_filter(&self, name: String, definition: SignalFilterDefinition) {
-        let Some(output_id) = self.series.id_by_name(&name) else {
-            self.log.error(format!("Series '{name}' not found.",));
-
-            return;
+    fn set_filter(
+        &self,
+        name: &str,
+        definition: SignalFilterDefinition,
+    ) -> Result<SeriesId, String> {
+        let Some(output_id) = self.series.id_by_name(name) else {
+            return Err(format!("Series '{name}' not found.",));
         };
 
-        if let Err(error) = self.processing.replace_filter(output_id, definition) {
-            self.log.error(format!(
-                "Signal processing failed: \
-                     cannot change filter for \
-                     series '{name}': {error}",
-            ));
+        let old_definition = self
+            .series
+            .metadata()
+            .into_iter()
+            .find(|series| series.id == output_id)
+            .and_then(|series| match series.source {
+                SeriesSource::Filtered { definition, .. } => Some(definition),
 
-            return;
-        }
-
-        if !self.series.set_filter_definition(output_id, definition) {
-            self.log.error(format!(
-                "Signal processing failed: \
+                _ => None,
+            })
+            .ok_or_else(|| {
+                format!(
+                    "Signal processing failed: \
                      cannot change filter for \
                      series '{name}': series is \
                      not a filtered series",
-            ));
+                )
+            })?;
 
-            return;
+        self.processing
+            .replace_filter(output_id, definition)
+            .map_err(|error| {
+                format!(
+                    "Signal processing failed: \
+                     cannot change filter for \
+                     series '{name}': {error}",
+                )
+            })?;
+
+        if !self.series.set_filter_definition(output_id, definition) {
+            let rollback_result = self.processing.replace_filter(output_id, old_definition);
+
+            return match rollback_result {
+                Ok(()) => Err(format!(
+                    "Signal processing failed: \
+                     cannot update stored filter \
+                     definition for series \
+                     '{name}'",
+                )),
+
+                Err(rollback_error) => Err(format!(
+                    "Signal processing failed: \
+                     cannot update stored filter \
+                     definition for series \
+                     '{name}'; processing rollback \
+                     also failed: {rollback_error}",
+                )),
+            };
         }
 
         self.log.info(format!(
             "Filter for series '{name}' \
-                 ({output_id}) changed to \
-                 {definition}.",
+             ({output_id}) changed to \
+             {definition}.",
         ));
+
+        Ok(output_id)
     }
 
     fn retry_series(&self, name: String) {
@@ -943,70 +1635,44 @@ impl CommandDispatcher {
         self.log.error(format!("Failed to send command: {error}",));
     }
 
-    fn delete_series(&self, name: String) {
-        let Some(id) = self.series.id_by_name(&name) else {
-            self.log.error(format!("Series '{name}' not found.",));
-
-            return;
+    fn delete_series(&self, name: &str) -> Result<SeriesId, String> {
+        let Some(id) = self.series.id_by_name(name) else {
+            return Err(format!("Series '{name}' not found."));
         };
 
-        let affected_controllers = match self.processing.controllers_affected_by_removal(id) {
-            Ok(controllers) => controllers,
-
-            Err(error) => {
-                self.log.error(format!(
+        let affected_controllers = self
+            .processing
+            .controllers_affected_by_removal(id)
+            .map_err(|error| {
+                format!(
                     "Processing failed: \
-                         cannot preview controllers \
-                         affected by removal of \
-                         series '{name}': {error}",
-                ));
+                     cannot preview controllers \
+                     affected by removal of \
+                     series '{name}': {error}",
+                )
+            })?;
 
-                return;
-            }
-        };
-
-        /*
-         * First move every affected actuator
-         * into its configured safe state.
-         *
-         * No processing state has been
-         * removed yet.
-         */
         for controller in &affected_controllers {
-            if let Err(error) = self.output_control.apply_safe(controller) {
-                self.log.error(format!(
+            self.pause_controller(controller).map_err(|error| {
+                format!(
                     "Cannot remove series \
-                     '{name}': failed to apply \
-                     safe output for controller \
-                     '{controller}': {error}",
-                ));
-
-                return;
-            }
+                         '{name}': failed to safely \
+                         pause controller \
+                         '{controller}': {error}",
+                )
+            })?;
         }
 
-        let dependent_ids = match self.processing.remove_from(id) {
-            Ok(dependent_ids) => dependent_ids,
+        let dependent_ids = self.processing.remove_from(id).map_err(|error| {
+            format!(
+                "Processing failed: \
+                     cannot remove \
+                     processing branch \
+                     for series '{name}': \
+                     {error}",
+            )
+        })?;
 
-            Err(error) => {
-                self.log.error(format!(
-                    "Processing failed: \
-                         cannot remove \
-                         processing branch \
-                         for series '{name}': \
-                         {error}",
-                ));
-
-                return;
-            }
-        };
-
-        /*
-         * Controllers no longer exist in
-         * ProcessingService. Their outputs
-         * are already Manual/safe, so
-         * ownership may now be released.
-         */
         for controller in &affected_controllers {
             if let Err(error) = self.output_control.release_controller(controller) {
                 self.log.error(format!(
@@ -1047,61 +1713,38 @@ impl CommandDispatcher {
                  series.",
             ));
         }
+
+        Ok(id)
     }
 
-    fn clear_series(&self) {
-        let controllers = match self.processing.controller_names() {
-            Ok(controllers) => controllers,
+    fn clear_series(&self) -> Result<(), String> {
+        let controllers = self.processing.controller_names().map_err(|error| {
+            format!(
+                "Processing failed: \
+                     cannot inspect controllers \
+                     before clearing: {error}",
+            )
+        })?;
 
-            Err(error) => {
-                self.log.error(format!(
-                    "Processing failed: \
-                         cannot inspect controllers \
-                         before clearing: {error}",
-                ));
-
-                return;
-            }
-        };
-
-        /*
-         * Move every managed actuator into
-         * its configured safe state before
-         * destroying processing state.
-         */
         for controller in &controllers {
-            if let Err(error) = self.output_control.apply_safe(controller) {
-                self.log.error(format!(
+            self.pause_controller(controller).map_err(|error| {
+                format!(
                     "Cannot clear processing: \
-                     failed to apply safe \
-                     output for controller \
-                     '{controller}': {error}",
-                ));
-
-                return;
-            }
+                         failed to safely pause \
+                         controller \
+                         '{controller}': {error}",
+                )
+            })?;
         }
 
-        /*
-         * All affected outputs are now
-         * Manual and their safe writes have
-         * been successfully enqueued.
-         */
-        if let Err(error) = self.processing.clear() {
-            self.log.error(format!(
+        self.processing.clear().map_err(|error| {
+            format!(
                 "Processing failed: \
                  cannot clear processing \
                  state: {error}",
-            ));
+            )
+        })?;
 
-            return;
-        }
-
-        /*
-         * Controllers no longer exist in
-         * ProcessingService. Their managed
-         * outputs may now release ownership.
-         */
         for controller in &controllers {
             if let Err(error) = self.output_control.release_controller(controller) {
                 self.log.error(format!(
@@ -1118,6 +1761,8 @@ impl CommandDispatcher {
         self.series.clear();
 
         self.log.info("All series cleared.");
+
+        Ok(())
     }
 }
 
@@ -1131,6 +1776,7 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
             | WorkerEvent::SerialTextCommandFailed { .. }
             | WorkerEvent::InstrumentReadFailed { .. }
             | WorkerEvent::InstrumentWriteFailed { .. }
+            | WorkerEvent::VirtualInstrumentDescribeFailed { .. }
             | WorkerEvent::SeriesPollingSuspended { .. }
     )
 }

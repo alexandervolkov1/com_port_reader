@@ -1,23 +1,34 @@
 use crate::instrument::{InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest};
+use crate::process_recorder::ProcessActionId;
 use crate::serial_connection::SerialConnectionError;
 use crate::{acquisition::AcquisitionError, connection::ConnectionId, data::SeriesId};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConnectionWorkerEvent {
     connection_id: ConnectionId,
+    action_id: Option<ProcessActionId>,
     event: WorkerEvent,
 }
 
 impl ConnectionWorkerEvent {
-    pub(crate) const fn new(connection_id: ConnectionId, event: WorkerEvent) -> Self {
+    pub(crate) const fn new(
+        connection_id: ConnectionId,
+        action_id: Option<ProcessActionId>,
+        event: WorkerEvent,
+    ) -> Self {
         Self {
             connection_id,
+            action_id,
             event,
         }
     }
 
     pub const fn connection_id(&self) -> ConnectionId {
         self.connection_id
+    }
+
+    pub const fn action_id(&self) -> Option<ProcessActionId> {
+        self.action_id
     }
 
     pub const fn event(&self) -> &WorkerEvent {
@@ -77,6 +88,14 @@ pub enum WorkerEvent {
     InstrumentWriteFailed {
         port_name: String,
         request: InstrumentWriteRequest,
+        error: AcquisitionError,
+    },
+
+    VirtualInstrumentDescribeSucceeded {
+        count: usize,
+    },
+
+    VirtualInstrumentDescribeFailed {
         error: AcquisitionError,
     },
 
@@ -187,6 +206,22 @@ impl std::fmt::Display for WorkerEvent {
                 )
             }
 
+            Self::VirtualInstrumentDescribeSucceeded { count } => {
+                write!(
+                    formatter,
+                    "Virtual instrument discovery returned \
+                     {count} descriptor(s).",
+                )
+            }
+
+            Self::VirtualInstrumentDescribeFailed { error } => {
+                write!(
+                    formatter,
+                    "Virtual instrument discovery failed: \
+                     {error}",
+                )
+            }
+
             Self::SeriesPollingSuspended { id, name, error } => {
                 write!(
                     formatter,
@@ -218,12 +253,14 @@ mod tests {
     #[test]
     fn attaches_connection_to_worker_event() {
         let event =
-            ConnectionWorkerEvent::new(ConnectionId::new(2), WorkerEvent::AcquisitionStarted);
+            ConnectionWorkerEvent::new(ConnectionId::new(2), None, WorkerEvent::AcquisitionStarted);
 
         assert_eq!(event.connection_id(), ConnectionId::new(2),);
 
         assert_eq!(event.event(), &WorkerEvent::AcquisitionStarted,);
 
         assert_eq!(event.to_string(), "Connection 2: Acquisition started.",);
+
+        assert_eq!(event.action_id(), None);
     }
 }
