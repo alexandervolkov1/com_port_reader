@@ -443,6 +443,11 @@ fn action_type_name(action: &ProcessAction) -> &'static str {
         }
         ProcessAction::ConfigureControllerReference { .. } => "configure_controller_reference",
         ProcessAction::SetControllerReference { .. } => "set_controller_reference",
+        ProcessAction::SetControllerInput { .. } => "set_controller_input",
+        ProcessAction::PauseController { .. } => "pause_controller",
+        ProcessAction::ResumeController { .. } => "resume_controller",
+        ProcessAction::ResetControllerIntegral { .. } => "reset_controller_integral",
+        ProcessAction::ResetController { .. } => "reset_controller",
         ProcessAction::AddFilteredSeries { .. } => "add_filtered_series",
         ProcessAction::SetFilter { .. } => "set_filter",
         ProcessAction::DeleteSeriesByName { .. } => "delete_series_by_name",
@@ -477,6 +482,11 @@ fn action_connection_id(action: &ProcessAction) -> Option<String> {
         | ProcessAction::WriteControllerReferenceParameter { .. }
         | ProcessAction::ConfigureControllerReference { .. }
         | ProcessAction::SetControllerReference { .. }
+        | ProcessAction::SetControllerInput { .. }
+        | ProcessAction::PauseController { .. }
+        | ProcessAction::ResumeController { .. }
+        | ProcessAction::ResetControllerIntegral { .. }
+        | ProcessAction::ResetController { .. }
         | ProcessAction::DeleteSeriesByName { .. }
         | ProcessAction::RenameSeries { .. }
         | ProcessAction::SetSeriesVisibility { .. }

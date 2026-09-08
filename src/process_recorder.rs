@@ -94,6 +94,27 @@ pub enum ProcessAction {
         source: ReferenceSource,
     },
 
+    SetControllerInput {
+        name: String,
+        input_name: String,
+    },
+
+    PauseController {
+        name: String,
+    },
+
+    ResumeController {
+        name: String,
+    },
+
+    ResetControllerIntegral {
+        name: String,
+    },
+
+    ResetController {
+        name: String,
+    },
+
     SetFilter {
         name: String,
         definition: String,

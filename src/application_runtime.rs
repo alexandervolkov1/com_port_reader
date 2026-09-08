@@ -739,6 +739,29 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             })
         }
 
+        UserCommand::SetControllerInput {
+            name, input_name, ..
+        } => Some(ProcessAction::SetControllerInput {
+            name: name.clone(),
+            input_name: input_name.clone(),
+        }),
+
+        UserCommand::PauseController { name, .. } => {
+            Some(ProcessAction::PauseController { name: name.clone() })
+        }
+
+        UserCommand::ResumeController { name, .. } => {
+            Some(ProcessAction::ResumeController { name: name.clone() })
+        }
+
+        UserCommand::ResetControllerIntegral { name, .. } => {
+            Some(ProcessAction::ResetControllerIntegral { name: name.clone() })
+        }
+
+        UserCommand::ResetController { name, .. } => {
+            Some(ProcessAction::ResetController { name: name.clone() })
+        }
+
         UserCommand::AddControllerDiagnostic(_)
         | UserCommand::AddOnOffLoop(_)
         | UserCommand::ControllerParameters { .. }
@@ -747,12 +770,7 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
         | UserCommand::ControllerReferenceKind { .. }
         | UserCommand::ControllerReferenceParameters { .. }
         | UserCommand::ReadControllerReferenceParameter { .. }
-        | UserCommand::SetControllerInput { .. }
-        | UserCommand::ControllerState { .. }
-        | UserCommand::PauseController { .. }
-        | UserCommand::ResumeController { .. }
-        | UserCommand::ResetControllerIntegral { .. }
-        | UserCommand::ResetController { .. } => None,
+        | UserCommand::ControllerState { .. } => None,
 
         UserCommand::SetFilter { name, definition } => Some(ProcessAction::SetFilter {
             name: name.clone(),
@@ -1074,6 +1092,81 @@ mod tests {
             Some(ProcessAction::SetControllerReference {
                 name: "heater".to_owned(),
                 source,
+            },),
+        );
+    }
+
+    #[test]
+    fn records_controller_lifecycle_actions() {
+        let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
+
+        let command = UserCommand::SetControllerInput {
+            name: "heater".to_owned(),
+            input_name: "temperature_filtered".to_owned(),
+            response_sender,
+        };
+
+        assert_eq!(
+            process_action_from_command(&command),
+            Some(ProcessAction::SetControllerInput {
+                name: "heater".to_owned(),
+                input_name: "temperature_filtered".to_owned(),
+            },),
+        );
+
+        let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
+
+        let command = UserCommand::PauseController {
+            name: "heater".to_owned(),
+            response_sender,
+        };
+
+        assert_eq!(
+            process_action_from_command(&command),
+            Some(ProcessAction::PauseController {
+                name: "heater".to_owned(),
+            },),
+        );
+
+        let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
+
+        let command = UserCommand::ResumeController {
+            name: "heater".to_owned(),
+            response_sender,
+        };
+
+        assert_eq!(
+            process_action_from_command(&command),
+            Some(ProcessAction::ResumeController {
+                name: "heater".to_owned(),
+            },),
+        );
+
+        let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
+
+        let command = UserCommand::ResetControllerIntegral {
+            name: "heater".to_owned(),
+            response_sender,
+        };
+
+        assert_eq!(
+            process_action_from_command(&command),
+            Some(ProcessAction::ResetControllerIntegral {
+                name: "heater".to_owned(),
+            },),
+        );
+
+        let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
+
+        let command = UserCommand::ResetController {
+            name: "heater".to_owned(),
+            response_sender,
+        };
+
+        assert_eq!(
+            process_action_from_command(&command),
+            Some(ProcessAction::ResetController {
+                name: "heater".to_owned(),
             },),
         );
     }
