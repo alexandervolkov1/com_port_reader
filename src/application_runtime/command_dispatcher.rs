@@ -205,6 +205,10 @@ impl CommandDispatcher {
                 self.add_controller_diagnostic(diagnostic);
             }
 
+            UserCommand::AddController(new_controller) => {
+                self.add_controller(new_controller);
+            }
+
             UserCommand::AddPidLoop(pid_loop) => {
                 self.add_pid_loop(pid_loop);
             }

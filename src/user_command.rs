@@ -11,8 +11,8 @@ use crate::{
     },
     output_control::OutputRequestError,
     process_control::{
-        ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewOnOffLoop, NewPidLoop,
-        ReferenceKind, ReferenceSource,
+        ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewController, NewOnOffLoop,
+        NewPidLoop, ReferenceKind, ReferenceSource,
     },
     signal_processing::{ControllerRequestError, SignalFilterDefinition},
 };
@@ -162,6 +162,9 @@ pub enum UserCommand {
     Add(NewSeries),
     AddFilter(NewFilteredSeries),
     AddControllerDiagnostic(NewControllerDiagnosticSeries),
+
+    AddController(NewController<ControlOutputTarget>),
+
     AddPidLoop(NewPidLoop<ControlOutputTarget>),
     AddOnOffLoop(NewOnOffLoop<ControlOutputTarget>),
 
