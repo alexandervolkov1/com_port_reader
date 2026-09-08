@@ -77,6 +77,7 @@ impl SqliteProcessRecordWriter {
                     action_type   TEXT NOT NULL,
                     connection_id TEXT,
                     series_id     TEXT,
+                    series_name   TEXT,
                     details       TEXT NOT NULL
                 );
 
@@ -213,6 +214,7 @@ impl SqliteProcessRecordWriter {
         let action_type = action_type_name(&action);
         let connection_id = action_connection_id(&action);
         let series_id = action_series_id(&action);
+        let series_name = action_series_name(&action);
         let details = format!("{action:?}");
 
         self.connection
@@ -224,9 +226,10 @@ impl SqliteProcessRecordWriter {
                     action_type,
                     connection_id,
                     series_id,
+                    series_name,
                     details
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                 ",
                 params![
                     system_time_seconds(timestamp)?,
@@ -234,6 +237,7 @@ impl SqliteProcessRecordWriter {
                     action_type,
                     connection_id,
                     series_id,
+                    series_name,
                     details,
                 ],
             )
@@ -504,6 +508,23 @@ fn action_series_id(action: &ProcessAction) -> Option<String> {
     }
 }
 
+fn action_series_name(action: &ProcessAction) -> Option<&str> {
+    match action {
+        ProcessAction::AddSeries { name, .. } => name.as_deref(),
+
+        ProcessAction::AddFilteredSeries { name, .. }
+        | ProcessAction::SetFilter { name, .. }
+        | ProcessAction::DeleteSeriesByName { name }
+        | ProcessAction::SetSeriesColor { name, .. } => Some(name),
+
+        ProcessAction::RenameSeries { current_name, .. } => Some(current_name),
+
+        ProcessAction::SetSeriesVisibility { series_name, .. } => series_name.as_deref(),
+
+        _ => None,
+    }
+}
+
 fn recorder_error(context: impl Display, error: impl Display) -> ProcessRecorderError {
     ProcessRecorderError::new(format!("{context}: {error}"))
 }
@@ -633,6 +654,57 @@ mod tests {
                 40.0,
                 Some(40.0),
                 Some(false),
+            ),
+        );
+    }
+
+    #[test]
+    fn stores_action_series_identity() {
+        let path = temporary_database_path();
+
+        let mut writer = SqliteProcessRecordWriter::create(&path).unwrap();
+
+        writer
+            .write(ProcessRecord::ActionRequested {
+                timestamp: UNIX_EPOCH,
+                origin: ProcessActionOrigin::UserInterface,
+
+                action: ProcessAction::SetSeriesVisibility {
+                    series_id: SeriesId::new(17),
+
+                    series_name: Some("temperature_filtered".to_owned()),
+
+                    visible: false,
+                },
+            })
+            .unwrap();
+
+        drop(writer);
+
+        let connection = Connection::open(&path).unwrap();
+
+        let identity: (String, String) = connection
+            .query_row(
+                "
+                    SELECT
+                        series_id,
+                        series_name
+                    FROM actions
+                    ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        drop(connection);
+
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(
+            identity,
+            (
+                SeriesId::new(17).to_string(),
+                "temperature_filtered".to_owned(),
             ),
         );
     }

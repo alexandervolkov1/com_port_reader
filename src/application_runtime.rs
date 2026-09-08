@@ -352,10 +352,18 @@ impl ApplicationRuntime {
     }
 
     pub fn set_series_visibility(&self, id: SeriesId, visible: bool) {
+        let series_name = self
+            .series
+            .metadata()
+            .into_iter()
+            .find(|series| series.id == id)
+            .map(|series| series.name);
+
         self.process_recorder.record_action(
             ProcessActionOrigin::UserInterface,
             ProcessAction::SetSeriesVisibility {
                 series_id: id,
+                series_name,
                 visible,
             },
         );

@@ -132,6 +132,7 @@ pub enum ProcessAction {
 
     SetSeriesVisibility {
         series_id: SeriesId,
+        series_name: Option<String>,
         visible: bool,
     },
 
