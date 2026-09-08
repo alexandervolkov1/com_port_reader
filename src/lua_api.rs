@@ -20,8 +20,8 @@ use crate::{
     },
     lua_application_script::LuaApplicationEvent,
     process_control::{
-        ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewOnOffLoop, NewPidLoop,
-        PidGains, PidOutputLimits, ReferenceKind, ReferenceSource,
+        ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewController,
+        OnOffController, PidController, PidGains, PidOutputLimits, ReferenceKind, ReferenceSource,
     },
     signal_processing::SignalFilterDefinition,
     user_command::UserCommand,
@@ -505,17 +505,13 @@ fn add_pid_loop(
     let output_limits = PidOutputLimits::new(output_minimum, output_maximum)
         .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
-    let pid_loop = NewPidLoop::new(
-        name.clone(),
-        input_name,
-        output_target,
-        setpoint,
-        gains,
-        output_limits,
-    )
-    .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+    let controller = PidController::with_output_limits(setpoint, gains, output_limits)
+        .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
-    send_application_command(command_sender, UserCommand::AddPidLoop(pid_loop))?;
+    let new_controller = NewController::new(name.clone(), input_name, output_target, controller)
+        .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+    send_application_command(command_sender, UserCommand::AddController(new_controller))?;
 
     Ok(LuaControllerHandle {
         name,
@@ -575,18 +571,13 @@ fn add_on_off_loop(
         mlua::Error::RuntimeError("On/off option 'output_on' is required".to_owned())
     })?;
 
-    let on_off_loop = NewOnOffLoop::new(
-        name.clone(),
-        input_name,
-        output_target,
-        setpoint,
-        hysteresis,
-        output_off,
-        output_on,
-    )
-    .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+    let controller = OnOffController::new(setpoint, hysteresis, output_off, output_on)
+        .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
-    send_application_command(command_sender, UserCommand::AddOnOffLoop(on_off_loop))?;
+    let new_controller = NewController::new(name.clone(), input_name, output_target, controller)
+        .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+    send_application_command(command_sender, UserCommand::AddController(new_controller))?;
 
     Ok(LuaControllerHandle {
         name,
@@ -2878,25 +2869,39 @@ mod controller_handle_tests {
 
         let command = command_receiver.try_recv().unwrap();
 
-        let UserCommand::AddOnOffLoop(on_off_loop) = command else {
-            panic!("expected AddOnOffLoop command");
+        let UserCommand::AddController(new_controller) = command else {
+            panic!("expected AddController command",);
         };
 
-        assert_eq!(on_off_loop.name(), "thermostat",);
+        assert_eq!(new_controller.name(), "thermostat",);
 
-        assert_eq!(on_off_loop.input_name(), "temperature",);
-
-        assert_eq!(on_off_loop.setpoint(), 150.0,);
-
-        assert_eq!(on_off_loop.hysteresis(), 2.0,);
-
-        assert_eq!(on_off_loop.output_off(), 0.0,);
-
-        assert_eq!(on_off_loop.output_on(), 100.0,);
+        assert_eq!(new_controller.input_name(), "temperature",);
 
         assert_eq!(
-            on_off_loop.output_target().connection_id(),
+            new_controller.output_target().connection_id(),
             ConnectionId::new(3),
+        );
+
+        assert_eq!(new_controller.controller().kind().as_str(), "on_off",);
+
+        assert_eq!(
+            new_controller.controller().read("setpoint"),
+            Ok(crate::instrument::InstrumentValue::Number(150.0,),),
+        );
+
+        assert_eq!(
+            new_controller.controller().read("hysteresis"),
+            Ok(crate::instrument::InstrumentValue::Number(2.0,),),
+        );
+
+        assert_eq!(
+            new_controller.controller().read("output_off"),
+            Ok(crate::instrument::InstrumentValue::Number(0.0,),),
+        );
+
+        assert_eq!(
+            new_controller.controller().read("output_on"),
+            Ok(crate::instrument::InstrumentValue::Number(100.0,),),
         );
 
         assert!(command_receiver.try_recv().is_err());

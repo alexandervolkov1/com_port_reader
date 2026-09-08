@@ -11,8 +11,8 @@ use crate::{
     },
     output_control::OutputRequestError,
     process_control::{
-        ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewController, NewOnOffLoop,
-        NewPidLoop, ReferenceKind, ReferenceSource,
+        ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewController, ReferenceKind,
+        ReferenceSource,
     },
     signal_processing::{ControllerRequestError, SignalFilterDefinition},
 };
@@ -161,12 +161,9 @@ impl From<OutputRequestError> for ResumeControllerError {
 pub enum UserCommand {
     Add(NewSeries),
     AddFilter(NewFilteredSeries),
+
     AddControllerDiagnostic(NewControllerDiagnosticSeries),
-
     AddController(NewController<ControlOutputTarget>),
-
-    AddPidLoop(NewPidLoop<ControlOutputTarget>),
-    AddOnOffLoop(NewOnOffLoop<ControlOutputTarget>),
 
     ControllerParameters {
         name: String,

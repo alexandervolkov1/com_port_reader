@@ -10,8 +10,7 @@ use crate::{
     instrument::ConnectedParameterAddress,
     output_control::{OutputHandle, OutputRequestError},
     process_control::{
-        ControlLoopDefinition, ControlLoopState, ControlOutputTarget, NewController, NewOnOffLoop,
-        NewPidLoop, OnOffController, PidController,
+        ControlLoopDefinition, ControlLoopState, ControlOutputTarget, NewController,
     },
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
     signal_processing::{ProcessingHandle, SignalFilterDefinition},
@@ -207,14 +206,6 @@ impl CommandDispatcher {
 
             UserCommand::AddController(new_controller) => {
                 self.add_controller(new_controller);
-            }
-
-            UserCommand::AddPidLoop(pid_loop) => {
-                self.add_pid_loop(pid_loop);
-            }
-
-            UserCommand::AddOnOffLoop(on_off_loop) => {
-                self.add_on_off_loop(on_off_loop);
             }
 
             UserCommand::ControllerParameters {
@@ -723,74 +714,6 @@ impl CommandDispatcher {
                 ));
             }
         }
-    }
-
-    fn add_pid_loop(&self, pid_loop: NewPidLoop<ControlOutputTarget>) {
-        let (name, input_name, output_target, setpoint, gains, output_limits) =
-            pid_loop.into_parts();
-
-        let controller = match PidController::with_output_limits(setpoint, gains, output_limits) {
-            Ok(controller) => controller,
-
-            Err(error) => {
-                self.log.error(format!(
-                    "Failed to add PID loop \
-                         '{name}': {error}",
-                ));
-
-                return;
-            }
-        };
-
-        let new_controller =
-            match NewController::new(name.clone(), input_name, output_target, controller) {
-                Ok(new_controller) => new_controller,
-
-                Err(error) => {
-                    self.log.error(format!(
-                        "Failed to add PID loop \
-                         '{name}': {error}",
-                    ));
-
-                    return;
-                }
-            };
-
-        self.add_controller(new_controller);
-    }
-
-    fn add_on_off_loop(&self, on_off_loop: NewOnOffLoop<ControlOutputTarget>) {
-        let (name, input_name, output_target, setpoint, hysteresis, output_off, output_on) =
-            on_off_loop.into_parts();
-
-        let controller = match OnOffController::new(setpoint, hysteresis, output_off, output_on) {
-            Ok(controller) => controller,
-
-            Err(error) => {
-                self.log.error(format!(
-                    "Failed to add on/off loop \
-                         '{name}': {error}",
-                ));
-
-                return;
-            }
-        };
-
-        let new_controller =
-            match NewController::new(name.clone(), input_name, output_target, controller) {
-                Ok(new_controller) => new_controller,
-
-                Err(error) => {
-                    self.log.error(format!(
-                        "Failed to add on/off loop \
-                         '{name}': {error}",
-                    ));
-
-                    return;
-                }
-            };
-
-        self.add_controller(new_controller);
     }
 
     pub fn set_visibility(&self, id: SeriesId, visible: bool) {
