@@ -1,6 +1,89 @@
 use std::{error::Error, fmt};
 
-use super::{PidGains, PidOutputLimits};
+use super::{Controller, PidGains, PidOutputLimits};
+
+#[derive(Debug)]
+pub struct NewController<OutputTarget> {
+    name: String,
+    input_name: String,
+    output_target: OutputTarget,
+    controller: Controller,
+}
+
+impl<OutputTarget> NewController<OutputTarget> {
+    pub fn new(
+        name: impl Into<String>,
+        input_name: impl Into<String>,
+        output_target: OutputTarget,
+        controller: impl Into<Controller>,
+    ) -> Result<Self, NewControllerError> {
+        let name = name.into();
+        let input_name = input_name.into();
+
+        if name.trim().is_empty() {
+            return Err(NewControllerError::new("Controller name cannot be empty"));
+        }
+
+        if input_name.trim().is_empty() {
+            return Err(NewControllerError::new(
+                "Controller input series name cannot be empty",
+            ));
+        }
+
+        Ok(Self {
+            name,
+            input_name,
+            output_target,
+            controller: controller.into(),
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn input_name(&self) -> &str {
+        &self.input_name
+    }
+
+    pub const fn output_target(&self) -> &OutputTarget {
+        &self.output_target
+    }
+
+    pub const fn controller(&self) -> &Controller {
+        &self.controller
+    }
+
+    pub fn into_parts(self) -> (String, String, OutputTarget, Controller) {
+        (
+            self.name,
+            self.input_name,
+            self.output_target,
+            self.controller,
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewControllerError {
+    message: String,
+}
+
+impl NewControllerError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for NewControllerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for NewControllerError {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct NewPidLoop<OutputTarget> {
@@ -250,9 +333,9 @@ impl Error for NewOnOffLoopError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{NewOnOffLoop, NewPidLoop};
+    use super::{NewController, NewOnOffLoop, NewPidLoop};
 
-    use crate::process_control::{PidGains, PidOutputLimits};
+    use crate::process_control::{ControllerKind, OnOffController, PidGains, PidOutputLimits};
 
     fn gains() -> PidGains {
         PidGains::new(2.0, 0.5, 0.1).unwrap()
@@ -260,6 +343,40 @@ mod tests {
 
     fn limits() -> PidOutputLimits {
         PidOutputLimits::new(0.0, 100.0).unwrap()
+    }
+
+    #[test]
+    fn stores_generic_controller_request() {
+        let controller = OnOffController::new(150.0, 2.0, 0.0, 100.0).unwrap();
+
+        let request =
+            NewController::new("thermostat", "temperature_filtered", 17_u64, controller).unwrap();
+
+        assert_eq!(request.name(), "thermostat",);
+
+        assert_eq!(request.input_name(), "temperature_filtered",);
+
+        assert_eq!(request.output_target(), &17,);
+
+        assert_eq!(request.controller().kind(), ControllerKind::OnOff,);
+
+        let (name, input_name, output_target, controller) = request.into_parts();
+
+        assert_eq!(name, "thermostat");
+        assert_eq!(input_name, "temperature_filtered",);
+        assert_eq!(output_target, 17);
+        assert_eq!(controller.kind(), ControllerKind::OnOff,);
+    }
+
+    #[test]
+    fn rejects_invalid_generic_controller_request() {
+        let controller = OnOffController::new(150.0, 2.0, 0.0, 100.0).unwrap();
+
+        assert!(NewController::new("", "temperature", (), controller,).is_err(),);
+
+        let controller = OnOffController::new(150.0, 2.0, 0.0, 100.0).unwrap();
+
+        assert!(NewController::new("thermostat", "", (), controller,).is_err(),);
     }
 
     #[test]
