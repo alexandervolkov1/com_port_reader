@@ -501,11 +501,18 @@ fn action_connection_id(action: &ProcessAction) -> Option<String> {
 }
 
 fn action_series_id(action: &ProcessAction) -> Option<String> {
-    match action {
-        ProcessAction::SetSeriesVisibility { series_id, .. } => Some(series_id.to_string()),
+    let series_id = match action {
+        ProcessAction::SetFilter { series_id, .. }
+        | ProcessAction::DeleteSeriesByName { series_id, .. }
+        | ProcessAction::RenameSeries { series_id, .. }
+        | ProcessAction::SetSeriesColor { series_id, .. } => *series_id,
+
+        ProcessAction::SetSeriesVisibility { series_id, .. } => Some(*series_id),
 
         _ => None,
-    }
+    };
+
+    series_id.map(|series_id| series_id.to_string())
 }
 
 fn action_series_name(action: &ProcessAction) -> Option<&str> {
@@ -514,7 +521,7 @@ fn action_series_name(action: &ProcessAction) -> Option<&str> {
 
         ProcessAction::AddFilteredSeries { name, .. }
         | ProcessAction::SetFilter { name, .. }
-        | ProcessAction::DeleteSeriesByName { name }
+        | ProcessAction::DeleteSeriesByName { name, .. }
         | ProcessAction::SetSeriesColor { name, .. } => Some(name),
 
         ProcessAction::RenameSeries { current_name, .. } => Some(current_name),

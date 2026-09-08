@@ -112,20 +112,24 @@ pub enum ProcessAction {
     },
 
     SetFilter {
+        series_id: Option<SeriesId>,
         name: String,
         definition: String,
     },
 
     DeleteSeriesByName {
+        series_id: Option<SeriesId>,
         name: String,
     },
 
     RenameSeries {
+        series_id: Option<SeriesId>,
         current_name: String,
         new_name: String,
     },
 
     SetSeriesColor {
+        series_id: Option<SeriesId>,
         name: String,
         color: Option<String>,
     },

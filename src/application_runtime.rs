@@ -339,7 +339,9 @@ impl ApplicationRuntime {
     }
 
     fn execute_from(&mut self, command: UserCommand, origin: ProcessActionOrigin) {
-        if let Some(action) = process_action_from_command(&command) {
+        if let Some(mut action) = process_action_from_command(&command) {
+            resolve_action_series_id(&mut action, &self.series);
+
             self.process_recorder.record_action(origin, action);
         }
 
@@ -603,15 +605,6 @@ impl ApplicationRuntime {
 
         let metadata = self.series.metadata();
 
-        /*
-         * Processing events and series lifecycle use
-         * different queues. A sample produced before
-         * delete/clear may therefore arrive after its
-         * output series has already been removed.
-         *
-         * Such a sample is stale, not an application
-         * error.
-         */
         let series_samples = samples
             .into_iter()
             .filter(|processed| {
@@ -665,6 +658,43 @@ impl ApplicationRuntime {
             self.process_recorder
                 .record_measurements(connection_id, &samples, &metadata);
         }
+    }
+}
+
+fn resolve_action_series_id(action: &mut ProcessAction, series: &SeriesStore) {
+    let name = match action {
+        ProcessAction::SetFilter { name, .. }
+        | ProcessAction::DeleteSeriesByName { name, .. }
+        | ProcessAction::SetSeriesColor { name, .. } => Some(name.as_str()),
+
+        ProcessAction::RenameSeries { current_name, .. } => Some(current_name.as_str()),
+
+        _ => None,
+    };
+
+    let series_id = name.and_then(|name| series.id_by_name(name));
+
+    match action {
+        ProcessAction::SetFilter {
+            series_id: stored_id,
+            ..
+        }
+        | ProcessAction::DeleteSeriesByName {
+            series_id: stored_id,
+            ..
+        }
+        | ProcessAction::RenameSeries {
+            series_id: stored_id,
+            ..
+        }
+        | ProcessAction::SetSeriesColor {
+            series_id: stored_id,
+            ..
+        } => {
+            *stored_id = series_id;
+        }
+
+        _ => {}
     }
 }
 
@@ -776,23 +806,27 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
         | UserCommand::ControllerState { .. } => None,
 
         UserCommand::SetFilter { name, definition } => Some(ProcessAction::SetFilter {
+            series_id: None,
             name: name.clone(),
             definition: definition.to_string(),
         }),
 
-        UserCommand::Delete { name } => {
-            Some(ProcessAction::DeleteSeriesByName { name: name.clone() })
-        }
+        UserCommand::Delete { name } => Some(ProcessAction::DeleteSeriesByName {
+            series_id: None,
+            name: name.clone(),
+        }),
 
         UserCommand::Rename {
             current_name,
             new_name,
         } => Some(ProcessAction::RenameSeries {
+            series_id: None,
             current_name: current_name.clone(),
             new_name: new_name.clone(),
         }),
 
         UserCommand::SetSeriesColor { name, color } => Some(ProcessAction::SetSeriesColor {
+            series_id: None,
             name: name.clone(),
             color: color.map(|color| color.to_string()),
         }),
@@ -847,11 +881,11 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
 mod tests {
     use std::time::Duration;
 
-    use super::{ProcessAction, process_action_from_command};
+    use super::{ProcessAction, process_action_from_command, resolve_action_series_id};
 
     use crate::{
         connection::ConnectionId,
-        data::{NewSeries, SamplingInterval, SeriesColor, SeriesId},
+        data::{NewSeries, SamplingInterval, SeriesColor, SeriesId, SeriesStore},
         instrument::{
             InstrumentValue, ParameterAccess, ParameterRange, ParameterValueType,
             virtual_instrument::{
@@ -902,9 +936,10 @@ mod tests {
         assert_eq!(
             process_action_from_command(&command),
             Some(ProcessAction::SetSeriesColor {
+                series_id: None,
                 name: "temperature".to_owned(),
-                color: Some("#1A2B3C".to_owned()),
-            }),
+                color: Some("#1A2B3C".to_owned(),),
+            },),
         );
     }
 
@@ -929,9 +964,61 @@ mod tests {
         assert_eq!(
             process_action_from_command(&command),
             Some(ProcessAction::SetFilter {
+                series_id: None,
                 name: "temperature_filtered".to_owned(),
                 definition: definition.to_string(),
-            }),
+            },),
+        );
+    }
+
+    #[test]
+    fn resolves_existing_series_id_for_action() {
+        let series = SeriesStore::new();
+
+        let series_id = series
+            .add_series(NewSeries::named_serial_command(
+                "read temperature",
+                "temperature",
+            ))
+            .unwrap();
+
+        let command = UserCommand::SetSeriesColor {
+            name: "temperature".to_owned(),
+            color: None,
+        };
+
+        let mut action = process_action_from_command(&command).unwrap();
+
+        resolve_action_series_id(&mut action, &series);
+
+        assert_eq!(
+            action,
+            ProcessAction::SetSeriesColor {
+                series_id: Some(series_id),
+                name: "temperature".to_owned(),
+                color: None,
+            },
+        );
+    }
+
+    #[test]
+    fn keeps_missing_series_id_empty_for_action() {
+        let series = SeriesStore::new();
+
+        let command = UserCommand::Delete {
+            name: "missing".to_owned(),
+        };
+
+        let mut action = process_action_from_command(&command).unwrap();
+
+        resolve_action_series_id(&mut action, &series);
+
+        assert_eq!(
+            action,
+            ProcessAction::DeleteSeriesByName {
+                series_id: None,
+                name: "missing".to_owned(),
+            },
         );
     }
 
