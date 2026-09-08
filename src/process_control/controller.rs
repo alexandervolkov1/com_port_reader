@@ -270,6 +270,20 @@ impl Controller {
             .collect()
     }
 
+    pub fn parameter_values(
+        &self,
+    ) -> Result<Vec<(String, InstrumentValue)>, ControllerParameterError> {
+        self.supported_parameters()
+            .iter()
+            .copied()
+            .map(|parameter| {
+                let key = parameter.key();
+
+                self.read(key).map(|value| (key.to_owned(), value))
+            })
+            .collect()
+    }
+
     pub fn read(&self, key: &str) -> Result<InstrumentValue, ControllerParameterError> {
         let parameter = ControllerParameter::from_key(key)
             .ok_or_else(|| ControllerParameterError::UnknownParameter(key.to_owned()))?;
@@ -1165,6 +1179,23 @@ mod tests {
         assert_eq!(
             controller.read("output_max"),
             Ok(InstrumentValue::Number(100.0,),),
+        );
+    }
+
+    #[test]
+    fn exposes_pid_parameter_values() {
+        let controller = controller();
+
+        assert_eq!(
+            controller.parameter_values(),
+            Ok(vec![
+                ("setpoint".to_owned(), InstrumentValue::Number(100.0,),),
+                ("kp".to_owned(), InstrumentValue::Number(2.0,),),
+                ("ki".to_owned(), InstrumentValue::Number(0.0,),),
+                ("kd".to_owned(), InstrumentValue::Number(0.0,),),
+                ("output_min".to_owned(), InstrumentValue::Number(0.0,),),
+                ("output_max".to_owned(), InstrumentValue::Number(100.0,),),
+            ]),
         );
     }
 

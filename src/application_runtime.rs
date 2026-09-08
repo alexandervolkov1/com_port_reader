@@ -702,6 +702,21 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             })
         }
 
+        UserCommand::AddController(new_controller) => {
+            let controller = new_controller.controller();
+
+            let parameters = controller.parameter_values().ok()?;
+
+            Some(ProcessAction::AddController {
+                connection_id: new_controller.output_target().connection_id(),
+                name: new_controller.name().to_owned(),
+                input_name: new_controller.input_name().to_owned(),
+                output_target: new_controller.output_target().to_string(),
+                kind: controller.kind(),
+                parameters,
+            })
+        }
+
         UserCommand::WriteControllerParameter {
             name, key, value, ..
         } => Some(ProcessAction::WriteControllerParameter {
@@ -763,7 +778,6 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
         }
 
         UserCommand::AddControllerDiagnostic(_)
-        | UserCommand::AddController(_)
         | UserCommand::AddOnOffLoop(_)
         | UserCommand::ControllerParameters { .. }
         | UserCommand::ControllerDiagnostics { .. }
@@ -857,8 +871,9 @@ mod tests {
             },
         },
         process_control::{
-            ControlEvent, ControlLoopDefinition, ControlOutputTarget, PidController, PidGains,
-            PidOutputLimits, ReferenceSource,
+            ControlEvent, ControlLoopDefinition, ControlOutputTarget, ControllerKind,
+            NewController, OnOffController, PidController, PidGains, PidOutputLimits,
+            ReferenceSource,
         },
         signal_processing::SignalFilterDefinition,
         user_command::UserCommand,
@@ -1168,6 +1183,56 @@ mod tests {
             process_action_from_command(&command),
             Some(ProcessAction::ResetController {
                 name: "heater".to_owned(),
+            },),
+        );
+    }
+
+    #[test]
+    fn converts_added_generic_controller_to_process_action() {
+        let descriptor = VirtualParameterDescriptor::new(
+            VirtualParameterId::new(7),
+            "heater_power",
+            "Heater power",
+            ParameterAccess::ReadWrite,
+            ParameterValueType::Number,
+        )
+        .with_range(ParameterRange::Number {
+            minimum: 0.0,
+            maximum: 100.0,
+        });
+
+        let target = ControlOutputTarget::virtual_instrument(
+            ConnectionId::new(3),
+            VirtualInstrumentId::new(4),
+            &descriptor,
+        )
+        .unwrap();
+
+        let controller = OnOffController::new(150.0, 2.0, 0.0, 100.0).unwrap();
+
+        let command = UserCommand::AddController(
+            NewController::new("thermostat", "temperature_filtered", target, controller).unwrap(),
+        );
+
+        assert_eq!(
+            process_action_from_command(&command,),
+            Some(ProcessAction::AddController {
+                connection_id: ConnectionId::new(3),
+
+                name: "thermostat".to_owned(),
+
+                input_name: "temperature_filtered".to_owned(),
+
+                output_target: target.to_string(),
+
+                kind: ControllerKind::OnOff,
+
+                parameters: vec![
+                    ("setpoint".to_owned(), InstrumentValue::Number(150.0,),),
+                    ("hysteresis".to_owned(), InstrumentValue::Number(2.0,),),
+                    ("output_off".to_owned(), InstrumentValue::Number(0.0,),),
+                    ("output_on".to_owned(), InstrumentValue::Number(100.0,),),
+                ],
             },),
         );
     }

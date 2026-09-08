@@ -12,7 +12,7 @@ use crate::{
     connection::ConnectionId,
     data::{SeriesId, SeriesMetadata, SeriesSample},
     instrument::InstrumentValue,
-    process_control::ReferenceSource,
+    process_control::{ControllerKind, ReferenceSource},
 };
 
 mod sqlite;
@@ -65,6 +65,15 @@ pub enum ProcessAction {
         derivative_gain: f64,
         output_minimum: f64,
         output_maximum: f64,
+    },
+
+    AddController {
+        connection_id: ConnectionId,
+        name: String,
+        input_name: String,
+        output_target: String,
+        kind: ControllerKind,
+        parameters: Vec<(String, InstrumentValue)>,
     },
 
     WriteControllerParameter {
