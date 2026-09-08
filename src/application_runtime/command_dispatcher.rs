@@ -10,7 +10,7 @@ use crate::{
     instrument::ConnectedParameterAddress,
     output_control::{OutputHandle, OutputRequestError},
     process_control::{
-        ControlLoopDefinition, ControlLoopState, ControlOutputTarget, Controller, NewOnOffLoop,
+        ControlLoopDefinition, ControlLoopState, ControlOutputTarget, NewController, NewOnOffLoop,
         NewPidLoop, OnOffController, PidController,
     },
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
@@ -672,25 +672,61 @@ impl CommandDispatcher {
         Ok(())
     }
 
-    fn add_pid_loop(&self, pid_loop: NewPidLoop<ControlOutputTarget>) {
-        let (name, input_name, output_target, setpoint, gains, output_limits) =
-            pid_loop.into_parts();
+    fn add_controller(&self, new_controller: NewController<ControlOutputTarget>) {
+        let (name, input_name, output_target, controller) = new_controller.into_parts();
+
+        let kind = controller.kind();
 
         let target = output_target.connected_parameter_address();
 
         let Some(input_id) = self.series.id_by_name(&input_name) else {
             self.log.error(format!(
-                "Failed to add PID loop \
-                     '{name}': input series \
-                     '{input_name}' was not \
-                     found",
+                "Failed to add {kind} controller \
+                 '{name}': input series \
+                 '{input_name}' was not found",
             ));
 
             return;
         };
 
+        let definition =
+            match ControlLoopDefinition::new(name.clone(), input_id, output_target, controller) {
+                Ok(definition) => definition,
+
+                Err(error) => {
+                    self.log.error(format!(
+                        "Failed to add {kind} controller \
+                         '{name}': {error}",
+                    ));
+
+                    return;
+                }
+            };
+
+        match self.install_control_loop(&name, target, definition) {
+            Ok(()) => {
+                self.log.info(format!(
+                    "{kind} controller '{name}' \
+                     added for input series \
+                     '{input_name}' ({input_id}).",
+                ));
+            }
+
+            Err(error) => {
+                self.log.error(format!(
+                    "Failed to add {kind} controller \
+                     '{name}': {error}",
+                ));
+            }
+        }
+    }
+
+    fn add_pid_loop(&self, pid_loop: NewPidLoop<ControlOutputTarget>) {
+        let (name, input_name, output_target, setpoint, gains, output_limits) =
+            pid_loop.into_parts();
+
         let controller = match PidController::with_output_limits(setpoint, gains, output_limits) {
-            Ok(controller) => Controller::Pid(controller),
+            Ok(controller) => controller,
 
             Err(error) => {
                 self.log.error(format!(
@@ -702,9 +738,9 @@ impl CommandDispatcher {
             }
         };
 
-        let definition =
-            match ControlLoopDefinition::new(name.clone(), input_id, output_target, controller) {
-                Ok(definition) => definition,
+        let new_controller =
+            match NewController::new(name.clone(), input_name, output_target, controller) {
+                Ok(new_controller) => new_controller,
 
                 Err(error) => {
                     self.log.error(format!(
@@ -716,43 +752,15 @@ impl CommandDispatcher {
                 }
             };
 
-        match self.install_control_loop(&name, target, definition) {
-            Ok(()) => {
-                self.log.info(format!(
-                    "PID loop '{name}' \
-                     added for input series \
-                     '{input_name}' \
-                     ({input_id}).",
-                ));
-            }
-
-            Err(error) => {
-                self.log.error(format!(
-                    "Failed to add PID loop \
-                     '{name}': {error}",
-                ));
-            }
-        }
+        self.add_controller(new_controller);
     }
 
     fn add_on_off_loop(&self, on_off_loop: NewOnOffLoop<ControlOutputTarget>) {
         let (name, input_name, output_target, setpoint, hysteresis, output_off, output_on) =
             on_off_loop.into_parts();
 
-        let target = output_target.connected_parameter_address();
-
-        let Some(input_id) = self.series.id_by_name(&input_name) else {
-            self.log.error(format!(
-                "Failed to add on/off loop \
-                 '{name}': input series \
-                 '{input_name}' was not found",
-            ));
-
-            return;
-        };
-
         let controller = match OnOffController::new(setpoint, hysteresis, output_off, output_on) {
-            Ok(controller) => Controller::OnOff(controller),
+            Ok(controller) => controller,
 
             Err(error) => {
                 self.log.error(format!(
@@ -764,9 +772,9 @@ impl CommandDispatcher {
             }
         };
 
-        let definition =
-            match ControlLoopDefinition::new(name.clone(), input_id, output_target, controller) {
-                Ok(definition) => definition,
+        let new_controller =
+            match NewController::new(name.clone(), input_name, output_target, controller) {
+                Ok(new_controller) => new_controller,
 
                 Err(error) => {
                     self.log.error(format!(
@@ -778,23 +786,7 @@ impl CommandDispatcher {
                 }
             };
 
-        match self.install_control_loop(&name, target, definition) {
-            Ok(()) => {
-                self.log.info(format!(
-                    "On/off loop '{name}' \
-                     added for input series \
-                     '{input_name}' \
-                     ({input_id}).",
-                ));
-            }
-
-            Err(error) => {
-                self.log.error(format!(
-                    "Failed to add on/off loop \
-                     '{name}': {error}",
-                ));
-            }
-        }
+        self.add_controller(new_controller);
     }
 
     pub fn set_visibility(&self, id: SeriesId, visible: bool) {
