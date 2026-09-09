@@ -546,11 +546,15 @@ mod tests {
         sync::atomic::{AtomicU64, Ordering},
     };
 
-    use crate::connection::ConnectionId;
-    use crate::process_recorder::ProcessActionResult;
-    use crate::process_recorder::{ProcessAction, ProcessActionOrigin, ProcessRecorder};
+    use crate::{
+        connection::ConnectionId,
+        data::SeriesId,
+        process_recorder::{
+            ProcessAction, ProcessActionOrigin, ProcessActionResult, ProcessRecorder,
+        },
+    };
 
-    use super::LogFileWriter;
+    use super::{LogFileWriter, LogLevel};
 
     static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(1);
 
@@ -649,6 +653,88 @@ mod tests {
         assert_eq!(model.entries().len(), 1,);
 
         assert!(model.entries()[0].text().contains("Test message"),);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn renders_added_series_once() {
+        let directory = std::env::temp_dir().join(format!(
+            "com_port_reader_add_series_log_test_{}_{}",
+            std::process::id(),
+            NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed,),
+        ));
+
+        let recorder = ProcessRecorder::default();
+
+        let (mut model, _log) = super::LogModel::new(&directory, recorder.clone());
+
+        let action_id = recorder.record_action(
+            ProcessActionOrigin::UserInterface,
+            ProcessAction::AddSeries {
+                connection_id: ConnectionId::new(2),
+                name: Some("temperature".to_owned()),
+                source: "COM command: read temperature".to_owned(),
+                polling_interval_seconds: Some(0.25),
+                color: Some("#1A2B3C".to_owned()),
+            },
+        );
+
+        recorder.record_action_applied(
+            action_id,
+            Some(SeriesId::new(17)),
+            Some("temperature".to_owned()),
+        );
+
+        model.poll();
+
+        assert_eq!(model.entries().len(), 1,);
+
+        let message = model.entries()[0].text();
+
+        assert!(message.contains("temperature"), "{message}",);
+
+        assert!(message.contains("17"), "{message}",);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn renders_failed_action_once() {
+        let directory = std::env::temp_dir().join(format!(
+            "com_port_reader_failed_action_log_test_{}_{}",
+            std::process::id(),
+            NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed,),
+        ));
+
+        let recorder = ProcessRecorder::default();
+
+        let (mut model, _log) = super::LogModel::new(&directory, recorder.clone());
+
+        let action_id = recorder.record_action(
+            ProcessActionOrigin::UserInterface,
+            ProcessAction::AddSeries {
+                connection_id: ConnectionId::new(2),
+                name: Some("temperature".to_owned()),
+                source: "COM command: read temperature".to_owned(),
+                polling_interval_seconds: Some(0.25),
+                color: None,
+            },
+        );
+
+        recorder.record_action_failed(action_id, "Series 'temperature' already exists.");
+
+        model.poll();
+
+        assert_eq!(model.entries().len(), 1,);
+
+        let entry = &model.entries()[0];
+
+        assert_eq!(entry.level(), LogLevel::Error,);
+
+        assert!(entry.text().contains("temperature",), "{}", entry.text(),);
+
+        assert!(entry.text().contains("already exists",), "{}", entry.text(),);
 
         fs::remove_dir_all(directory).unwrap();
     }
