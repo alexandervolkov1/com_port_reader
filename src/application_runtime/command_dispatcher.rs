@@ -76,6 +76,40 @@ pub(crate) struct CommandDispatcher {
     log: LogHandle,
 }
 
+fn pause_controller_safely(
+    output_control: &OutputHandle,
+    processing: &ProcessingHandle<SeriesId>,
+    name: &str,
+) -> Result<(), PauseControllerError> {
+    let safe_output_result = output_control.apply_safe(name);
+
+    let pause_result = processing.pause_controller(name);
+
+    match safe_output_result {
+        Err(output) => match pause_result {
+            Ok(()) => Err(PauseControllerError::Output(output)),
+
+            Err(pause) => Err(PauseControllerError::OutputAndControllerPause { output, pause }),
+        },
+
+        Ok(response) => {
+            let safe_write_result = response.recv();
+
+            match (safe_write_result, pause_result) {
+                (Ok(_), Ok(())) => Ok(()),
+
+                (Err(write), Ok(())) => Err(PauseControllerError::SafeOutputWrite(write)),
+
+                (Ok(_), Err(pause)) => Err(PauseControllerError::ControllerAfterSafeOutput(pause)),
+
+                (Err(write), Err(pause)) => {
+                    Err(PauseControllerError::SafeOutputWriteAndControllerPause { write, pause })
+                }
+            }
+        }
+    }
+}
+
 impl CommandDispatcher {
     pub fn new(
         connections: CommandDispatcherConnections,
@@ -350,38 +384,7 @@ impl CommandDispatcher {
     }
 
     fn pause_controller(&self, name: &str) -> Result<(), PauseControllerError> {
-        let safe_output_result = self.output_control.apply_safe(name);
-
-        let pause_result = self.processing.pause_controller(name);
-
-        match safe_output_result {
-            Err(output) => match pause_result {
-                Ok(()) => Err(PauseControllerError::Output(output)),
-
-                Err(pause) => Err(PauseControllerError::OutputAndControllerPause { output, pause }),
-            },
-
-            Ok(response) => {
-                let safe_write_result = response.recv();
-
-                match (safe_write_result, pause_result) {
-                    (Ok(_), Ok(())) => Ok(()),
-
-                    (Err(write), Ok(())) => Err(PauseControllerError::SafeOutputWrite(write)),
-
-                    (Ok(_), Err(pause)) => {
-                        Err(PauseControllerError::ControllerAfterSafeOutput(pause))
-                    }
-
-                    (Err(write), Err(pause)) => {
-                        Err(PauseControllerError::SafeOutputWriteAndControllerPause {
-                            write,
-                            pause,
-                        })
-                    }
-                }
-            }
-        }
+        pause_controller_safely(&self.output_control, &self.processing, name)
     }
 
     pub fn execute(
@@ -1739,8 +1742,25 @@ fn worker_event_should_be_logged(event: &WorkerEvent, has_action_id: bool) -> bo
 
 #[cfg(test)]
 mod tests {
-    use super::worker_event_should_be_logged;
-    use crate::worker::WorkerEvent;
+    use crate::{
+        connection::ConnectionId,
+        data::SeriesId,
+        instrument::{
+            ParameterAccess, ParameterRange, ParameterValueType,
+            virtual_instrument::{
+                VirtualInstrumentId, VirtualParameterDescriptor, VirtualParameterId,
+            },
+        },
+        output_control::OutputService,
+        process_control::{
+            ControlLoopDefinition, ControlLoopState, ControlOutputTarget, OnOffController,
+        },
+        serial_connection::SerialConnectionRegistry,
+        signal_processing::ProcessingService,
+        worker::{ConnectionRouter, WorkerEvent},
+    };
+
+    use super::{pause_controller_safely, worker_event_should_be_logged};
 
     #[test]
     fn suppresses_action_worker_event_duplicate_log() {
@@ -1758,5 +1778,61 @@ mod tests {
         let event = WorkerEvent::ProcessingFailed("test failure".to_owned());
 
         assert!(worker_event_should_be_logged(&event, false,),);
+    }
+
+    #[test]
+    fn pauses_controller_when_safe_output_request_fails() {
+        let processing = ProcessingService::<SeriesId>::spawn().unwrap();
+
+        let processing_handle = processing.handle();
+
+        let descriptor = VirtualParameterDescriptor::new(
+            VirtualParameterId::new(1),
+            "heater_power",
+            "Heater power",
+            ParameterAccess::ReadWrite,
+            ParameterValueType::Number,
+        )
+        .with_range(ParameterRange::Number {
+            minimum: 0.0,
+            maximum: 100.0,
+        });
+
+        let output = ControlOutputTarget::virtual_instrument(
+            ConnectionId::PRIMARY,
+            VirtualInstrumentId::new(1),
+            &descriptor,
+        )
+        .unwrap();
+
+        let output_address = output.connected_parameter_address();
+
+        let controller = OnOffController::new(100.0, 2.0, 0.0, 100.0).unwrap().into();
+
+        let definition =
+            ControlLoopDefinition::new("heater", SeriesId::new(1), output, controller).unwrap();
+
+        let instance_id = definition.instance_id();
+
+        processing_handle.add_control_loop(definition).unwrap();
+
+        let output_service =
+            OutputService::spawn(ConnectionRouter::default(), SerialConnectionRegistry::new())
+                .unwrap();
+
+        let output_handle = output_service.handle();
+
+        output_handle
+            .register_controller(output_address, "heater", instance_id, None)
+            .unwrap();
+
+        let result = pause_controller_safely(&output_handle, &processing_handle, "heater");
+
+        assert!(result.is_err());
+
+        assert_eq!(
+            processing_handle.controller_state("heater"),
+            Ok(ControlLoopState::Paused),
+        );
     }
 }
