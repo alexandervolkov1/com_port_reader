@@ -13,7 +13,9 @@ use crate::{
     instrument::ConnectedParameterAddress,
     output_control::{OutputHandle, OutputRequestError},
     process_control::{ControlLoopDefinition, ControlOutputTarget, NewController},
-    process_recorder::{ProcessActionContext, ProcessActionId, ProcessRecorder},
+    process_recorder::{
+        ProcessActionContext, ProcessActionId, ProcessActionResult, ProcessRecorder,
+    },
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
     signal_processing::{ProcessingHandle, SignalFilterDefinition},
     user_command::{
@@ -268,12 +270,32 @@ impl CommandDispatcher {
         };
 
         match connection_event.event() {
-            WorkerEvent::SerialTextCommandSucceeded { .. }
-            | WorkerEvent::InstrumentReadSucceeded { .. }
-            | WorkerEvent::InstrumentWriteSucceeded { .. }
-            | WorkerEvent::VirtualInstrumentDescribeSucceeded { .. } => {
-                self.process_recorder
-                    .record_action_applied(action_id, None, None);
+            WorkerEvent::SerialTextCommandSucceeded { response, .. } => {
+                self.process_recorder.record_action_applied_with_result(
+                    action_id,
+                    ProcessActionResult::SerialResponse(response.clone()),
+                );
+            }
+
+            WorkerEvent::InstrumentReadSucceeded { value, .. } => {
+                self.process_recorder.record_action_applied_with_result(
+                    action_id,
+                    ProcessActionResult::InstrumentValue(*value),
+                );
+            }
+
+            WorkerEvent::InstrumentWriteSucceeded { actual_value, .. } => {
+                self.process_recorder.record_action_applied_with_result(
+                    action_id,
+                    ProcessActionResult::InstrumentValue(*actual_value),
+                );
+            }
+
+            WorkerEvent::VirtualInstrumentDescribeSucceeded { count } => {
+                self.process_recorder.record_action_applied_with_result(
+                    action_id,
+                    ProcessActionResult::VirtualInstrumentCount(*count),
+                );
             }
 
             WorkerEvent::SerialTextCommandFailed { .. }
@@ -295,6 +317,13 @@ impl CommandDispatcher {
             self.handle_single_worker_action_event(&connection_event);
 
             let event = connection_event.event();
+
+            let belongs_to_action =
+                connection_event.action_id().is_some() && worker_event_completes_action(event);
+
+            if belongs_to_action {
+                continue;
+            }
 
             let message = self.format_worker_event(&connection_event);
 
@@ -385,8 +414,6 @@ impl CommandDispatcher {
                 }
 
                 Err(error) => {
-                    self.log.error(error.clone());
-
                     if let Some(action_context) = action_context {
                         self.process_recorder
                             .record_action_failed(action_context.action_id(), error);
@@ -413,8 +440,6 @@ impl CommandDispatcher {
                 }
 
                 Err(error) => {
-                    self.log.error(error.clone());
-
                     if let Some(action_context) = action_context {
                         self.process_recorder
                             .record_action_failed(action_context.action_id(), error);
@@ -439,8 +464,6 @@ impl CommandDispatcher {
                     }
 
                     Err(error) => {
-                        self.log.error(error.clone());
-
                         if let Some(action_context) = action_context {
                             self.process_recorder
                                 .record_action_failed(action_context.action_id(), error);
@@ -846,8 +869,6 @@ impl CommandDispatcher {
                     }
 
                     Err(error) => {
-                        self.log.error(error.clone());
-
                         if let Some(action_context) = action_context {
                             self.process_recorder
                                 .record_action_failed(action_context.action_id(), error);
@@ -868,8 +889,6 @@ impl CommandDispatcher {
                 }
 
                 Err(error) => {
-                    self.log.error(error.clone());
-
                     if let Some(action_context) = action_context {
                         self.process_recorder
                             .record_action_failed(action_context.action_id(), error);
@@ -882,11 +901,6 @@ impl CommandDispatcher {
                 new_name,
             } => match self.series.rename_series(&current_name, &new_name) {
                 Ok(id) => {
-                    self.log.info(format!(
-                        "Series {id} renamed to \
-                         '{new_name}'.",
-                    ));
-
                     if let Some(action_context) = action_context {
                         self.process_recorder.record_action_applied(
                             action_context.action_id(),
@@ -897,11 +911,6 @@ impl CommandDispatcher {
                 }
 
                 Err(error) => {
-                    self.log.error(format!(
-                        "Failed to rename series: \
-                         {error}",
-                    ));
-
                     if let Some(action_context) = action_context {
                         self.process_recorder
                             .record_action_failed(action_context.action_id(), error.to_string());
@@ -912,26 +921,6 @@ impl CommandDispatcher {
             UserCommand::SetSeriesColor { name, color } => {
                 match self.series.set_color_by_name(&name, color) {
                     Some(id) => {
-                        match color {
-                            Some(color) => {
-                                self.log.info(format!(
-                                    "Series '{name}' \
-                                     ({id}) color \
-                                     changed to \
-                                     {color}.",
-                                ));
-                            }
-
-                            None => {
-                                self.log.info(format!(
-                                    "Series '{name}' \
-                                     ({id}) color \
-                                     reset to \
-                                     automatic.",
-                                ));
-                            }
-                        }
-
                         if let Some(action_context) = action_context {
                             self.process_recorder.record_action_applied(
                                 action_context.action_id(),
@@ -943,8 +932,6 @@ impl CommandDispatcher {
 
                     None => {
                         let error = format!("Series '{name}' not found.");
-
-                        self.log.error(&error);
 
                         if let Some(action_context) = action_context {
                             self.process_recorder
@@ -982,8 +969,6 @@ impl CommandDispatcher {
                 if let Err(error) = controls.start(action_id) {
                     let error = format!("Failed to start acquisition: {error}",);
 
-                    self.log.error(error.clone());
-
                     self.rollback_acquisition_start(&rollback_connections);
 
                     if let Some(action_id) = action_id {
@@ -1012,8 +997,6 @@ impl CommandDispatcher {
                 if let Err(error) = controls.stop(action_id) {
                     let error = format!("Failed to stop acquisition: {error}",);
 
-                    self.log.error(error.clone());
-
                     if let Some(action_id) = action_id {
                         self.pending_acquisition_actions.remove(&action_id);
 
@@ -1034,8 +1017,6 @@ impl CommandDispatcher {
                 }
 
                 Err(error) => {
-                    self.log.error(error.clone());
-
                     if let Some(action_context) = action_context {
                         self.process_recorder
                             .record_action_failed(action_context.action_id(), error);
@@ -1072,8 +1053,6 @@ impl CommandDispatcher {
                     }
 
                     Err(error) => {
-                        self.log.error(error.clone());
-
                         if let Some(action_context) = action_context {
                             self.process_recorder
                                 .record_action_failed(action_context.action_id(), error);
@@ -1110,8 +1089,6 @@ impl CommandDispatcher {
                     Err(error) => {
                         let error = error.to_string();
 
-                        self.log.error(error.clone());
-
                         if let Some(action_id) = action_id {
                             self.process_recorder.record_action_failed(action_id, error);
                         }
@@ -1126,8 +1103,6 @@ impl CommandDispatcher {
                     Err(error) => {
                         let error = error.to_string();
 
-                        self.log.error(error.clone());
-
                         if let Some(action_id) = action_id {
                             self.process_recorder.record_action_failed(action_id, error);
                         }
@@ -1138,8 +1113,6 @@ impl CommandDispatcher {
 
                 if let Err(error) = worker_handle.send_serial_text(action_id, config, command) {
                     let error = format!("Failed to send serial command: {error}");
-
-                    self.log.error(error.clone());
 
                     if let Some(action_id) = action_id {
                         self.process_recorder.record_action_failed(action_id, error);
@@ -1160,8 +1133,6 @@ impl CommandDispatcher {
                     Err(error) => {
                         let error_message = error.to_string();
 
-                        self.log.error(error_message.clone());
-
                         if let Some(action_id) = action_id {
                             self.process_recorder
                                 .record_action_failed(action_id, error_message);
@@ -1178,8 +1149,6 @@ impl CommandDispatcher {
 
                     Err(error) => {
                         let error_message = error.to_string();
-
-                        self.log.error(error_message.clone());
 
                         if let Some(action_id) = action_id {
                             self.process_recorder
@@ -1207,8 +1176,6 @@ impl CommandDispatcher {
 
                     let error_message = error.to_string();
 
-                    self.log.error(error_message.clone());
-
                     if let Some(action_id) = action_id {
                         self.process_recorder
                             .record_action_failed(action_id, error_message);
@@ -1234,8 +1201,6 @@ impl CommandDispatcher {
                     let error = Self::output_write_error(error);
                     let error_message = error.to_string();
 
-                    self.log.error(error_message.clone());
-
                     if let Some(action_id) = action_id {
                         self.process_recorder
                             .record_action_failed(action_id, error_message);
@@ -1254,8 +1219,6 @@ impl CommandDispatcher {
                 if let Err(error) = self.serial_config(connection_id) {
                     let error_message = error.to_string();
 
-                    self.log.error(error_message.clone());
-
                     if let Some(action_id) = action_id {
                         self.process_recorder
                             .record_action_failed(action_id, error_message);
@@ -1271,8 +1234,6 @@ impl CommandDispatcher {
 
                     Err(error) => {
                         let error_message = error.to_string();
-
-                        self.log.error(error_message.clone());
 
                         if let Some(action_id) = action_id {
                             self.process_recorder
@@ -1295,8 +1256,6 @@ impl CommandDispatcher {
                     ));
 
                     let error_message = error.to_string();
-
-                    self.log.error(error_message.clone());
 
                     if let Some(action_id) = action_id {
                         self.process_recorder
@@ -1391,12 +1350,6 @@ impl CommandDispatcher {
                 )
             })?;
 
-        self.log.info(format!(
-            "{kind} controller '{name}' \
-             added for input series \
-             '{input_name}' ({input_id}).",
-        ));
-
         Ok(())
     }
 
@@ -1411,8 +1364,6 @@ impl CommandDispatcher {
                      {error}",
             )
         })?;
-
-        self.log.info(format!("Series {id} added."));
 
         Ok(id)
     }
@@ -1452,8 +1403,6 @@ impl CommandDispatcher {
                  '{input_name}': {error}",
             ));
         }
-
-        self.log.info(format!("Series {output_id} added."));
 
         Ok(output_id)
     }
@@ -1567,12 +1516,6 @@ impl CommandDispatcher {
                 )),
             };
         }
-
-        self.log.info(format!(
-            "Filter for series '{name}' \
-             ({output_id}) changed to \
-             {definition}.",
-        ));
 
         Ok(output_id)
     }
@@ -1710,25 +1653,6 @@ impl CommandDispatcher {
 
         self.series.remove_series(id);
 
-        let dependent_count = dependent_ids
-            .iter()
-            .filter(|&&dependent_id| dependent_id != id)
-            .count();
-
-        if dependent_count == 0 {
-            self.log.info(format!(
-                "Series '{name}' ({id}) \
-                 removed.",
-            ));
-        } else {
-            self.log.info(format!(
-                "Series '{name}' ({id}) \
-                 removed with \
-                 {dependent_count} dependent \
-                 series.",
-            ));
-        }
-
         Ok(id)
     }
 
@@ -1775,8 +1699,6 @@ impl CommandDispatcher {
 
         self.series.clear();
 
-        self.log.info("All series cleared.");
-
         Ok(())
     }
 }
@@ -1793,5 +1715,23 @@ fn worker_event_is_error(event: &WorkerEvent) -> bool {
             | WorkerEvent::InstrumentWriteFailed { .. }
             | WorkerEvent::VirtualInstrumentDescribeFailed { .. }
             | WorkerEvent::SeriesPollingSuspended { .. }
+    )
+}
+
+fn worker_event_completes_action(event: &WorkerEvent) -> bool {
+    matches!(
+        event,
+        WorkerEvent::AcquisitionStarted
+            | WorkerEvent::AcquisitionStopped
+            | WorkerEvent::AcquisitionStartFailed(_)
+            | WorkerEvent::AcquisitionStopFailed(_)
+            | WorkerEvent::SerialTextCommandSucceeded { .. }
+            | WorkerEvent::SerialTextCommandFailed { .. }
+            | WorkerEvent::InstrumentReadSucceeded { .. }
+            | WorkerEvent::InstrumentReadFailed { .. }
+            | WorkerEvent::InstrumentWriteSucceeded { .. }
+            | WorkerEvent::InstrumentWriteFailed { .. }
+            | WorkerEvent::VirtualInstrumentDescribeSucceeded { .. }
+            | WorkerEvent::VirtualInstrumentDescribeFailed { .. }
     )
 }

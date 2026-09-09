@@ -65,8 +65,6 @@ impl DeviceEmulatorService {
             flow_control: serial_config.flow_control(),
         };
 
-        let model_description = format!("Lua model '{}'", script_path.display());
-
         let handle = DeviceEmulatorHandle::start(config, script_path).map_err(|error| {
             format!(
                 "Failed to start device emulator on \
@@ -75,11 +73,6 @@ impl DeviceEmulatorService {
         })?;
 
         self.handle = Some(handle);
-
-        self.log.info(format!(
-            "Device emulator started on {port_name} \
-             using {model_description}.",
-        ));
 
         Ok(())
     }
@@ -100,19 +93,6 @@ impl DeviceEmulatorService {
                 "Device emulator{location} stopped \
                  with an error: {error}",
             ));
-        }
-
-        match port_name {
-            Some(port_name) => {
-                self.log.info(format!(
-                    "Device emulator stopped on \
-                     {port_name}.",
-                ));
-            }
-
-            None => {
-                self.log.info("Device emulator stopped.");
-            }
         }
     }
 

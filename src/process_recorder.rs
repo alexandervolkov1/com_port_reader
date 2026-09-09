@@ -192,6 +192,13 @@ pub enum ProcessAction {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum ProcessActionResult {
+    SerialResponse(String),
+    InstrumentValue(InstrumentValue),
+    VirtualInstrumentCount(usize),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct ProcessMeasurement {
     pub connection_id: ConnectionId,
     pub series_id: SeriesId,
@@ -248,6 +255,7 @@ pub enum ProcessRecord {
         timestamp: SystemTime,
         series_id: Option<SeriesId>,
         series_name: Option<String>,
+        result: Option<ProcessActionResult>,
     },
 
     ActionFailed {
@@ -255,6 +263,19 @@ pub enum ProcessRecord {
         timestamp: SystemTime,
         error: String,
     },
+}
+
+impl ProcessRecord {
+    fn is_timeline_event(&self) -> bool {
+        matches!(
+            self,
+            Self::Log { .. }
+                | Self::ConfigurationLoaded { .. }
+                | Self::ActionRequested { .. }
+                | Self::ActionApplied { .. }
+                | Self::ActionFailed { .. }
+        )
+    }
 }
 
 pub trait ProcessRecordWriter: Send {
@@ -397,18 +418,39 @@ fn store_first_error(destination: &Mutex<Option<String>>, error: impl Into<Strin
 pub struct ProcessRecorder {
     sink: Arc<dyn ProcessRecordSink>,
     next_action_id: Arc<AtomicU64>,
+    timeline_senders: Arc<Mutex<Vec<Sender<ProcessRecord>>>>,
 }
 
 impl ProcessRecorder {
     pub fn spawn(writer: impl ProcessRecordWriter + 'static) -> io::Result<Self> {
         Ok(Self {
             sink: Arc::new(AsyncProcessRecordSink::spawn(writer)?),
-
             next_action_id: Arc::new(AtomicU64::new(1)),
+            timeline_senders: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
+    pub(crate) fn subscribe_timeline(&self) -> Receiver<ProcessRecord> {
+        let (sender, receiver) = unbounded();
+
+        self.timeline_senders
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(sender);
+
+        receiver
+    }
+
     pub fn record(&self, record: ProcessRecord) {
+        if record.is_timeline_event() {
+            let mut senders = self
+                .timeline_senders
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+            senders.retain(|sender| sender.send(record.clone()).is_ok());
+        }
+
         self.sink.record(record);
     }
 
@@ -440,6 +482,21 @@ impl ProcessRecorder {
             timestamp: SystemTime::now(),
             series_id,
             series_name,
+            result: None,
+        });
+    }
+
+    pub fn record_action_applied_with_result(
+        &self,
+        action_id: ProcessActionId,
+        result: ProcessActionResult,
+    ) {
+        self.record(ProcessRecord::ActionApplied {
+            action_id,
+            timestamp: SystemTime::now(),
+            series_id: None,
+            series_name: None,
+            result: Some(result),
         });
     }
 
@@ -499,8 +556,8 @@ impl Default for ProcessRecorder {
     fn default() -> Self {
         Self {
             sink: Arc::new(DisabledProcessRecordSink),
-
             next_action_id: Arc::new(AtomicU64::new(1)),
+            timeline_senders: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -548,8 +605,11 @@ impl From<io::Error> for ProcessRecorderError {
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    use crate::connection::ConnectionId;
+
     use super::{
-        ProcessLogLevel, ProcessRecord, ProcessRecordWriter, ProcessRecorder, ProcessRecorderError,
+        ProcessAction, ProcessActionOrigin, ProcessActionResult, ProcessLogLevel, ProcessRecord,
+        ProcessRecordWriter, ProcessRecorder, ProcessRecorderError,
     };
 
     struct CollectingWriter {
@@ -592,6 +652,65 @@ mod tests {
                 message,
                 ..
             } if message == "Application started",
+        ));
+    }
+
+    #[test]
+    fn publishes_timeline_records_to_subscribers() {
+        let recorder = ProcessRecorder::default();
+
+        let receiver = recorder.subscribe_timeline();
+
+        recorder.record(ProcessRecord::Log {
+            timestamp: std::time::SystemTime::now(),
+            level: ProcessLogLevel::Info,
+            message: "Test timeline event".to_owned(),
+        });
+
+        let record = receiver.try_recv().unwrap();
+
+        assert!(matches!(
+            record,
+            ProcessRecord::Log {
+                level: ProcessLogLevel::Info,
+                message,
+                ..
+            } if message == "Test timeline event"
+        ));
+    }
+
+    #[test]
+    fn publishes_action_result_to_timeline() {
+        let recorder = ProcessRecorder::default();
+        let receiver = recorder.subscribe_timeline();
+
+        let action_id = recorder.record_action(
+            ProcessActionOrigin::UserInterface,
+            ProcessAction::SendSerial {
+                connection_id: ConnectionId::PRIMARY,
+                command: "get".to_owned(),
+            },
+        );
+
+        recorder.record_action_applied_with_result(
+            action_id,
+            ProcessActionResult::SerialResponse("42".to_owned()),
+        );
+
+        let _requested = receiver.try_recv().unwrap();
+
+        let applied = receiver.try_recv().unwrap();
+
+        assert!(matches!(
+            applied,
+            ProcessRecord::ActionApplied {
+                result: Some(
+                    ProcessActionResult::SerialResponse(
+                        response
+                    )
+                ),
+                ..
+            } if response == "42"
         ));
     }
 }

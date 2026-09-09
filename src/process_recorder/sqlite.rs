@@ -10,8 +10,8 @@ use rusqlite::{Connection, params};
 use crate::data::SeriesId;
 
 use super::{
-    ProcessAction, ProcessActionId, ProcessActionOrigin, ProcessControlOutput, ProcessLogLevel,
-    ProcessMeasurement, ProcessRecord, ProcessRecordWriter, ProcessRecorderError,
+    ProcessAction, ProcessActionId, ProcessActionOrigin, ProcessActionResult, ProcessControlOutput,
+    ProcessLogLevel, ProcessMeasurement, ProcessRecord, ProcessRecordWriter, ProcessRecorderError,
 };
 
 pub(crate) struct SqliteProcessRecordWriter {
@@ -83,6 +83,7 @@ impl SqliteProcessRecordWriter {
                     details       TEXT NOT NULL,
                     status        TEXT NOT NULL,
                     completed_at  REAL,
+                    result        TEXT,
                     error         TEXT
                 );
 
@@ -264,9 +265,11 @@ impl SqliteProcessRecordWriter {
         timestamp: SystemTime,
         series_id: Option<SeriesId>,
         series_name: Option<String>,
+        result: Option<ProcessActionResult>,
     ) -> Result<(), ProcessRecorderError> {
         let action_id = sqlite_action_id(action_id)?;
         let series_id = series_id.map(|series_id| series_id.to_string());
+        let result = result.map(|result| format!("{result:?}"));
 
         self.connection
             .execute(
@@ -285,7 +288,8 @@ impl SqliteProcessRecordWriter {
                         COALESCE(
                             ?4,
                             series_name
-                        )
+                        ),
+                    result = ?5
                 WHERE id = ?1
                 ",
                 params![
@@ -293,6 +297,7 @@ impl SqliteProcessRecordWriter {
                     system_time_seconds(timestamp)?,
                     series_id,
                     series_name,
+                    result,
                 ],
             )
             .map_err(|error| recorder_error("Failed to complete action record", error))?;
@@ -453,7 +458,8 @@ impl ProcessRecordWriter for SqliteProcessRecordWriter {
                 timestamp,
                 series_id,
                 series_name,
-            } => self.write_action_applied(action_id, timestamp, series_id, series_name),
+                result,
+            } => self.write_action_applied(action_id, timestamp, series_id, series_name, result),
 
             ProcessRecord::ActionFailed {
                 action_id,
@@ -841,6 +847,7 @@ mod tests {
                 timestamp: UNIX_EPOCH + std::time::Duration::from_secs(1),
                 series_id: Some(SeriesId::new(17)),
                 series_name: Some("temperature".to_owned()),
+                result: None,
             })
             .unwrap();
 
