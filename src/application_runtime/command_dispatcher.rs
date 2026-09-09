@@ -131,6 +131,33 @@ fn resume_controller_safely(
     Ok(())
 }
 
+fn rollback_acquisition_connections(
+    connections: &ConnectionRouter,
+    log: &LogHandle,
+    connection_ids: &BTreeSet<ConnectionId>,
+) {
+    for &connection_id in connection_ids {
+        let Some(worker) = connections.handle(connection_id) else {
+            log.error(format!(
+                "Failed to roll back acquisition \
+                 start for connection \
+                 {connection_id}: worker is not \
+                 registered.",
+            ));
+
+            continue;
+        };
+
+        if let Err(error) = worker.stop(None) {
+            log.error(format!(
+                "Failed to roll back acquisition \
+                 start for connection \
+                 {connection_id}: {error}",
+            ));
+        }
+    }
+}
+
 impl CommandDispatcher {
     pub fn new(
         connections: CommandDispatcherConnections,
@@ -226,26 +253,7 @@ impl CommandDispatcher {
     }
 
     fn rollback_acquisition_start(&self, connection_ids: &BTreeSet<ConnectionId>) {
-        for &connection_id in connection_ids {
-            let Some(worker) = self.connections.handle(connection_id) else {
-                self.log.error(format!(
-                    "Failed to roll back acquisition \
-                     start for connection \
-                     {connection_id}: worker is not \
-                     registered.",
-                ));
-
-                continue;
-            };
-
-            if let Err(error) = worker.stop(None) {
-                self.log.error(format!(
-                    "Failed to roll back acquisition \
-                     start for connection \
-                     {connection_id}: {error}",
-                ));
-            }
-        }
+        rollback_acquisition_connections(&self.connections, &self.log, connection_ids);
     }
 
     fn handle_acquisition_action_event(&mut self, connection_event: &ConnectionWorkerEvent) {
@@ -1750,10 +1758,13 @@ fn worker_event_should_be_logged(event: &WorkerEvent, has_action_id: bool) -> bo
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use crossbeam_channel::{bounded, unbounded};
     use serialport::{DataBits, FlowControl, Parity, StopBits};
 
     use crate::{
+        app_log::LogModel,
         connection::ConnectionId,
         data::SeriesId,
         instrument::{
@@ -1768,13 +1779,17 @@ mod tests {
             ControlLoopDefinition, ControlLoopState, ControlOutputTarget, ControllerInstanceId,
             OnOffController,
         },
+        process_recorder::ProcessRecorder,
         serial_connection::{SerialConnectionRegistry, SerialPortConfig},
         signal_processing::ProcessingService,
         user_command::ResumeControllerError,
-        worker::{ConnectionRouter, WorkerEvent, WorkerHandle},
+        worker::{ConnectionRouter, WorkerCommand, WorkerEvent, WorkerHandle},
     };
 
-    use super::{pause_controller_safely, resume_controller_safely, worker_event_should_be_logged};
+    use super::{
+        pause_controller_safely, resume_controller_safely, rollback_acquisition_connections,
+        worker_event_should_be_logged,
+    };
 
     fn test_serial_config(port_name: &str) -> SerialPortConfig {
         SerialPortConfig::new(
@@ -1929,5 +1944,37 @@ mod tests {
         assert!(matches!(result, Err(ResumeControllerError::Controller(_)),));
 
         assert_eq!(output_handle.mode(target), Ok(OutputMode::Manual),);
+    }
+
+    #[test]
+    fn rolls_back_only_connections_selected_for_start() {
+        let connections = ConnectionRouter::default();
+
+        let previously_running_id = ConnectionId::new(2);
+
+        let previously_stopped_id = ConnectionId::new(3);
+
+        let (running_sender, running_receiver) = unbounded();
+
+        let (stopped_sender, stopped_receiver) = unbounded();
+
+        connections.insert(WorkerHandle::new(previously_running_id, running_sender));
+
+        connections.insert(WorkerHandle::new(previously_stopped_id, stopped_sender));
+
+        let rollback_connections = BTreeSet::from([previously_stopped_id]);
+
+        let recorder = ProcessRecorder::default();
+
+        let (_log_model, log) = LogModel::new(std::env::temp_dir(), recorder);
+
+        rollback_acquisition_connections(&connections, &log, &rollback_connections);
+
+        assert!(matches!(
+            stopped_receiver.try_recv(),
+            Ok(WorkerCommand::Stop { action_id: None }),
+        ));
+
+        assert!(running_receiver.try_recv().is_err(),);
     }
 }
