@@ -114,6 +114,90 @@ impl SqliteProcessRecordWriter {
                     saturated            INTEGER
                 );
 
+                CREATE VIEW IF NOT EXISTS process_timeline AS
+
+                SELECT
+                    timestamp,
+                    'log' AS event_type,
+                    level,
+                    NULL AS action_id,
+                    NULL AS origin,
+                    NULL AS action_type,
+                    NULL AS connection_id,
+                    NULL AS series_id,
+                    NULL AS series_name,
+                    message,
+                    NULL AS details
+                FROM logs
+
+                UNION ALL
+
+                SELECT
+                    timestamp,
+                    'configuration_loaded' AS event_type,
+                    'info' AS level,
+                    NULL AS action_id,
+                    NULL AS origin,
+                    NULL AS action_type,
+                    NULL AS connection_id,
+                    NULL AS series_id,
+                    NULL AS series_name,
+                    startup_path AS message,
+                    source AS details
+                FROM configurations
+
+                UNION ALL
+
+                SELECT
+                    timestamp,
+                    'action_requested' AS event_type,
+                    'info' AS level,
+                    id AS action_id,
+                    origin,
+                    action_type,
+                    connection_id,
+                    series_id,
+                    series_name,
+                    NULL AS message,
+                    details
+                FROM actions
+
+                UNION ALL
+
+                SELECT
+                    completed_at AS timestamp,
+                    'action_applied' AS event_type,
+                    'info' AS level,
+                    id AS action_id,
+                    origin,
+                    action_type,
+                    connection_id,
+                    series_id,
+                    series_name,
+                    NULL AS message,
+                    result AS details
+                FROM actions
+                WHERE status = 'applied'
+                  AND completed_at IS NOT NULL
+
+                UNION ALL
+
+                SELECT
+                    completed_at AS timestamp,
+                    'action_failed' AS event_type,
+                    'error' AS level,
+                    id AS action_id,
+                    origin,
+                    action_type,
+                    connection_id,
+                    series_id,
+                    series_name,
+                    error AS message,
+                    NULL AS details
+                FROM actions
+                WHERE status = 'failed'
+                  AND completed_at IS NOT NULL;
+
                 CREATE INDEX IF NOT EXISTS measurements_timestamp_index
                     ON measurements(timestamp);
 
@@ -997,5 +1081,68 @@ mod tests {
             std::process::id(),
             unique,
         ))
+    }
+
+    #[test]
+    fn exposes_chronological_process_timeline() {
+        let path = temporary_database_path();
+
+        let mut writer = SqliteProcessRecordWriter::create(&path).unwrap();
+
+        let action_id = ProcessActionId::new(7);
+
+        writer
+            .write(ProcessRecord::Log {
+                timestamp: UNIX_EPOCH + std::time::Duration::from_secs(1),
+                level: ProcessLogLevel::Info,
+                message: "test log".to_owned(),
+            })
+            .unwrap();
+
+        writer
+            .write(ProcessRecord::ActionRequested {
+                action_id,
+                timestamp: UNIX_EPOCH + std::time::Duration::from_secs(2),
+                origin: ProcessActionOrigin::UserInterface,
+                action: ProcessAction::StartAcquisition,
+            })
+            .unwrap();
+
+        writer
+            .write(ProcessRecord::ActionApplied {
+                action_id,
+                timestamp: UNIX_EPOCH + std::time::Duration::from_secs(3),
+                series_id: None,
+                series_name: None,
+                result: None,
+            })
+            .unwrap();
+
+        drop(writer);
+
+        let connection = Connection::open(&path).unwrap();
+
+        let mut statement = connection
+            .prepare(
+                "
+                SELECT event_type
+                FROM process_timeline
+                ORDER BY timestamp
+                ",
+            )
+            .unwrap();
+
+        let events = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        drop(statement);
+        drop(connection);
+
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(events, vec!["log", "action_requested", "action_applied",],);
     }
 }
