@@ -24,7 +24,7 @@ use crate::{
         OnOffController, PidController, PidGains, PidOutputLimits, ReferenceKind, ReferenceSource,
     },
     signal_processing::SignalFilterDefinition,
-    user_command::{AcquisitionCommand, UserCommand},
+    user_command::{AcquisitionCommand, EmulatorCommand, UserCommand},
 };
 
 const INSTRUMENT_READ_TIMEOUT: Duration = Duration::from_secs(10);
@@ -2445,11 +2445,11 @@ fn clear_command() -> UserCommand {
 }
 
 fn start_emulator_command() -> UserCommand {
-    UserCommand::StartEmulator
+    EmulatorCommand::Start.into()
 }
 
 fn stop_emulator_command() -> UserCommand {
-    UserCommand::StopEmulator
+    EmulatorCommand::Stop.into()
 }
 
 fn retry_all_command() -> UserCommand {

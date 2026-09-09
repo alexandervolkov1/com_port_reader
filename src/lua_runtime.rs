@@ -111,7 +111,7 @@ mod tests {
         },
         serial_connection::SerialPortConfig,
         signal_processing::SignalFilterDefinition,
-        user_command::{AcquisitionCommand, UserCommand},
+        user_command::{AcquisitionCommand, EmulatorCommand, UserCommand},
     };
 
     fn metakon_source(
@@ -242,12 +242,12 @@ mod tests {
 
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
-            UserCommand::StartEmulator,
+            UserCommand::Emulator(EmulatorCommand::Start,),
         ));
 
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
-            UserCommand::StopEmulator,
+            UserCommand::Emulator(EmulatorCommand::Stop,),
         ));
 
         assert!(command_receiver.try_recv().is_err());

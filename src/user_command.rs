@@ -212,9 +212,22 @@ impl From<AcquisitionCommand> for UserCommand {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EmulatorCommand {
+    Start,
+    Stop,
+}
+
+impl From<EmulatorCommand> for UserCommand {
+    fn from(command: EmulatorCommand) -> Self {
+        Self::Emulator(command)
+    }
+}
+
 #[derive(Debug)]
 pub enum UserCommand {
     Acquisition(AcquisitionCommand),
+    Emulator(EmulatorCommand),
 
     Add(NewSeries),
     AddFilter(NewFilteredSeries),
@@ -343,9 +356,6 @@ pub enum UserCommand {
     RetryAll,
 
     Clear,
-
-    StartEmulator,
-    StopEmulator,
 
     Log {
         message: String,

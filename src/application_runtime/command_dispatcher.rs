@@ -29,6 +29,7 @@ use crate::{
 use super::{
     acquisition_command_handler::AcquisitionCommandHandler,
     acquisition_controller::AcquisitionController, device_emulator_service::DeviceEmulatorService,
+    emulator_command_handler::EmulatorCommandHandler,
 };
 
 pub(crate) struct CommandDispatcherConnections {
@@ -297,16 +298,6 @@ impl CommandDispatcher {
                  has no configured COM port",
             ))
         })
-    }
-
-    fn emulator_connection_id(&self) -> ConnectionId {
-        self.application_definition
-            .emulator()
-            .map_or(ConnectionId::PRIMARY, |emulator| emulator.connection_id())
-    }
-
-    fn emulator_serial_config(&self) -> Result<SerialPortConfig, AcquisitionError> {
-        self.serial_config(self.emulator_connection_id())
     }
 
     fn output_write_error(error: OutputRequestError) -> AcquisitionError {
@@ -1035,53 +1026,14 @@ impl CommandDispatcher {
                 }
             },
 
-            UserCommand::StartEmulator => {
-                let result = (|| {
-                    let serial_config = self.emulator_serial_config().map_err(|error| {
-                        format!(
-                            "Cannot start emulator: \
-                                 {error}",
-                        )
-                    })?;
-
-                    device_emulator.start(&serial_config).map_err(|error| {
-                        format!(
-                            "Cannot start emulator: \
-                                 {error}",
-                        )
-                    })
-                })();
-
-                match result {
-                    Ok(()) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_applied(
-                                action_context.action_id(),
-                                None,
-                                None,
-                            );
-                        }
-                    }
-
-                    Err(error) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder
-                                .record_action_failed(action_context.action_id(), error);
-                        }
-                    }
-                }
-            }
-
-            UserCommand::StopEmulator => {
-                device_emulator.stop();
-
-                if let Some(action_context) = action_context {
-                    self.process_recorder.record_action_applied(
-                        action_context.action_id(),
-                        None,
-                        None,
-                    );
-                }
+            UserCommand::Emulator(command) => {
+                EmulatorCommandHandler::new(
+                    &self.application_definition,
+                    &self.serial_connections,
+                    &self.process_recorder,
+                    device_emulator,
+                )
+                .execute(command, action_context);
             }
 
             UserCommand::Log { message } => {

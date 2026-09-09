@@ -22,7 +22,7 @@ use crate::{
     },
     serial_connection::SerialConnectionRegistry,
     signal_processing::{ProcessingEvent, ProcessingService},
-    user_command::{AcquisitionCommand, UserCommand},
+    user_command::{AcquisitionCommand, EmulatorCommand, UserCommand},
     worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
 };
 
@@ -30,6 +30,7 @@ mod acquisition_command_handler;
 mod acquisition_controller;
 mod command_dispatcher;
 mod device_emulator_service;
+mod emulator_command_handler;
 mod process_control_dispatcher;
 
 pub(crate) use acquisition_controller::AcquisitionController;
@@ -470,7 +471,7 @@ impl ApplicationRuntime {
         }
 
         if self.device_emulator.is_running() {
-            self.execute(UserCommand::StopEmulator);
+            self.execute(EmulatorCommand::Stop.into());
         }
 
         loop {
@@ -718,6 +719,12 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             AcquisitionCommand::Stop => ProcessAction::StopAcquisition,
         }),
 
+        UserCommand::Emulator(command) => Some(match command {
+            EmulatorCommand::Start => ProcessAction::StartEmulator,
+
+            EmulatorCommand::Stop => ProcessAction::StopEmulator,
+        }),
+
         UserCommand::Add(new_series) => Some(ProcessAction::AddSeries {
             connection_id: new_series.connection_id(),
 
@@ -852,10 +859,6 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
         UserCommand::Retry { .. } | UserCommand::RetryAll | UserCommand::Log { .. } => None,
 
         UserCommand::Clear => Some(ProcessAction::ClearSeries),
-
-        UserCommand::StartEmulator => Some(ProcessAction::StartEmulator),
-
-        UserCommand::StopEmulator => Some(ProcessAction::StopEmulator),
 
         UserCommand::SendSerial {
             connection_id,
