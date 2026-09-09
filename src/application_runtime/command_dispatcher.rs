@@ -63,6 +63,89 @@ struct PendingAcquisitionAction {
     rollback_connections: BTreeSet<ConnectionId>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum AcquisitionActionEventOutcome {
+    Ignored,
+    Pending,
+
+    Applied {
+        action_id: ProcessActionId,
+    },
+
+    Failed {
+        action_id: ProcessActionId,
+        rollback_connections: BTreeSet<ConnectionId>,
+    },
+}
+
+fn update_pending_acquisition_action(
+    pending_actions: &mut HashMap<ProcessActionId, PendingAcquisitionAction>,
+    connection_event: &ConnectionWorkerEvent,
+) -> AcquisitionActionEventOutcome {
+    let Some(action_id) = connection_event.action_id() else {
+        return AcquisitionActionEventOutcome::Ignored;
+    };
+
+    let connection_id = connection_event.connection_id();
+
+    let event = connection_event.event();
+
+    let completed = {
+        let Some(pending) = pending_actions.get_mut(&action_id) else {
+            return AcquisitionActionEventOutcome::Ignored;
+        };
+
+        let relevant = matches!(
+            (pending.kind, event),
+            (
+                AcquisitionActionKind::Start,
+                WorkerEvent::AcquisitionStarted | WorkerEvent::AcquisitionStartFailed(_)
+            ) | (
+                AcquisitionActionKind::Stop,
+                WorkerEvent::AcquisitionStopped | WorkerEvent::AcquisitionStopFailed(_)
+            )
+        );
+
+        if !relevant {
+            return AcquisitionActionEventOutcome::Ignored;
+        }
+
+        if !pending.responded_connections.insert(connection_id) {
+            return AcquisitionActionEventOutcome::Ignored;
+        }
+
+        pending.responded_connections.len() == pending.expected_responses
+    };
+
+    let failed = matches!(
+        event,
+        WorkerEvent::AcquisitionStartFailed(_) | WorkerEvent::AcquisitionStopFailed(_)
+    );
+
+    if failed {
+        let rollback_connections = pending_actions
+            .get(&action_id)
+            .filter(|pending| pending.kind == AcquisitionActionKind::Start)
+            .map(|pending| pending.rollback_connections.clone())
+            .unwrap_or_default();
+
+        pending_actions.remove(&action_id);
+
+        return AcquisitionActionEventOutcome::Failed {
+            action_id,
+            rollback_connections,
+        };
+    }
+
+    if completed {
+        pending_actions.remove(&action_id);
+
+        AcquisitionActionEventOutcome::Applied { action_id }
+    } else {
+        AcquisitionActionEventOutcome::Pending
+    }
+}
+
 pub(crate) struct CommandDispatcher {
     connections: ConnectionRouter,
     serial_connections: SerialConnectionRegistry,
@@ -257,73 +340,29 @@ impl CommandDispatcher {
     }
 
     fn handle_acquisition_action_event(&mut self, connection_event: &ConnectionWorkerEvent) {
-        let Some(action_id) = connection_event.action_id() else {
-            return;
-        };
+        match update_pending_acquisition_action(
+            &mut self.pending_acquisition_actions,
+            connection_event,
+        ) {
+            AcquisitionActionEventOutcome::Ignored | AcquisitionActionEventOutcome::Pending => {}
 
-        let connection_id = connection_event.connection_id();
-
-        let event = connection_event.event();
-
-        let failure = match event {
-            WorkerEvent::AcquisitionStartFailed(_) | WorkerEvent::AcquisitionStopFailed(_) => {
-                Some(self.format_worker_event(connection_event))
+            AcquisitionActionEventOutcome::Applied { action_id } => {
+                self.process_recorder
+                    .record_action_applied(action_id, None, None);
             }
 
-            _ => None,
-        };
+            AcquisitionActionEventOutcome::Failed {
+                action_id,
+                rollback_connections,
+            } => {
+                let error = self.format_worker_event(connection_event);
 
-        let completed = {
-            let Some(pending) = self.pending_acquisition_actions.get_mut(&action_id) else {
-                return;
-            };
+                if !rollback_connections.is_empty() {
+                    self.rollback_acquisition_start(&rollback_connections);
+                }
 
-            let relevant = matches!(
-                (pending.kind, event),
-                (
-                    AcquisitionActionKind::Start,
-                    WorkerEvent::AcquisitionStarted | WorkerEvent::AcquisitionStartFailed(_)
-                ) | (
-                    AcquisitionActionKind::Stop,
-                    WorkerEvent::AcquisitionStopped | WorkerEvent::AcquisitionStopFailed(_)
-                )
-            );
-
-            if !relevant {
-                return;
+                self.process_recorder.record_action_failed(action_id, error);
             }
-
-            if !pending.responded_connections.insert(connection_id) {
-                return;
-            }
-
-            pending.responded_connections.len() == pending.expected_responses
-        };
-
-        if let Some(error) = failure {
-            let rollback_connections = self
-                .pending_acquisition_actions
-                .get(&action_id)
-                .filter(|pending| pending.kind == AcquisitionActionKind::Start)
-                .map(|pending| pending.rollback_connections.clone())
-                .unwrap_or_default();
-
-            self.pending_acquisition_actions.remove(&action_id);
-
-            if !rollback_connections.is_empty() {
-                self.rollback_acquisition_start(&rollback_connections);
-            }
-
-            self.process_recorder.record_action_failed(action_id, error);
-
-            return;
-        }
-
-        if completed {
-            self.pending_acquisition_actions.remove(&action_id);
-
-            self.process_recorder
-                .record_action_applied(action_id, None, None);
         }
     }
 
@@ -1758,12 +1797,13 @@ fn worker_event_should_be_logged(event: &WorkerEvent, has_action_id: bool) -> bo
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeSet, HashMap};
 
     use crossbeam_channel::{bounded, unbounded};
     use serialport::{DataBits, FlowControl, Parity, StopBits};
 
     use crate::{
+        acquisition::AcquisitionError,
         app_log::LogModel,
         connection::ConnectionId,
         data::SeriesId,
@@ -1779,16 +1819,19 @@ mod tests {
             ControlLoopDefinition, ControlLoopState, ControlOutputTarget, ControllerInstanceId,
             OnOffController,
         },
-        process_recorder::ProcessRecorder,
+        process_recorder::{ProcessActionId, ProcessRecorder},
         serial_connection::{SerialConnectionRegistry, SerialPortConfig},
         signal_processing::ProcessingService,
         user_command::ResumeControllerError,
-        worker::{ConnectionRouter, WorkerCommand, WorkerEvent, WorkerHandle},
+        worker::{
+            ConnectionRouter, ConnectionWorkerEvent, WorkerCommand, WorkerEvent, WorkerHandle,
+        },
     };
 
     use super::{
+        AcquisitionActionEventOutcome, AcquisitionActionKind, PendingAcquisitionAction,
         pause_controller_safely, resume_controller_safely, rollback_acquisition_connections,
-        worker_event_should_be_logged,
+        update_pending_acquisition_action, worker_event_should_be_logged,
     };
 
     fn test_serial_config(port_name: &str) -> SerialPortConfig {
@@ -1976,5 +2019,102 @@ mod tests {
         ));
 
         assert!(running_receiver.try_recv().is_err(),);
+    }
+
+    #[test]
+    fn acquisition_start_failure_returns_saved_rollback_connections() {
+        let action_id = ProcessActionId::new(1);
+
+        let failed_connection = ConnectionId::new(3);
+
+        let previously_running = ConnectionId::new(2);
+
+        let previously_stopped = ConnectionId::new(3);
+
+        let rollback_connections = BTreeSet::from([previously_stopped]);
+
+        let mut pending_actions = HashMap::from([(
+            action_id,
+            PendingAcquisitionAction {
+                kind: AcquisitionActionKind::Start,
+
+                expected_responses: 2,
+
+                responded_connections: BTreeSet::new(),
+
+                rollback_connections: rollback_connections.clone(),
+            },
+        )]);
+
+        let event = ConnectionWorkerEvent::new(
+            failed_connection,
+            Some(action_id),
+            WorkerEvent::AcquisitionStartFailed(AcquisitionError::from("test start failure")),
+        );
+
+        let outcome = update_pending_acquisition_action(&mut pending_actions, &event);
+
+        assert_eq!(
+            outcome,
+            AcquisitionActionEventOutcome::Failed {
+                action_id,
+                rollback_connections: rollback_connections.clone(),
+            },
+        );
+
+        assert!(!pending_actions.contains_key(&action_id),);
+
+        assert!(rollback_connections.contains(&previously_stopped),);
+
+        assert!(!rollback_connections.contains(&previously_running),);
+    }
+
+    #[test]
+    fn acquisition_start_applies_only_after_all_workers_respond() {
+        let action_id = ProcessActionId::new(1);
+
+        let first_connection = ConnectionId::new(2);
+
+        let second_connection = ConnectionId::new(3);
+
+        let mut pending_actions = HashMap::from([(
+            action_id,
+            PendingAcquisitionAction {
+                kind: AcquisitionActionKind::Start,
+
+                expected_responses: 2,
+
+                responded_connections: BTreeSet::new(),
+
+                rollback_connections: BTreeSet::from([second_connection]),
+            },
+        )]);
+
+        let first_event = ConnectionWorkerEvent::new(
+            first_connection,
+            Some(action_id),
+            WorkerEvent::AcquisitionStarted,
+        );
+
+        let first_outcome = update_pending_acquisition_action(&mut pending_actions, &first_event);
+
+        assert_eq!(first_outcome, AcquisitionActionEventOutcome::Pending,);
+
+        assert!(pending_actions.contains_key(&action_id),);
+
+        let second_event = ConnectionWorkerEvent::new(
+            second_connection,
+            Some(action_id),
+            WorkerEvent::AcquisitionStarted,
+        );
+
+        let second_outcome = update_pending_acquisition_action(&mut pending_actions, &second_event);
+
+        assert_eq!(
+            second_outcome,
+            AcquisitionActionEventOutcome::Applied { action_id },
+        );
+
+        assert!(!pending_actions.contains_key(&action_id),);
     }
 }
