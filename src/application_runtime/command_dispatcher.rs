@@ -324,21 +324,36 @@ impl CommandDispatcher {
     }
 
     fn pause_controller(&self, name: &str) -> Result<(), PauseControllerError> {
-        let safe_write_response = self.output_control.apply_safe(name)?;
-
-        let safe_write_result = safe_write_response.recv();
+        let safe_output_result = self.output_control.apply_safe(name);
 
         let pause_result = self.processing.pause_controller(name);
 
-        match (safe_write_result, pause_result) {
-            (Ok(_), Ok(())) => Ok(()),
+        match safe_output_result {
+            Err(output) => match pause_result {
+                Ok(()) => Err(PauseControllerError::Output(output)),
 
-            (Err(write), Ok(())) => Err(PauseControllerError::SafeOutputWrite(write)),
+                Err(pause) => Err(PauseControllerError::OutputAndControllerPause { output, pause }),
+            },
 
-            (Ok(_), Err(pause)) => Err(PauseControllerError::ControllerAfterSafeOutput(pause)),
+            Ok(response) => {
+                let safe_write_result = response.recv();
 
-            (Err(write), Err(pause)) => {
-                Err(PauseControllerError::SafeOutputWriteAndControllerPause { write, pause })
+                match (safe_write_result, pause_result) {
+                    (Ok(_), Ok(())) => Ok(()),
+
+                    (Err(write), Ok(())) => Err(PauseControllerError::SafeOutputWrite(write)),
+
+                    (Ok(_), Err(pause)) => {
+                        Err(PauseControllerError::ControllerAfterSafeOutput(pause))
+                    }
+
+                    (Err(write), Err(pause)) => {
+                        Err(PauseControllerError::SafeOutputWriteAndControllerPause {
+                            write,
+                            pause,
+                        })
+                    }
+                }
             }
         }
     }

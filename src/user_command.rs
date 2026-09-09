@@ -53,6 +53,10 @@ impl From<ControllerRequestError> for SetControllerInputError {
 #[derive(Clone, Debug, PartialEq)]
 pub enum PauseControllerError {
     Output(OutputRequestError),
+    OutputAndControllerPause {
+        output: OutputRequestError,
+        pause: ControllerRequestError,
+    },
     SafeOutputWrite(OutputWriteError),
     SafeOutputWriteAndControllerPause {
         write: OutputWriteError,
@@ -67,8 +71,17 @@ impl fmt::Display for PauseControllerError {
             Self::Output(error) => {
                 write!(
                     formatter,
-                    "Safe controller output \
+                    "Safe controller output request \
                      failed: {error}",
+                )
+            }
+
+            Self::OutputAndControllerPause { output, pause } => {
+                write!(
+                    formatter,
+                    "Safe controller output request \
+                     failed: {output}; controller pause \
+                     also failed: {pause}",
                 )
             }
 
@@ -105,6 +118,8 @@ impl Error for PauseControllerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Output(error) => Some(error),
+
+            Self::OutputAndControllerPause { output, .. } => Some(output),
 
             Self::SafeOutputWrite(error) => Some(error),
 
