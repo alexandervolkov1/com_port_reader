@@ -629,4 +629,27 @@ mod tests {
 
         assert!(message.contains("returned: 42"));
     }
+
+    #[test]
+    fn ordinary_log_is_rendered_once() {
+        let directory = std::env::temp_dir().join(format!(
+            "com_port_reader_plain_log_test_{}_{}",
+            std::process::id(),
+            NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed,),
+        ));
+
+        let recorder = ProcessRecorder::default();
+
+        let (mut model, log) = super::LogModel::new(&directory, recorder);
+
+        log.info("Test message");
+
+        model.poll();
+
+        assert_eq!(model.entries().len(), 1,);
+
+        assert!(model.entries()[0].text().contains("Test message"),);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
 }
