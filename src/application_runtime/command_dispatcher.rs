@@ -27,6 +27,7 @@ use crate::{
 };
 
 use super::{
+    acquisition_command_handler::AcquisitionCommandHandler,
     acquisition_controller::AcquisitionController, device_emulator_service::DeviceEmulatorService,
 };
 
@@ -51,16 +52,16 @@ impl CommandDispatcherConnections {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AcquisitionActionKind {
+pub(super) enum AcquisitionActionKind {
     Start,
     Stop,
 }
 
-struct PendingAcquisitionAction {
-    kind: AcquisitionActionKind,
-    expected_responses: usize,
-    responded_connections: BTreeSet<ConnectionId>,
-    rollback_connections: BTreeSet<ConnectionId>,
+pub(super) struct PendingAcquisitionAction {
+    pub(super) kind: AcquisitionActionKind,
+    pub(super) expected_responses: usize,
+    pub(super) responded_connections: BTreeSet<ConnectionId>,
+    pub(super) rollback_connections: BTreeSet<ConnectionId>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -214,7 +215,7 @@ fn resume_controller_safely(
     Ok(())
 }
 
-fn rollback_acquisition_connections(
+pub(super) fn rollback_acquisition_connections(
     connections: &ConnectionRouter,
     log: &LogHandle,
     connection_ids: &BTreeSet<ConnectionId>,
@@ -450,6 +451,17 @@ impl CommandDispatcher {
         device_emulator: &mut DeviceEmulatorService,
     ) {
         match command {
+            UserCommand::Acquisition(command) => {
+                AcquisitionCommandHandler::new(
+                    controls,
+                    &self.connections,
+                    &self.log,
+                    &self.process_recorder,
+                    &mut self.pending_acquisition_actions,
+                )
+                .execute(command, action_context);
+            }
+
             UserCommand::Add(new_series) => match self.add_series(new_series) {
                 Ok(id) => {
                     let series_name = self
@@ -1002,62 +1014,6 @@ impl CommandDispatcher {
 
             UserCommand::RetryAll => {
                 self.retry_all_series();
-            }
-
-            UserCommand::Start => {
-                let action_id = action_context.map(|context| context.action_id());
-
-                let rollback_connections = controls.stopped_connection_ids();
-
-                if let Some(action_id) = action_id {
-                    self.pending_acquisition_actions.insert(
-                        action_id,
-                        PendingAcquisitionAction {
-                            kind: AcquisitionActionKind::Start,
-                            expected_responses: controls.worker_count(),
-                            responded_connections: BTreeSet::new(),
-                            rollback_connections: rollback_connections.clone(),
-                        },
-                    );
-                }
-
-                if let Err(error) = controls.start(action_id) {
-                    let error = format!("Failed to start acquisition: {error}",);
-
-                    self.rollback_acquisition_start(&rollback_connections);
-
-                    if let Some(action_id) = action_id {
-                        self.pending_acquisition_actions.remove(&action_id);
-
-                        self.process_recorder.record_action_failed(action_id, error);
-                    }
-                }
-            }
-
-            UserCommand::Stop => {
-                let action_id = action_context.map(|context| context.action_id());
-
-                if let Some(action_id) = action_id {
-                    self.pending_acquisition_actions.insert(
-                        action_id,
-                        PendingAcquisitionAction {
-                            kind: AcquisitionActionKind::Stop,
-                            expected_responses: controls.worker_count(),
-                            responded_connections: BTreeSet::new(),
-                            rollback_connections: BTreeSet::new(),
-                        },
-                    );
-                }
-
-                if let Err(error) = controls.stop(action_id) {
-                    let error = format!("Failed to stop acquisition: {error}",);
-
-                    if let Some(action_id) = action_id {
-                        self.pending_acquisition_actions.remove(&action_id);
-
-                        self.process_recorder.record_action_failed(action_id, error);
-                    }
-                }
             }
 
             UserCommand::Clear => match self.clear_series() {

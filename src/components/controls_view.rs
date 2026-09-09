@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::{application_runtime::ApplicationRuntime, user_command::UserCommand};
+use crate::{application_runtime::ApplicationRuntime, user_command::AcquisitionCommand};
 
 pub fn show(ui: &mut egui::Ui, runtime: &mut ApplicationRuntime) {
     ui.horizontal(|ui| {
@@ -10,11 +10,11 @@ pub fn show(ui: &mut egui::Ui, runtime: &mut ApplicationRuntime) {
             .add_enabled(!running, egui::Button::new("Start"))
             .clicked()
         {
-            runtime.execute(UserCommand::Start);
+            runtime.execute(AcquisitionCommand::Start.into());
         }
 
         if ui.add_enabled(running, egui::Button::new("Stop")).clicked() {
-            runtime.execute(UserCommand::Stop);
+            runtime.execute(AcquisitionCommand::Stop.into());
         }
 
         if running {

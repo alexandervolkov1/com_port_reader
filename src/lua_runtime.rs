@@ -111,7 +111,7 @@ mod tests {
         },
         serial_connection::SerialPortConfig,
         signal_processing::SignalFilterDefinition,
-        user_command::UserCommand,
+        user_command::{AcquisitionCommand, UserCommand},
     };
 
     fn metakon_source(
@@ -227,12 +227,12 @@ mod tests {
 
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
-            UserCommand::Start,
+            UserCommand::Acquisition(AcquisitionCommand::Start,),
         ));
 
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
-            UserCommand::Stop,
+            UserCommand::Acquisition(AcquisitionCommand::Stop,),
         ));
 
         assert!(matches!(
@@ -1724,7 +1724,7 @@ mod tests {
 
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
-            UserCommand::Start,
+            UserCommand::Acquisition(AcquisitionCommand::Start,),
         ));
 
         assert!(matches!(

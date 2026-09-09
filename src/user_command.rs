@@ -200,8 +200,22 @@ impl From<OutputRequestError> for ResumeControllerError {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AcquisitionCommand {
+    Start,
+    Stop,
+}
+
+impl From<AcquisitionCommand> for UserCommand {
+    fn from(command: AcquisitionCommand) -> Self {
+        Self::Acquisition(command)
+    }
+}
+
 #[derive(Debug)]
 pub enum UserCommand {
+    Acquisition(AcquisitionCommand),
+
     Add(NewSeries),
     AddFilter(NewFilteredSeries),
 
@@ -328,8 +342,6 @@ pub enum UserCommand {
 
     RetryAll,
 
-    Start,
-    Stop,
     Clear,
 
     StartEmulator,

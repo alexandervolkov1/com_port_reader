@@ -24,7 +24,7 @@ use crate::{
         OnOffController, PidController, PidGains, PidOutputLimits, ReferenceKind, ReferenceSource,
     },
     signal_processing::SignalFilterDefinition,
-    user_command::UserCommand,
+    user_command::{AcquisitionCommand, UserCommand},
 };
 
 const INSTRUMENT_READ_TIMEOUT: Duration = Duration::from_secs(10);
@@ -2433,11 +2433,11 @@ fn send_application_command(
 }
 
 fn start_command() -> UserCommand {
-    UserCommand::Start
+    AcquisitionCommand::Start.into()
 }
 
 fn stop_command() -> UserCommand {
-    UserCommand::Stop
+    AcquisitionCommand::Stop.into()
 }
 
 fn clear_command() -> UserCommand {

@@ -246,7 +246,10 @@ mod tests {
 
     use super::{LuaEvent, LuaWorker, load_application_scripts};
 
-    use crate::{application_definition::ApplicationDefinition, user_command::UserCommand};
+    use crate::{
+        application_definition::ApplicationDefinition,
+        user_command::{AcquisitionCommand, UserCommand},
+    };
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -378,7 +381,7 @@ mod tests {
             application_command_receiver
                 .recv_timeout(TEST_TIMEOUT)
                 .unwrap(),
-            UserCommand::Start,
+            UserCommand::Acquisition(AcquisitionCommand::Start,),
         ));
 
         assert_eq!(

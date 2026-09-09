@@ -22,10 +22,11 @@ use crate::{
     },
     serial_connection::SerialConnectionRegistry,
     signal_processing::{ProcessingEvent, ProcessingService},
-    user_command::UserCommand,
+    user_command::{AcquisitionCommand, UserCommand},
     worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
 };
 
+mod acquisition_command_handler;
 mod acquisition_controller;
 mod command_dispatcher;
 mod device_emulator_service;
@@ -465,7 +466,7 @@ impl ApplicationRuntime {
         let deadline = Instant::now() + RUNTIME_STOP_TIMEOUT;
 
         if self.is_running() {
-            self.execute(UserCommand::Stop);
+            self.execute(UserCommand::Acquisition(AcquisitionCommand::Stop));
         }
 
         if self.device_emulator.is_running() {
@@ -711,6 +712,12 @@ fn resolve_action_series_id(action: &mut ProcessAction, series: &SeriesStore) {
 
 fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
     match command {
+        UserCommand::Acquisition(command) => Some(match command {
+            AcquisitionCommand::Start => ProcessAction::StartAcquisition,
+
+            AcquisitionCommand::Stop => ProcessAction::StopAcquisition,
+        }),
+
         UserCommand::Add(new_series) => Some(ProcessAction::AddSeries {
             connection_id: new_series.connection_id(),
 
@@ -843,10 +850,6 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
         }),
 
         UserCommand::Retry { .. } | UserCommand::RetryAll | UserCommand::Log { .. } => None,
-
-        UserCommand::Start => Some(ProcessAction::StartAcquisition),
-
-        UserCommand::Stop => Some(ProcessAction::StopAcquisition),
 
         UserCommand::Clear => Some(ProcessAction::ClearSeries),
 
