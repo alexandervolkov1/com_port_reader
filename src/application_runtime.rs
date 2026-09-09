@@ -22,7 +22,9 @@ use crate::{
     },
     serial_connection::SerialConnectionRegistry,
     signal_processing::{ProcessingEvent, ProcessingService},
-    user_command::{AcquisitionCommand, EmulatorCommand, InstrumentCommand, UserCommand},
+    user_command::{
+        AcquisitionCommand, EmulatorCommand, InstrumentCommand, SerialCommand, UserCommand,
+    },
     worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
 };
 
@@ -33,6 +35,7 @@ mod device_emulator_service;
 mod emulator_command_handler;
 mod instrument_command_handler;
 mod process_control_dispatcher;
+mod serial_command_handler;
 
 pub(crate) use acquisition_controller::AcquisitionController;
 pub(crate) use command_dispatcher::{CommandDispatcher, CommandDispatcherConnections};
@@ -752,6 +755,16 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             }
         }),
 
+        UserCommand::Serial(command) => Some(match command {
+            SerialCommand::SendText {
+                connection_id,
+                command,
+            } => ProcessAction::SendSerial {
+                connection_id: *connection_id,
+                command: command.clone(),
+            },
+        }),
+
         UserCommand::Add(new_series) => Some(ProcessAction::AddSeries {
             connection_id: new_series.connection_id(),
 
@@ -886,14 +899,6 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
         UserCommand::Retry { .. } | UserCommand::RetryAll | UserCommand::Log { .. } => None,
 
         UserCommand::Clear => Some(ProcessAction::ClearSeries),
-
-        UserCommand::SendSerial {
-            connection_id,
-            command,
-        } => Some(ProcessAction::SendSerial {
-            connection_id: *connection_id,
-            command: command.clone(),
-        }),
     }
 }
 

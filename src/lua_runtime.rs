@@ -111,7 +111,9 @@ mod tests {
         },
         serial_connection::SerialPortConfig,
         signal_processing::SignalFilterDefinition,
-        user_command::{AcquisitionCommand, EmulatorCommand, InstrumentCommand, UserCommand},
+        user_command::{
+            AcquisitionCommand, EmulatorCommand, InstrumentCommand, SerialCommand, UserCommand,
+        },
     };
 
     fn metakon_source(
@@ -367,11 +369,14 @@ mod tests {
 
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
-            UserCommand::SendSerial {
-                connection_id,
-                command,
-            }
-                if connection_id == ConnectionId::PRIMARY
+            UserCommand::Serial(
+                SerialCommand::SendText {
+                    connection_id,
+                    command,
+                },
+            )
+                if connection_id
+                    == ConnectionId::PRIMARY
                     && command == "set amplitude 25",
         ));
 
@@ -1685,10 +1690,12 @@ mod tests {
 
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
-            UserCommand::SendSerial {
-                connection_id,
-                command,
-            }
+            UserCommand::Serial(
+                SerialCommand::SendText {
+                    connection_id,
+                    command,
+                },
+            )
                 if connection_id
                     == ConnectionId::new(2)
                     && command == "reset",

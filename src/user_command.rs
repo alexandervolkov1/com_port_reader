@@ -251,10 +251,25 @@ impl From<InstrumentCommand> for UserCommand {
 }
 
 #[derive(Debug)]
+pub(crate) enum SerialCommand {
+    SendText {
+        connection_id: ConnectionId,
+        command: String,
+    },
+}
+
+impl From<SerialCommand> for UserCommand {
+    fn from(command: SerialCommand) -> Self {
+        Self::Serial(command)
+    }
+}
+
+#[derive(Debug)]
 pub enum UserCommand {
     Acquisition(AcquisitionCommand),
     Emulator(EmulatorCommand),
     Instrument(InstrumentCommand),
+    Serial(SerialCommand),
 
     Add(NewSeries),
     AddFilter(NewFilteredSeries),
@@ -386,11 +401,6 @@ pub enum UserCommand {
 
     Log {
         message: String,
-    },
-
-    SendSerial {
-        connection_id: ConnectionId,
-        command: String,
     },
 }
 

@@ -24,7 +24,9 @@ use crate::{
         OnOffController, PidController, PidGains, PidOutputLimits, ReferenceKind, ReferenceSource,
     },
     signal_processing::SignalFilterDefinition,
-    user_command::{AcquisitionCommand, EmulatorCommand, InstrumentCommand, UserCommand},
+    user_command::{
+        AcquisitionCommand, EmulatorCommand, InstrumentCommand, SerialCommand, UserCommand,
+    },
 };
 
 const INSTRUMENT_READ_TIMEOUT: Duration = Duration::from_secs(10);
@@ -2418,10 +2420,11 @@ fn register_send_serial(
 
         send_application_command(
             &command_sender,
-            UserCommand::SendSerial {
+            SerialCommand::SendText {
                 connection_id,
                 command,
-            },
+            }
+            .into(),
         )
     })?;
 

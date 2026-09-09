@@ -16,7 +16,7 @@ use crate::{
     process_recorder::{
         ProcessActionContext, ProcessActionId, ProcessActionResult, ProcessRecorder,
     },
-    serial_connection::{SerialConnectionRegistry, SerialPortConfig},
+    serial_connection::SerialConnectionRegistry,
     signal_processing::{ProcessingHandle, SignalFilterDefinition},
     user_command::{
         PauseControllerError, ResumeControllerError, SetControllerInputError, UserCommand,
@@ -31,6 +31,7 @@ use super::{
     acquisition_controller::AcquisitionController, device_emulator_service::DeviceEmulatorService,
     emulator_command_handler::EmulatorCommandHandler,
     instrument_command_handler::InstrumentCommandHandler,
+    serial_command_handler::SerialCommandHandler,
 };
 
 pub(crate) struct CommandDispatcherConnections {
@@ -268,39 +269,6 @@ impl CommandDispatcher {
         }
     }
 
-    fn connection_worker(
-        &self,
-        connection_id: ConnectionId,
-    ) -> Result<WorkerHandle, AcquisitionError> {
-        self.connections.handle(connection_id).ok_or_else(|| {
-            AcquisitionError::from(format!(
-                "Connection worker {connection_id:?} is not registered",
-            ))
-        })
-    }
-
-    fn serial_config(
-        &self,
-        connection_id: ConnectionId,
-    ) -> Result<SerialPortConfig, AcquisitionError> {
-        let store = self
-            .serial_connections
-            .store(connection_id)
-            .ok_or_else(|| {
-                AcquisitionError::from(format!(
-                    "Serial connection {connection_id} \
-                     is not registered",
-                ))
-            })?;
-
-        store.snapshot().ok_or_else(|| {
-            AcquisitionError::from(format!(
-                "Serial connection {connection_id} \
-                 has no configured COM port",
-            ))
-        })
-    }
-
     fn format_worker_event(&self, connection_event: &ConnectionWorkerEvent) -> String {
         let connection_id = connection_event.connection_id();
 
@@ -462,6 +430,15 @@ impl CommandDispatcher {
                     &self.connections,
                     &self.serial_connections,
                     &self.output_control,
+                    &self.process_recorder,
+                )
+                .execute(command, action_context);
+            }
+
+            UserCommand::Serial(command) => {
+                SerialCommandHandler::new(
+                    &self.connections,
+                    &self.serial_connections,
                     &self.process_recorder,
                 )
                 .execute(command, action_context);
@@ -1043,49 +1020,6 @@ impl CommandDispatcher {
             UserCommand::Log { message } => {
                 self.log.info(message);
             }
-
-            UserCommand::SendSerial {
-                connection_id,
-                command,
-            } => {
-                let action_id = action_context.map(|context| context.action_id());
-
-                let config = match self.serial_config(connection_id) {
-                    Ok(config) => config,
-
-                    Err(error) => {
-                        let error = error.to_string();
-
-                        if let Some(action_id) = action_id {
-                            self.process_recorder.record_action_failed(action_id, error);
-                        }
-
-                        return;
-                    }
-                };
-
-                let worker_handle = match self.connection_worker(connection_id) {
-                    Ok(worker_handle) => worker_handle,
-
-                    Err(error) => {
-                        let error = error.to_string();
-
-                        if let Some(action_id) = action_id {
-                            self.process_recorder.record_action_failed(action_id, error);
-                        }
-
-                        return;
-                    }
-                };
-
-                if let Err(error) = worker_handle.send_serial_text(action_id, config, command) {
-                    let error = format!("Failed to send serial command: {error}");
-
-                    if let Some(action_id) = action_id {
-                        self.process_recorder.record_action_failed(action_id, error);
-                    }
-                }
-            }
         }
     }
 
@@ -1339,6 +1273,18 @@ impl CommandDispatcher {
         }
 
         Ok(output_id)
+    }
+
+    fn connection_worker(
+        &self,
+        connection_id: ConnectionId,
+    ) -> Result<WorkerHandle, AcquisitionError> {
+        self.connections.handle(connection_id).ok_or_else(|| {
+            AcquisitionError::from(format!(
+                "Connection worker {connection_id:?} \
+                     is not registered",
+            ))
+        })
     }
 
     fn retry_series(&self, name: String) {
