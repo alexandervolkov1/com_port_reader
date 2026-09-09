@@ -110,6 +110,27 @@ fn pause_controller_safely(
     }
 }
 
+fn resume_controller_safely(
+    output_control: &OutputHandle,
+    processing: &ProcessingHandle<SeriesId>,
+    name: &str,
+) -> Result<(), ResumeControllerError> {
+    output_control.request_automatic(name)?;
+
+    if let Err(controller_error) = processing.resume_controller(name) {
+        if let Err(rollback_error) = output_control.rollback_automatic_request(name) {
+            return Err(ResumeControllerError::Rollback {
+                controller: controller_error,
+                rollback: rollback_error,
+            });
+        }
+
+        return Err(ResumeControllerError::Controller(controller_error));
+    }
+
+    Ok(())
+}
+
 impl CommandDispatcher {
     pub fn new(
         connections: CommandDispatcherConnections,
@@ -367,20 +388,7 @@ impl CommandDispatcher {
     }
 
     fn resume_controller(&self, name: &str) -> Result<(), ResumeControllerError> {
-        self.output_control.request_automatic(name)?;
-
-        if let Err(controller_error) = self.processing.resume_controller(name) {
-            if let Err(rollback_error) = self.output_control.rollback_automatic_request(name) {
-                return Err(ResumeControllerError::Rollback {
-                    controller: controller_error,
-                    rollback: rollback_error,
-                });
-            }
-
-            return Err(ResumeControllerError::Controller(controller_error));
-        }
-
-        Ok(())
+        resume_controller_safely(&self.output_control, &self.processing, name)
     }
 
     fn pause_controller(&self, name: &str) -> Result<(), PauseControllerError> {
@@ -1742,25 +1750,43 @@ fn worker_event_should_be_logged(event: &WorkerEvent, has_action_id: bool) -> bo
 
 #[cfg(test)]
 mod tests {
+    use crossbeam_channel::{bounded, unbounded};
+    use serialport::{DataBits, FlowControl, Parity, StopBits};
+
     use crate::{
         connection::ConnectionId,
         data::SeriesId,
         instrument::{
-            ParameterAccess, ParameterRange, ParameterValueType,
+            ConnectedParameterAddress, InstrumentParameterAddress, InstrumentValue,
+            InstrumentWriteRequest, ParameterAccess, ParameterRange, ParameterValueType,
             virtual_instrument::{
                 VirtualInstrumentId, VirtualParameterDescriptor, VirtualParameterId,
             },
         },
-        output_control::OutputService,
+        output_control::{OutputMode, OutputService},
         process_control::{
-            ControlLoopDefinition, ControlLoopState, ControlOutputTarget, OnOffController,
+            ControlLoopDefinition, ControlLoopState, ControlOutputTarget, ControllerInstanceId,
+            OnOffController,
         },
-        serial_connection::SerialConnectionRegistry,
+        serial_connection::{SerialConnectionRegistry, SerialPortConfig},
         signal_processing::ProcessingService,
-        worker::{ConnectionRouter, WorkerEvent},
+        user_command::ResumeControllerError,
+        worker::{ConnectionRouter, WorkerEvent, WorkerHandle},
     };
 
-    use super::{pause_controller_safely, worker_event_should_be_logged};
+    use super::{pause_controller_safely, resume_controller_safely, worker_event_should_be_logged};
+
+    fn test_serial_config(port_name: &str) -> SerialPortConfig {
+        SerialPortConfig::new(
+            port_name.to_owned(),
+            9_600,
+            DataBits::Eight,
+            Parity::None,
+            StopBits::One,
+            FlowControl::None,
+            250,
+        )
+    }
 
     #[test]
     fn suppresses_action_worker_event_duplicate_log() {
@@ -1834,5 +1860,74 @@ mod tests {
             processing_handle.controller_state("heater"),
             Ok(ControlLoopState::Paused),
         );
+    }
+
+    #[test]
+    fn rolls_back_automatic_request_when_controller_resume_fails() {
+        let processing = ProcessingService::<SeriesId>::spawn().unwrap();
+
+        let processing_handle = processing.handle();
+
+        let connection_id = ConnectionId::new(2);
+
+        let instrument_id = VirtualInstrumentId::new(7);
+
+        let parameter_id = VirtualParameterId::new(4);
+
+        let target = ConnectedParameterAddress::new(
+            connection_id,
+            InstrumentParameterAddress::virtual_instrument(instrument_id, parameter_id),
+        );
+
+        let serial_connections = SerialConnectionRegistry::new();
+
+        serial_connections
+            .register(connection_id)
+            .unwrap()
+            .set(Some(test_serial_config("COM9")));
+
+        let connection_router = ConnectionRouter::default();
+
+        let (command_sender, command_receiver) = unbounded();
+
+        connection_router.insert(WorkerHandle::new(connection_id, command_sender));
+
+        let output_service = OutputService::spawn(connection_router, serial_connections).unwrap();
+
+        let output_handle = output_service.handle();
+
+        output_handle
+            .register_controller(target, "heater", ControllerInstanceId::for_test(1), None)
+            .unwrap();
+
+        let request = InstrumentWriteRequest::virtual_instrument(
+            instrument_id,
+            parameter_id,
+            InstrumentValue::Number(35.0),
+        );
+
+        let (response_sender, _response_receiver) = bounded(1);
+
+        output_handle
+            .write_instrument(None, connection_id, request, response_sender)
+            .unwrap();
+
+        assert_eq!(output_handle.mode(target), Ok(OutputMode::Manual),);
+
+        output_handle.request_automatic("heater").unwrap();
+
+        assert_eq!(output_handle.mode(target), Ok(OutputMode::AutomaticPending),);
+
+        output_handle.rollback_automatic_request("heater").unwrap();
+
+        assert_eq!(output_handle.mode(target), Ok(OutputMode::Manual),);
+
+        let _ = command_receiver.try_recv().unwrap();
+
+        let result = resume_controller_safely(&output_handle, &processing_handle, "heater");
+
+        assert!(matches!(result, Err(ResumeControllerError::Controller(_)),));
+
+        assert_eq!(output_handle.mode(target), Ok(OutputMode::Manual),);
     }
 }
