@@ -11,7 +11,7 @@ use crate::{
         SeriesStore,
     },
     instrument::ConnectedParameterAddress,
-    output_control::{OutputHandle, OutputRequestError},
+    output_control::OutputHandle,
     process_control::{ControlLoopDefinition, ControlOutputTarget, NewController},
     process_recorder::{
         ProcessActionContext, ProcessActionId, ProcessActionResult, ProcessRecorder,
@@ -30,6 +30,7 @@ use super::{
     acquisition_command_handler::AcquisitionCommandHandler,
     acquisition_controller::AcquisitionController, device_emulator_service::DeviceEmulatorService,
     emulator_command_handler::EmulatorCommandHandler,
+    instrument_command_handler::InstrumentCommandHandler,
 };
 
 pub(crate) struct CommandDispatcherConnections {
@@ -300,13 +301,6 @@ impl CommandDispatcher {
         })
     }
 
-    fn output_write_error(error: OutputRequestError) -> AcquisitionError {
-        AcquisitionError::from(format!(
-            "Failed to request instrument \
-                 write: {error}",
-        ))
-    }
-
     fn format_worker_event(&self, connection_event: &ConnectionWorkerEvent) -> String {
         let connection_id = connection_event.connection_id();
 
@@ -449,6 +443,26 @@ impl CommandDispatcher {
                     &self.log,
                     &self.process_recorder,
                     &mut self.pending_acquisition_actions,
+                )
+                .execute(command, action_context);
+            }
+
+            UserCommand::Emulator(command) => {
+                EmulatorCommandHandler::new(
+                    &self.application_definition,
+                    &self.serial_connections,
+                    &self.process_recorder,
+                    device_emulator,
+                )
+                .execute(command, action_context);
+            }
+
+            UserCommand::Instrument(command) => {
+                InstrumentCommandHandler::new(
+                    &self.connections,
+                    &self.serial_connections,
+                    &self.output_control,
+                    &self.process_recorder,
                 )
                 .execute(command, action_context);
             }
@@ -1026,16 +1040,6 @@ impl CommandDispatcher {
                 }
             },
 
-            UserCommand::Emulator(command) => {
-                EmulatorCommandHandler::new(
-                    &self.application_definition,
-                    &self.serial_connections,
-                    &self.process_recorder,
-                    device_emulator,
-                )
-                .execute(command, action_context);
-            }
-
             UserCommand::Log { message } => {
                 self.log.info(message);
             }
@@ -1080,152 +1084,6 @@ impl CommandDispatcher {
                     if let Some(action_id) = action_id {
                         self.process_recorder.record_action_failed(action_id, error);
                     }
-                }
-            }
-
-            UserCommand::ReadInstrument {
-                connection_id,
-                request,
-                response_sender,
-            } => {
-                let action_id = action_context.map(|context| context.action_id());
-
-                let config = match self.serial_config(connection_id) {
-                    Ok(config) => config,
-
-                    Err(error) => {
-                        let error_message = error.to_string();
-
-                        if let Some(action_id) = action_id {
-                            self.process_recorder
-                                .record_action_failed(action_id, error_message);
-                        }
-
-                        let _ = response_sender.send(Err(error));
-
-                        return;
-                    }
-                };
-
-                let worker_handle = match self.connection_worker(connection_id) {
-                    Ok(worker_handle) => worker_handle,
-
-                    Err(error) => {
-                        let error_message = error.to_string();
-
-                        if let Some(action_id) = action_id {
-                            self.process_recorder
-                                .record_action_failed(action_id, error_message);
-                        }
-
-                        let _ = response_sender.send(Err(error));
-
-                        return;
-                    }
-                };
-
-                let send_result = worker_handle.read_instrument(
-                    action_id,
-                    config.port_name().to_owned(),
-                    request,
-                    response_sender.clone(),
-                );
-
-                if let Err(send_error) = send_result {
-                    let error = AcquisitionError::from(format!(
-                        "Failed to request instrument \
-                         read: {send_error}",
-                    ));
-
-                    let error_message = error.to_string();
-
-                    if let Some(action_id) = action_id {
-                        self.process_recorder
-                            .record_action_failed(action_id, error_message);
-                    }
-
-                    let _ = response_sender.send(Err(error));
-                }
-            }
-
-            UserCommand::WriteInstrument {
-                connection_id,
-                request,
-                response_sender,
-            } => {
-                let action_id = action_context.map(|context| context.action_id());
-
-                if let Err(error) = self.output_control.write_instrument(
-                    action_id,
-                    connection_id,
-                    request,
-                    response_sender.clone(),
-                ) {
-                    let error = Self::output_write_error(error);
-                    let error_message = error.to_string();
-
-                    if let Some(action_id) = action_id {
-                        self.process_recorder
-                            .record_action_failed(action_id, error_message);
-                    }
-
-                    let _ = response_sender.send(Err(error));
-                }
-            }
-
-            UserCommand::DescribeVirtualInstruments {
-                connection_id,
-                response_sender,
-            } => {
-                let action_id = action_context.map(|context| context.action_id());
-
-                if let Err(error) = self.serial_config(connection_id) {
-                    let error_message = error.to_string();
-
-                    if let Some(action_id) = action_id {
-                        self.process_recorder
-                            .record_action_failed(action_id, error_message);
-                    }
-
-                    let _ = response_sender.send(Err(error));
-
-                    return;
-                }
-
-                let worker_handle = match self.connection_worker(connection_id) {
-                    Ok(worker_handle) => worker_handle,
-
-                    Err(error) => {
-                        let error_message = error.to_string();
-
-                        if let Some(action_id) = action_id {
-                            self.process_recorder
-                                .record_action_failed(action_id, error_message);
-                        }
-
-                        let _ = response_sender.send(Err(error));
-
-                        return;
-                    }
-                };
-
-                let send_result =
-                    worker_handle.describe_virtual_instruments(action_id, response_sender.clone());
-
-                if let Err(send_error) = send_result {
-                    let error = AcquisitionError::from(format!(
-                        "Failed to request virtual \
-                         instrument discovery: {send_error}",
-                    ));
-
-                    let error_message = error.to_string();
-
-                    if let Some(action_id) = action_id {
-                        self.process_recorder
-                            .record_action_failed(action_id, error_message);
-                    }
-
-                    let _ = response_sender.send(Err(error));
                 }
             }
         }

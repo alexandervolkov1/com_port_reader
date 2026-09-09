@@ -22,7 +22,7 @@ use crate::{
     },
     serial_connection::SerialConnectionRegistry,
     signal_processing::{ProcessingEvent, ProcessingService},
-    user_command::{AcquisitionCommand, EmulatorCommand, UserCommand},
+    user_command::{AcquisitionCommand, EmulatorCommand, InstrumentCommand, UserCommand},
     worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
 };
 
@@ -31,6 +31,7 @@ mod acquisition_controller;
 mod command_dispatcher;
 mod device_emulator_service;
 mod emulator_command_handler;
+mod instrument_command_handler;
 mod process_control_dispatcher;
 
 pub(crate) use acquisition_controller::AcquisitionController;
@@ -725,6 +726,32 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             EmulatorCommand::Stop => ProcessAction::StopEmulator,
         }),
 
+        UserCommand::Instrument(command) => Some(match command {
+            InstrumentCommand::Read {
+                connection_id,
+                request,
+                ..
+            } => ProcessAction::ReadInstrument {
+                connection_id: *connection_id,
+                request: request.to_string(),
+            },
+
+            InstrumentCommand::Write {
+                connection_id,
+                request,
+                ..
+            } => ProcessAction::WriteInstrument {
+                connection_id: *connection_id,
+                request: request.to_string(),
+            },
+
+            InstrumentCommand::DescribeVirtualInstruments { connection_id, .. } => {
+                ProcessAction::DescribeVirtualInstruments {
+                    connection_id: *connection_id,
+                }
+            }
+        }),
+
         UserCommand::Add(new_series) => Some(ProcessAction::AddSeries {
             connection_id: new_series.connection_id(),
 
@@ -867,30 +894,6 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             connection_id: *connection_id,
             command: command.clone(),
         }),
-
-        UserCommand::ReadInstrument {
-            connection_id,
-            request,
-            ..
-        } => Some(ProcessAction::ReadInstrument {
-            connection_id: *connection_id,
-            request: request.to_string(),
-        }),
-
-        UserCommand::WriteInstrument {
-            connection_id,
-            request,
-            ..
-        } => Some(ProcessAction::WriteInstrument {
-            connection_id: *connection_id,
-            request: request.to_string(),
-        }),
-
-        UserCommand::DescribeVirtualInstruments { connection_id, .. } => {
-            Some(ProcessAction::DescribeVirtualInstruments {
-                connection_id: *connection_id,
-            })
-        }
     }
 }
 

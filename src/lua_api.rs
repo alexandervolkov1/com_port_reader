@@ -24,7 +24,7 @@ use crate::{
         OnOffController, PidController, PidGains, PidOutputLimits, ReferenceKind, ReferenceSource,
     },
     signal_processing::SignalFilterDefinition,
-    user_command::{AcquisitionCommand, EmulatorCommand, UserCommand},
+    user_command::{AcquisitionCommand, EmulatorCommand, InstrumentCommand, UserCommand},
 };
 
 const INSTRUMENT_READ_TIMEOUT: Duration = Duration::from_secs(10);
@@ -714,10 +714,11 @@ fn register_virtual_instrument_controller(
 
         send_application_command(
             &command_sender,
-            UserCommand::DescribeVirtualInstruments {
+            InstrumentCommand::DescribeVirtualInstruments {
                 connection_id,
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         let descriptors = match response_receiver.recv_timeout(VIRTUAL_INSTRUMENT_DISCOVERY_TIMEOUT)
@@ -1479,11 +1480,12 @@ impl LuaVirtualInstrument {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::ReadInstrument {
+            InstrumentCommand::Read {
                 connection_id: self.connection_id,
                 request,
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         match response_receiver.recv_timeout(INSTRUMENT_READ_TIMEOUT) {
@@ -1529,11 +1531,12 @@ impl LuaVirtualInstrument {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::WriteInstrument {
+            InstrumentCommand::Write {
                 connection_id: self.connection_id,
                 request,
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         match response_receiver.recv_timeout(INSTRUMENT_WRITE_TIMEOUT) {
@@ -1611,11 +1614,12 @@ impl LuaMetakon5x3 {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::WriteInstrument {
+            InstrumentCommand::Write {
                 connection_id: self.connection_id,
                 request,
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         match response_receiver.recv_timeout(INSTRUMENT_WRITE_TIMEOUT) {
@@ -1691,11 +1695,12 @@ impl LuaMetakon5x3 {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::ReadInstrument {
+            InstrumentCommand::Read {
                 connection_id: self.connection_id,
                 request,
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         match response_receiver.recv_timeout(INSTRUMENT_READ_TIMEOUT) {

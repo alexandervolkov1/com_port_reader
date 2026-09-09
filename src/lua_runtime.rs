@@ -111,7 +111,7 @@ mod tests {
         },
         serial_connection::SerialPortConfig,
         signal_processing::SignalFilterDefinition,
-        user_command::{AcquisitionCommand, EmulatorCommand, UserCommand},
+        user_command::{AcquisitionCommand, EmulatorCommand, InstrumentCommand, UserCommand},
     };
 
     fn metakon_source(
@@ -860,11 +860,11 @@ mod tests {
         let responder = std::thread::spawn(move || {
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::ReadInstrument {
+            let UserCommand::Instrument(InstrumentCommand::Read {
                 connection_id,
                 request,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!("expected ReadInstrument command");
             };
@@ -921,11 +921,11 @@ mod tests {
         let responder = std::thread::spawn(move || {
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::ReadInstrument {
+            let UserCommand::Instrument(InstrumentCommand::Read {
                 connection_id,
                 request,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!("expected ReadInstrument command");
             };
@@ -972,11 +972,11 @@ mod tests {
         let responder = std::thread::spawn(move || {
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::ReadInstrument {
+            let UserCommand::Instrument(InstrumentCommand::Read {
                 connection_id,
                 request,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!("expected ReadInstrument command");
             };
@@ -1033,11 +1033,11 @@ mod tests {
         let responder = std::thread::spawn(move || {
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::WriteInstrument {
+            let UserCommand::Instrument(InstrumentCommand::Write {
                 connection_id,
                 request,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!("expected WriteInstrument command");
             };
@@ -1095,11 +1095,11 @@ mod tests {
         let responder = std::thread::spawn(move || {
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::WriteInstrument {
+            let UserCommand::Instrument(InstrumentCommand::Write {
                 connection_id,
                 request,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!("expected WriteInstrument command");
             };
@@ -1583,14 +1583,14 @@ mod tests {
         let responder = std::thread::spawn(move || {
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::DescribeVirtualInstruments {
+            let UserCommand::Instrument(InstrumentCommand::DescribeVirtualInstruments {
                 connection_id,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!(
                     "expected virtual instrument \
-                         discovery command"
+                     discovery command"
                 );
             };
 

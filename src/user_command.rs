@@ -225,9 +225,36 @@ impl From<EmulatorCommand> for UserCommand {
 }
 
 #[derive(Debug)]
+pub(crate) enum InstrumentCommand {
+    Read {
+        connection_id: ConnectionId,
+        request: InstrumentReadRequest,
+        response_sender: Sender<InstrumentReadResult>,
+    },
+
+    Write {
+        connection_id: ConnectionId,
+        request: InstrumentWriteRequest,
+        response_sender: Sender<InstrumentWriteResult>,
+    },
+
+    DescribeVirtualInstruments {
+        connection_id: ConnectionId,
+        response_sender: Sender<VirtualInstrumentDescribeResult>,
+    },
+}
+
+impl From<InstrumentCommand> for UserCommand {
+    fn from(command: InstrumentCommand) -> Self {
+        Self::Instrument(command)
+    }
+}
+
+#[derive(Debug)]
 pub enum UserCommand {
     Acquisition(AcquisitionCommand),
     Emulator(EmulatorCommand),
+    Instrument(InstrumentCommand),
 
     Add(NewSeries),
     AddFilter(NewFilteredSeries),
@@ -364,23 +391,6 @@ pub enum UserCommand {
     SendSerial {
         connection_id: ConnectionId,
         command: String,
-    },
-
-    ReadInstrument {
-        connection_id: ConnectionId,
-        request: InstrumentReadRequest,
-        response_sender: Sender<InstrumentReadResult>,
-    },
-
-    WriteInstrument {
-        connection_id: ConnectionId,
-        request: InstrumentWriteRequest,
-        response_sender: Sender<InstrumentWriteResult>,
-    },
-
-    DescribeVirtualInstruments {
-        connection_id: ConnectionId,
-        response_sender: Sender<VirtualInstrumentDescribeResult>,
     },
 }
 
