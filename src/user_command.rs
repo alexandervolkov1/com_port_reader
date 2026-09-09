@@ -265,14 +265,50 @@ impl From<SerialCommand> for UserCommand {
 }
 
 #[derive(Debug)]
+pub(crate) enum SeriesCommand {
+    Add(NewSeries),
+    AddFilter(NewFilteredSeries),
+
+    SetFilter {
+        name: String,
+        definition: SignalFilterDefinition,
+    },
+
+    Delete {
+        name: String,
+    },
+
+    Rename {
+        current_name: String,
+        new_name: String,
+    },
+
+    SetColor {
+        name: String,
+        color: Option<SeriesColor>,
+    },
+
+    Retry {
+        name: String,
+    },
+
+    RetryAll,
+    Clear,
+}
+
+impl From<SeriesCommand> for UserCommand {
+    fn from(command: SeriesCommand) -> Self {
+        Self::Series(command)
+    }
+}
+
+#[derive(Debug)]
 pub enum UserCommand {
     Acquisition(AcquisitionCommand),
     Emulator(EmulatorCommand),
     Instrument(InstrumentCommand),
     Serial(SerialCommand),
-
-    Add(NewSeries),
-    AddFilter(NewFilteredSeries),
+    Series(SeriesCommand),
 
     AddControllerDiagnostic(NewControllerDiagnosticSeries),
     AddController(NewController<ControlOutputTarget>),
@@ -371,33 +407,6 @@ pub enum UserCommand {
         name: String,
         response_sender: Sender<Result<(), ControllerRequestError>>,
     },
-
-    SetFilter {
-        name: String,
-        definition: SignalFilterDefinition,
-    },
-
-    Delete {
-        name: String,
-    },
-
-    Rename {
-        current_name: String,
-        new_name: String,
-    },
-
-    SetSeriesColor {
-        name: String,
-        color: Option<SeriesColor>,
-    },
-
-    Retry {
-        name: String,
-    },
-
-    RetryAll,
-
-    Clear,
 
     Log {
         message: String,

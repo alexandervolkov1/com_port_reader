@@ -112,7 +112,8 @@ mod tests {
         serial_connection::SerialPortConfig,
         signal_processing::SignalFilterDefinition,
         user_command::{
-            AcquisitionCommand, EmulatorCommand, InstrumentCommand, SerialCommand, UserCommand,
+            AcquisitionCommand, EmulatorCommand, InstrumentCommand, SerialCommand, SeriesCommand,
+            UserCommand,
         },
     };
 
@@ -239,7 +240,7 @@ mod tests {
 
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
-            UserCommand::Clear,
+            UserCommand::Series(SeriesCommand::Clear,),
         ));
 
         assert!(matches!(
@@ -323,7 +324,9 @@ mod tests {
             )
             .unwrap();
 
-        let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+        let UserCommand::Series(SeriesCommand::Add(new_series)) =
+            command_receiver.try_recv().unwrap()
+        else {
             panic!("expected Add command");
         };
 
@@ -347,7 +350,9 @@ mod tests {
             },
         );
 
-        let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+        let UserCommand::Series(SeriesCommand::Add(new_series)) =
+            command_receiver.try_recv().unwrap()
+        else {
             panic!("expected Add command");
         };
 
@@ -411,7 +416,9 @@ mod tests {
             )
             .unwrap();
 
-        let UserCommand::AddFilter(filter) = command_receiver.try_recv().unwrap() else {
+        let UserCommand::Series(SeriesCommand::AddFilter(filter)) =
+            command_receiver.try_recv().unwrap()
+        else {
             panic!("expected AddFilter command");
         };
 
@@ -455,7 +462,8 @@ mod tests {
             )
             .unwrap();
 
-        let UserCommand::SetFilter { name, definition } = command_receiver.try_recv().unwrap()
+        let UserCommand::Series(SeriesCommand::SetFilter { name, definition }) =
+            command_receiver.try_recv().unwrap()
         else {
             panic!("expected SetFilter command");
         };
@@ -581,26 +589,32 @@ mod tests {
 
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
-            UserCommand::Delete { name }
+            UserCommand::Series(
+                SeriesCommand::Delete { name },
+            )
                 if name == "temperature",
         ));
 
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
-            UserCommand::Rename {
-                current_name,
-                new_name,
-            }
+            UserCommand::Series(
+                SeriesCommand::Rename {
+                    current_name,
+                    new_name,
+                },
+            )
                 if current_name == "pressure"
                     && new_name == "reactor_pressure",
         ));
 
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
-            UserCommand::SetSeriesColor {
-                name,
-                color: Some(color),
-            }
+            UserCommand::Series(
+                SeriesCommand::SetColor {
+                    name,
+                    color: Some(color),
+                },
+            )
                 if name == "reactor_pressure"
                     && color
                         == SeriesColor::new(
@@ -612,22 +626,26 @@ mod tests {
 
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
-            UserCommand::SetSeriesColor {
-                name,
-                color: None,
-            }
+            UserCommand::Series(
+                SeriesCommand::SetColor {
+                    name,
+                    color: None,
+                },
+            )
                 if name == "reactor_pressure",
         ));
 
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
-            UserCommand::Retry { name }
+            UserCommand::Series(
+                SeriesCommand::Retry { name },
+            )
                 if name == "temperature",
         ));
 
         assert!(matches!(
             command_receiver.try_recv().unwrap(),
-            UserCommand::RetryAll,
+            UserCommand::Series(SeriesCommand::RetryAll,),
         ));
 
         assert!(command_receiver.try_recv().is_err());
@@ -791,7 +809,9 @@ mod tests {
         ];
 
         for (expected_name, expected_parameter, expected_scale) in expected {
-            let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+            let UserCommand::Series(SeriesCommand::Add(new_series)) =
+                command_receiver.try_recv().unwrap()
+            else {
                 panic!("expected Add command");
             };
 
@@ -1547,7 +1567,9 @@ mod tests {
             )
             .unwrap();
 
-        let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+        let UserCommand::Series(SeriesCommand::Add(new_series)) =
+            command_receiver.try_recv().unwrap()
+        else {
             panic!("expected add-series command");
         };
 
@@ -1682,7 +1704,9 @@ mod tests {
             )
             .unwrap();
 
-        let UserCommand::Add(new_series) = command_receiver.try_recv().unwrap() else {
+        let UserCommand::Series(SeriesCommand::Add(new_series)) =
+            command_receiver.try_recv().unwrap()
+        else {
             panic!("expected Add command");
         };
 

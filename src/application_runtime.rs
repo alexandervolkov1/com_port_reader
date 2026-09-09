@@ -23,7 +23,8 @@ use crate::{
     serial_connection::SerialConnectionRegistry,
     signal_processing::{ProcessingEvent, ProcessingService},
     user_command::{
-        AcquisitionCommand, EmulatorCommand, InstrumentCommand, SerialCommand, UserCommand,
+        AcquisitionCommand, EmulatorCommand, InstrumentCommand, SerialCommand, SeriesCommand,
+        UserCommand,
     },
     worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
 };
@@ -36,6 +37,7 @@ mod emulator_command_handler;
 mod instrument_command_handler;
 mod process_control_dispatcher;
 mod serial_command_handler;
+mod series_command_handler;
 
 pub(crate) use acquisition_controller::AcquisitionController;
 pub(crate) use command_dispatcher::{CommandDispatcher, CommandDispatcherConnections};
@@ -388,7 +390,7 @@ impl ApplicationRuntime {
             },
         );
 
-        if self.dispatcher.set_visibility(id, visible) {
+        if self.series.set_visibility(id, visible) {
             self.process_recorder
                 .record_action_applied(action_id, Some(id), series_name);
         } else {
@@ -765,26 +767,61 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             },
         }),
 
-        UserCommand::Add(new_series) => Some(ProcessAction::AddSeries {
-            connection_id: new_series.connection_id(),
+        UserCommand::Series(command) => match command {
+            SeriesCommand::Add(new_series) => Some(ProcessAction::AddSeries {
+                connection_id: new_series.connection_id(),
 
-            name: new_series.name().map(str::to_owned),
+                name: new_series.name().map(str::to_owned),
 
-            source: new_series.source().to_string(),
+                source: new_series.source().to_string(),
 
-            polling_interval_seconds: new_series
-                .sampling_interval()
-                .map(|interval| interval.duration().as_secs_f64()),
+                polling_interval_seconds: new_series
+                    .sampling_interval()
+                    .map(|interval| interval.duration().as_secs_f64()),
 
-            color: new_series.color().map(|color| color.to_string()),
-        }),
+                color: new_series.color().map(|color| color.to_string()),
+            }),
 
-        UserCommand::AddFilter(filter) => Some(ProcessAction::AddFilteredSeries {
-            input_name: filter.input_name().to_owned(),
-            name: filter.name().to_owned(),
-            definition: filter.definition().to_string(),
-            color: filter.color().map(|color| color.to_string()),
-        }),
+            SeriesCommand::AddFilter(filter) => Some(ProcessAction::AddFilteredSeries {
+                input_name: filter.input_name().to_owned(),
+
+                name: filter.name().to_owned(),
+
+                definition: filter.definition().to_string(),
+
+                color: filter.color().map(|color| color.to_string()),
+            }),
+
+            SeriesCommand::SetFilter { name, definition } => Some(ProcessAction::SetFilter {
+                series_id: None,
+                name: name.clone(),
+                definition: definition.to_string(),
+            }),
+
+            SeriesCommand::Delete { name } => Some(ProcessAction::DeleteSeriesByName {
+                series_id: None,
+                name: name.clone(),
+            }),
+
+            SeriesCommand::Rename {
+                current_name,
+                new_name,
+            } => Some(ProcessAction::RenameSeries {
+                series_id: None,
+                current_name: current_name.clone(),
+                new_name: new_name.clone(),
+            }),
+
+            SeriesCommand::SetColor { name, color } => Some(ProcessAction::SetSeriesColor {
+                series_id: None,
+                name: name.clone(),
+                color: color.map(|color| color.to_string()),
+            }),
+
+            SeriesCommand::Clear => Some(ProcessAction::ClearSeries),
+
+            SeriesCommand::Retry { .. } | SeriesCommand::RetryAll => None,
+        },
 
         UserCommand::AddController(new_controller) => {
             let controller = new_controller.controller();
@@ -870,35 +907,7 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
         | UserCommand::ReadControllerReferenceParameter { .. }
         | UserCommand::ControllerState { .. } => None,
 
-        UserCommand::SetFilter { name, definition } => Some(ProcessAction::SetFilter {
-            series_id: None,
-            name: name.clone(),
-            definition: definition.to_string(),
-        }),
-
-        UserCommand::Delete { name } => Some(ProcessAction::DeleteSeriesByName {
-            series_id: None,
-            name: name.clone(),
-        }),
-
-        UserCommand::Rename {
-            current_name,
-            new_name,
-        } => Some(ProcessAction::RenameSeries {
-            series_id: None,
-            current_name: current_name.clone(),
-            new_name: new_name.clone(),
-        }),
-
-        UserCommand::SetSeriesColor { name, color } => Some(ProcessAction::SetSeriesColor {
-            series_id: None,
-            name: name.clone(),
-            color: color.map(|color| color.to_string()),
-        }),
-
-        UserCommand::Retry { .. } | UserCommand::RetryAll | UserCommand::Log { .. } => None,
-
-        UserCommand::Clear => Some(ProcessAction::ClearSeries),
+        UserCommand::Log { .. } => None,
     }
 }
 
@@ -923,7 +932,7 @@ mod tests {
             ReferenceSource,
         },
         signal_processing::SignalFilterDefinition,
-        user_command::UserCommand,
+        user_command::{SeriesCommand, UserCommand},
     };
 
     #[test]
@@ -932,12 +941,13 @@ mod tests {
 
         let color = SeriesColor::new(0x1A, 0x2B, 0x3C);
 
-        let command = UserCommand::Add(
+        let command = SeriesCommand::Add(
             NewSeries::named_serial_command("read temperature", "temperature")
                 .with_connection(ConnectionId::new(2))
                 .with_sampling_interval(interval)
                 .with_color(color),
-        );
+        )
+        .into();
 
         assert_eq!(
             process_action_from_command(&command),
@@ -953,10 +963,11 @@ mod tests {
 
     #[test]
     fn converts_series_color_change_to_process_action() {
-        let command = UserCommand::SetSeriesColor {
+        let command = SeriesCommand::SetColor {
             name: "temperature".to_owned(),
             color: Some(SeriesColor::new(0x1A, 0x2B, 0x3C)),
-        };
+        }
+        .into();
 
         assert_eq!(
             process_action_from_command(&command),
@@ -981,10 +992,11 @@ mod tests {
     fn converts_filter_change_to_process_action() {
         let definition = SignalFilterDefinition::median(7).unwrap();
 
-        let command = UserCommand::SetFilter {
+        let command = SeriesCommand::SetFilter {
             name: "temperature_filtered".to_owned(),
             definition,
-        };
+        }
+        .into();
 
         assert_eq!(
             process_action_from_command(&command),
@@ -1007,10 +1019,11 @@ mod tests {
             ))
             .unwrap();
 
-        let command = UserCommand::SetSeriesColor {
+        let command = SeriesCommand::SetColor {
             name: "temperature".to_owned(),
             color: None,
-        };
+        }
+        .into();
 
         let mut action = process_action_from_command(&command).unwrap();
 
@@ -1030,9 +1043,10 @@ mod tests {
     fn keeps_missing_series_id_empty_for_action() {
         let series = SeriesStore::new();
 
-        let command = UserCommand::Delete {
+        let command = SeriesCommand::Delete {
             name: "missing".to_owned(),
-        };
+        }
+        .into();
 
         let mut action = process_action_from_command(&command).unwrap();
 

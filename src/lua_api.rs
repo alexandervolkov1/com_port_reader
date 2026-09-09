@@ -25,7 +25,8 @@ use crate::{
     },
     signal_processing::SignalFilterDefinition,
     user_command::{
-        AcquisitionCommand, EmulatorCommand, InstrumentCommand, SerialCommand, UserCommand,
+        AcquisitionCommand, EmulatorCommand, InstrumentCommand, SerialCommand, SeriesCommand,
+        UserCommand,
     },
 };
 
@@ -274,7 +275,7 @@ fn register_add_serial(
 
         let new_series = apply_series_options(new_series, options, connection_id);
 
-        send_application_command(&command_sender, UserCommand::Add(new_series))
+        send_application_command(&command_sender, SeriesCommand::Add(new_series).into())
     })?;
 
     app.set("add_serial", function)
@@ -318,7 +319,7 @@ fn register_add_filter(
             filter = filter.with_color(color);
         }
 
-        send_application_command(&command_sender, UserCommand::AddFilter(filter))
+        send_application_command(&command_sender, SeriesCommand::AddFilter(filter).into())
     })?;
 
     app.set("filter", function)
@@ -342,7 +343,10 @@ fn register_set_filter(
 
         let definition = parse_filter_definition(&options, &kind)?;
 
-        send_application_command(&command_sender, UserCommand::SetFilter { name, definition })
+        send_application_command(
+            &command_sender,
+            SeriesCommand::SetFilter { name, definition }.into(),
+        )
     })?;
 
     app.set("set_filter", function)
@@ -1448,7 +1452,7 @@ impl LuaVirtualInstrument {
 
         let new_series = apply_series_options(new_series, options, self.connection_id);
 
-        send_application_command(&self.command_sender, UserCommand::Add(new_series))
+        send_application_command(&self.command_sender, SeriesCommand::Add(new_series).into())
     }
 
     fn parameter(&self, key: &str) -> mlua::Result<&VirtualParameterDescriptor> {
@@ -1574,7 +1578,7 @@ struct LuaMetakon5x3 {
 
 impl LuaMetakon5x3 {
     fn add_series(&self, new_series: NewSeries) -> mlua::Result<()> {
-        send_application_command(&self.command_sender, UserCommand::Add(new_series))
+        send_application_command(&self.command_sender, SeriesCommand::Add(new_series).into())
     }
 
     fn add_parameter_series(
@@ -2325,7 +2329,7 @@ fn register_delete_series(
     command_sender: Sender<UserCommand>,
 ) -> mlua::Result<()> {
     let function = lua.create_function(move |_, name: String| {
-        send_application_command(&command_sender, UserCommand::Delete { name })
+        send_application_command(&command_sender, SeriesCommand::Delete { name }.into())
     })?;
 
     app.set("delete", function)
@@ -2339,10 +2343,11 @@ fn register_rename_series(
     let function = lua.create_function(move |_, (current_name, new_name): (String, String)| {
         send_application_command(
             &command_sender,
-            UserCommand::Rename {
+            SeriesCommand::Rename {
                 current_name,
                 new_name,
-            },
+            }
+            .into(),
         )
     })?;
 
@@ -2360,7 +2365,10 @@ fn register_set_series_color(
             .transpose()
             .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
-        send_application_command(&command_sender, UserCommand::SetSeriesColor { name, color })
+        send_application_command(
+            &command_sender,
+            SeriesCommand::SetColor { name, color }.into(),
+        )
     })?;
 
     app.set("set_color", function)
@@ -2372,7 +2380,7 @@ fn register_retry_series(
     command_sender: Sender<UserCommand>,
 ) -> mlua::Result<()> {
     let function = lua.create_function(move |_, name: String| {
-        send_application_command(&command_sender, UserCommand::Retry { name })
+        send_application_command(&command_sender, SeriesCommand::Retry { name }.into())
     })?;
 
     app.set("retry", function)
@@ -2449,7 +2457,7 @@ fn stop_command() -> UserCommand {
 }
 
 fn clear_command() -> UserCommand {
-    UserCommand::Clear
+    SeriesCommand::Clear.into()
 }
 
 fn start_emulator_command() -> UserCommand {
@@ -2461,7 +2469,7 @@ fn stop_emulator_command() -> UserCommand {
 }
 
 fn retry_all_command() -> UserCommand {
-    UserCommand::RetryAll
+    SeriesCommand::RetryAll.into()
 }
 
 #[cfg(test)]
