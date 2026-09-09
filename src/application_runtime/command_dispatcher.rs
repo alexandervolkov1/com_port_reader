@@ -318,10 +318,7 @@ impl CommandDispatcher {
 
             let event = connection_event.event();
 
-            let belongs_to_action =
-                connection_event.action_id().is_some() && worker_event_completes_action(event);
-
-            if belongs_to_action {
+            if !worker_event_should_be_logged(event, connection_event.action_id().is_some()) {
                 continue;
             }
 
@@ -1734,4 +1731,32 @@ fn worker_event_completes_action(event: &WorkerEvent) -> bool {
             | WorkerEvent::VirtualInstrumentDescribeSucceeded { .. }
             | WorkerEvent::VirtualInstrumentDescribeFailed { .. }
     )
+}
+
+fn worker_event_should_be_logged(event: &WorkerEvent, has_action_id: bool) -> bool {
+    !has_action_id || !worker_event_completes_action(event)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::worker_event_should_be_logged;
+    use crate::worker::WorkerEvent;
+
+    #[test]
+    fn suppresses_action_worker_event_duplicate_log() {
+        let event = WorkerEvent::SerialTextCommandSucceeded {
+            port_name: "COM3".to_owned(),
+            command: "get".to_owned(),
+            response: "42".to_owned(),
+        };
+
+        assert!(!worker_event_should_be_logged(&event, true,),);
+    }
+
+    #[test]
+    fn keeps_autonomous_worker_event_log() {
+        let event = WorkerEvent::ProcessingFailed("test failure".to_owned());
+
+        assert!(worker_event_should_be_logged(&event, false,),);
+    }
 }
