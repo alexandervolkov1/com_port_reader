@@ -9,7 +9,13 @@ use crossbeam_channel::Sender;
 use mlua::{Lua, Table, Value};
 
 #[cfg(test)]
-use self::controllers::{LuaControllerHandle, add_on_off_loop, validate_on_off_options};
+use self::{
+    controllers::{
+        LuaControllerHandle, add_furnace_loop, add_on_off_loop, validate_on_off_options,
+    },
+    metakon::LuaMetakon5x3,
+    virtual_instrument::LuaVirtualInstrument,
+};
 use self::{
     filters::{register_add_filter, register_set_filter},
     metakon::register_metakon_controller,
@@ -207,6 +213,9 @@ fn stop_emulator_command() -> UserCommand {
 fn retry_all_command() -> UserCommand {
     SeriesCommand::RetryAll.into()
 }
+
+#[cfg(test)]
+mod furnace_tests;
 
 #[cfg(test)]
 mod controller_handle_tests {

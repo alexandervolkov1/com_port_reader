@@ -4,7 +4,7 @@ use crossbeam_channel::{RecvTimeoutError, Sender, bounded};
 use mlua::{Lua, Table, UserData, UserDataMethods, Value};
 
 use super::{
-    controllers::{add_on_off_loop, add_pid_loop},
+    controllers::{add_furnace_loop, add_on_off_loop, add_pid_loop},
     conversion::{
         boolean_parameter_value, instrument_value_to_lua, scaled_integer_parameter_value,
     },
@@ -91,11 +91,11 @@ fn validate_metakon_controller_options(options: &Table) -> mlua::Result<()> {
 }
 
 #[derive(Clone)]
-struct LuaMetakon5x3 {
-    connection_id: ConnectionId,
-    instrument: Metakon5x3,
-    scale: f64,
-    command_sender: Sender<UserCommand>,
+pub(super) struct LuaMetakon5x3 {
+    pub(super) connection_id: ConnectionId,
+    pub(super) instrument: Metakon5x3,
+    pub(super) scale: f64,
+    pub(super) command_sender: Sender<UserCommand>,
 }
 
 impl LuaMetakon5x3 {
@@ -385,6 +385,27 @@ impl UserData for LuaMetakon5x3 {
                 .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
                 let handle = add_pid_loop(&controller.command_sender, output_target, &options)?;
+
+                lua.create_userdata(handle)
+            },
+        );
+
+        methods.add_method(
+            "furnace",
+            |lua, controller, (parameter_key, options): (String, Table)| {
+                let parameter = metakon_parameter_from_key(&parameter_key)?;
+
+                let scale = controller.parameter_scale(parameter);
+
+                let output_target = ControlOutputTarget::metakon_5x3(
+                    controller.connection_id,
+                    controller.instrument,
+                    parameter,
+                    scale,
+                )
+                .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+                let handle = add_furnace_loop(&controller.command_sender, output_target, &options)?;
 
                 lua.create_userdata(handle)
             },

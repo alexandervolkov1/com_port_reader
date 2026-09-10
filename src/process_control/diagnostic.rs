@@ -8,16 +8,22 @@ pub enum ControllerDiagnostic {
     Derivative,
     Output,
     UnconstrainedOutput,
+    FeedForward,
+    PredictedMeasurement,
+    MeasurementRate,
 }
 
 impl ControllerDiagnostic {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 9] = [
         Self::Setpoint,
         Self::Proportional,
         Self::Integral,
         Self::Derivative,
         Self::Output,
         Self::UnconstrainedOutput,
+        Self::FeedForward,
+        Self::PredictedMeasurement,
+        Self::MeasurementRate,
     ];
 
     pub const fn key(self) -> &'static str {
@@ -28,6 +34,9 @@ impl ControllerDiagnostic {
             Self::Derivative => "derivative",
             Self::Output => "output",
             Self::UnconstrainedOutput => "unconstrained_output",
+            Self::FeedForward => "feed_forward",
+            Self::PredictedMeasurement => "predicted_measurement",
+            Self::MeasurementRate => "measurement_rate",
         }
     }
 

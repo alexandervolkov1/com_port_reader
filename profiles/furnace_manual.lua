@@ -26,7 +26,7 @@ local definition = {
 }
 
 function definition.setup()
-    app.log("Manual furnace model initialized.")
+    app.log("Furnace Manual / PID / Furnace demo initialized.")
 end
 
 return definition

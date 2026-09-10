@@ -4,7 +4,7 @@ use crossbeam_channel::{RecvTimeoutError, Sender, bounded};
 use mlua::{Lua, Table, UserData, UserDataMethods, Value};
 
 use super::{
-    controllers::{add_on_off_loop, add_pid_loop},
+    controllers::{add_furnace_loop, add_on_off_loop, add_pid_loop},
     conversion::{instrument_value_to_lua, virtual_instrument_value_from_lua},
     send_application_command,
     series::{
@@ -138,11 +138,11 @@ fn validate_virtual_instrument_options(options: &Table) -> mlua::Result<()> {
 }
 
 #[derive(Clone)]
-struct LuaVirtualInstrument {
-    connection_id: ConnectionId,
-    id: u16,
-    descriptor: VirtualInstrumentDescriptor,
-    command_sender: Sender<UserCommand>,
+pub(super) struct LuaVirtualInstrument {
+    pub(super) connection_id: ConnectionId,
+    pub(super) id: u16,
+    pub(super) descriptor: VirtualInstrumentDescriptor,
+    pub(super) command_sender: Sender<UserCommand>,
 }
 
 impl LuaVirtualInstrument {
@@ -392,6 +392,25 @@ impl UserData for LuaVirtualInstrument {
                 .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
                 let controller = add_pid_loop(&instrument.command_sender, output_target, &options)?;
+
+                lua.create_userdata(controller)
+            },
+        );
+
+        methods.add_method(
+            "furnace",
+            |lua, instrument, (parameter_key, options): (String, Table)| {
+                let parameter = instrument.parameter(&parameter_key)?;
+
+                let output_target = ControlOutputTarget::virtual_instrument(
+                    instrument.connection_id,
+                    instrument.descriptor.id(),
+                    parameter,
+                )
+                .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+                let controller =
+                    add_furnace_loop(&instrument.command_sender, output_target, &options)?;
 
                 lua.create_userdata(controller)
             },

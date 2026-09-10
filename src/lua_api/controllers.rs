@@ -13,8 +13,9 @@ use crate::{
     data::NewControllerDiagnosticSeries,
     instrument::{InstrumentValue, ParameterDescriptor, ParameterRange},
     process_control::{
-        ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewController,
-        OnOffController, PidController, PidGains, PidOutputLimits, ReferenceKind, ReferenceSource,
+        ControlLoopState, ControlOutputTarget, ControllerDiagnostic, FurnaceController,
+        FurnaceGains, FurnaceModel, FurnaceOutputLimits, NewController, OnOffController,
+        PidController, PidGains, PidOutputLimits, ReferenceKind, ReferenceSource,
     },
     user_command::{ControllerCommand, UserCommand},
 };
@@ -78,6 +79,86 @@ pub(super) fn add_pid_loop(
         .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
     let new_controller = NewController::new(name.clone(), input_name, output_target, controller)
+        .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+    send_application_command(
+        command_sender,
+        ControllerCommand::Add(new_controller).into(),
+    )?;
+
+    Ok(LuaControllerHandle {
+        name,
+        connection_id,
+        command_sender: command_sender.clone(),
+    })
+}
+
+pub(super) fn add_furnace_loop(
+    command_sender: &Sender<UserCommand>,
+    output_target: ControlOutputTarget,
+    options: &Table,
+) -> mlua::Result<LuaControllerHandle> {
+    for pair in options.pairs::<String, Value>() {
+        let (key, _) = pair?;
+
+        if !matches!(
+            key.as_str(),
+            "name"
+                | "input"
+                | "setpoint"
+                | "kp"
+                | "ki"
+                | "output_min"
+                | "output_max"
+                | "ambient_temperature"
+                | "max_power"
+                | "heater_lag"
+                | "linear_loss"
+                | "radiation_loss_1000c"
+                | "safe_output"
+        ) {
+            return Err(mlua::Error::RuntimeError(format!(
+                "Unknown furnace option '{key}'"
+            )));
+        }
+    }
+
+    let required_number = |key: &str| -> mlua::Result<f64> {
+        options
+            .get::<Option<f64>>(key)?
+            .ok_or_else(|| mlua::Error::RuntimeError(format!("Furnace option '{key}' is required")))
+    };
+
+    let name = options
+        .get::<Option<String>>("name")?
+        .ok_or_else(|| mlua::Error::RuntimeError("Furnace option 'name' is required".to_owned()))?;
+    let input = options.get::<Option<String>>("input")?.ok_or_else(|| {
+        mlua::Error::RuntimeError("Furnace option 'input' is required".to_owned())
+    })?;
+
+    let output_target = configure_safe_output(output_target, options)?;
+    let connection_id = output_target.connection_id();
+    let gains = FurnaceGains::new(
+        required_number("kp")?,
+        options.get::<Option<f64>>("ki")?.unwrap_or(0.0),
+    )
+    .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+    let model = FurnaceModel::new(
+        required_number("ambient_temperature")?,
+        required_number("max_power")?,
+        required_number("heater_lag")?,
+        required_number("linear_loss")?,
+        required_number("radiation_loss_1000c")?,
+    )
+    .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+    let limits = FurnaceOutputLimits::new(
+        required_number("output_min")?,
+        required_number("output_max")?,
+    )
+    .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+    let controller = FurnaceController::new(required_number("setpoint")?, gains, model, limits)
+        .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+    let new_controller = NewController::new(name.clone(), input, output_target, controller)
         .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
     send_application_command(

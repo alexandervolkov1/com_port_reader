@@ -86,6 +86,9 @@ const FURNACE_DIAGNOSTICS: &[ControllerDiagnostic] = &[
     ControllerDiagnostic::Integral,
     ControllerDiagnostic::Output,
     ControllerDiagnostic::UnconstrainedOutput,
+    ControllerDiagnostic::FeedForward,
+    ControllerDiagnostic::PredictedMeasurement,
+    ControllerDiagnostic::MeasurementRate,
 ];
 
 #[derive(Debug)]
@@ -463,6 +466,19 @@ impl ControllerOutput {
             ControllerDiagnostic::Output => Some(self.value()),
 
             ControllerDiagnostic::UnconstrainedOutput => self.unconstrained_value(),
+
+            ControllerDiagnostic::FeedForward => match self {
+                Self::Furnace { output, .. } => Some(output.feed_forward()),
+                _ => None,
+            },
+            ControllerDiagnostic::PredictedMeasurement => match self {
+                Self::Furnace { output, .. } => Some(output.predicted_measurement()),
+                _ => None,
+            },
+            ControllerDiagnostic::MeasurementRate => match self {
+                Self::Furnace { output, .. } => Some(output.measurement_rate()),
+                _ => None,
+            },
         }
     }
 
