@@ -921,13 +921,22 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        thread,
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    };
 
-    use super::{ProcessAction, process_action_from_command, resolve_action_series_id};
+    use super::{
+        ApplicationRuntime, ProcessAction, process_action_from_command, resolve_action_series_id,
+    };
 
     use crate::{
+        app_log::LogModel,
+        application_paths::ApplicationPaths,
         connection::ConnectionId,
-        data::{NewSeries, SamplingInterval, SeriesColor, SeriesId, SeriesStore},
+        data::{NewSeries, SamplingInterval, SeriesColor, SeriesId, SeriesSource, SeriesStore},
         instrument::{
             InstrumentValue, ParameterAccess, ParameterRange, ParameterValueType,
             virtual_instrument::{
@@ -939,9 +948,107 @@ mod tests {
             NewController, OnOffController, PidController, PidGains, PidOutputLimits,
             ReferenceSource,
         },
+        process_recorder::ProcessRecorder,
         signal_processing::SignalFilterDefinition,
         user_command::{ControllerCommand, SeriesCommand, UserCommand},
     };
+
+    fn runtime_test_directory(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+
+        std::env::temp_dir().join(format!(
+            "com_port_reader_runtime_e2e_\
+             {name}_{}_{}",
+            std::process::id(),
+            unique,
+        ))
+    }
+
+    fn write_test_profile(directory: &Path, file_name: &str, source: &str) -> PathBuf {
+        fs::create_dir_all(directory).unwrap();
+
+        let path = directory.join(file_name);
+
+        fs::write(&path, source).unwrap();
+
+        path
+    }
+
+    fn test_profile_source(raw_name: &str, filtered_name: &str, port_name: &str) -> String {
+        format!(
+            r#"
+    local definition = {{
+        connections = {{
+            primary = {{
+                port = "{port_name}",
+            }},
+        }},
+    }}
+
+    function definition.setup()
+        app.add_serial(
+            "get",
+            {{
+                name = "{raw_name}",
+                interval = 1.0,
+            }}
+        )
+
+        app.filter(
+            "{raw_name}",
+            {{
+                name = "{filtered_name}",
+                kind = "moving_average",
+                window = 3,
+            }}
+        )
+    end
+
+    return definition
+    "#
+        )
+    }
+
+    fn build_test_runtime(profile_path: &Path) -> (ApplicationRuntime, LogModel) {
+        let paths = ApplicationPaths::from_startup_script(profile_path).unwrap();
+
+        let log_directory = paths.resolve_data("logs");
+
+        let (definition, source) = ApplicationRuntime::load_startup_configuration(&paths).unwrap();
+
+        let recorder = ProcessRecorder::default();
+
+        let (log_model, log) = LogModel::new(log_directory, recorder.clone());
+
+        let (runtime, _lua_events) =
+            ApplicationRuntime::build_initialized(definition, log, recorder, paths, Some(source))
+                .unwrap();
+
+        (runtime, log_model)
+    }
+
+    fn wait_for_series(runtime: &mut ApplicationRuntime, name: &str) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+
+        loop {
+            runtime.poll();
+
+            if runtime.series().id_by_name(name).is_some() {
+                return;
+            }
+
+            assert!(
+                Instant::now() < deadline,
+                "series '{name}' was not created \
+                 before the E2E test timeout",
+            );
+
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
 
     #[test]
     fn converts_added_series_to_process_action() {
@@ -1377,5 +1484,131 @@ mod tests {
         let context = crate::process_recorder::ProcessActionContext::new(action_id);
 
         assert_eq!(context.action_id(), action_id);
+    }
+
+    #[test]
+    fn initializes_runtime_from_lua_profile() {
+        let directory = runtime_test_directory("initial_profile");
+
+        let source = test_profile_source("temperature_raw", "temperature_filtered", "COM250");
+
+        let profile = write_test_profile(&directory, "startup.lua", &source);
+
+        let (mut runtime, log_model) = build_test_runtime(&profile);
+
+        wait_for_series(&mut runtime, "temperature_filtered");
+
+        let raw_id = runtime
+            .series()
+            .id_by_name("temperature_raw")
+            .expect("raw series must exist");
+
+        let filtered = runtime
+            .series()
+            .metadata()
+            .into_iter()
+            .find(|series| series.name == "temperature_filtered")
+            .expect("filtered series must exist");
+
+        assert_eq!(
+            filtered.source,
+            SeriesSource::Filtered {
+                input: raw_id,
+                definition: SignalFilterDefinition::moving_average(3).unwrap(),
+            },
+        );
+
+        assert_eq!(runtime.paths().startup_script(), profile.as_path(),);
+
+        drop(runtime);
+        drop(log_model);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn rebuilds_runtime_from_another_profile() {
+        let directory = runtime_test_directory("profile_rebuild");
+
+        let first_source = test_profile_source("raw_first", "filtered_first", "COM251");
+
+        let first_profile = write_test_profile(&directory, "first.lua", &first_source);
+
+        let (mut runtime, log_model) = build_test_runtime(&first_profile);
+
+        wait_for_series(&mut runtime, "filtered_first");
+
+        let second_source = test_profile_source("raw_second", "filtered_second", "COM252");
+
+        let second_profile = write_test_profile(&directory, "second.lua", &second_source);
+
+        let (mut rebuilt, _lua_events) = runtime.rebuild_from_profile(&second_profile).unwrap();
+
+        wait_for_series(&mut rebuilt, "filtered_second");
+
+        assert!(rebuilt.series().id_by_name("raw_second").is_some(),);
+
+        assert!(rebuilt.series().id_by_name("filtered_second").is_some(),);
+
+        assert!(rebuilt.series().id_by_name("raw_first").is_none(),);
+
+        assert!(rebuilt.series().id_by_name("filtered_first").is_none(),);
+
+        assert_eq!(rebuilt.paths().startup_script(), second_profile.as_path(),);
+
+        drop(rebuilt);
+        drop(runtime);
+        drop(log_model);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn failed_profile_rebuild_keeps_current_runtime() {
+        let directory = runtime_test_directory("failed_profile_rebuild");
+
+        let valid_source = test_profile_source("raw_original", "filtered_original", "COM253");
+
+        let valid_profile = write_test_profile(&directory, "valid.lua", &valid_source);
+
+        let (mut runtime, log_model) = build_test_runtime(&valid_profile);
+
+        wait_for_series(&mut runtime, "filtered_original");
+
+        let invalid_source = r#"
+    local definition = {}
+
+    function definition.setup()
+        error(
+            "Intentional E2E setup failure"
+        )
+    end
+
+    return definition
+    "#;
+
+        let invalid_profile = write_test_profile(&directory, "invalid.lua", invalid_source);
+
+        let result = runtime.rebuild_from_profile(&invalid_profile);
+
+        let Err(error) = result else {
+            panic!(
+                "invalid profile rebuild \
+                 unexpectedly succeeded"
+            );
+        };
+
+        assert!(error.contains("Intentional E2E setup failure",), "{error}",);
+
+        assert_eq!(runtime.paths().startup_script(), valid_profile.as_path(),);
+
+        assert!(runtime.series().id_by_name("raw_original").is_some(),);
+
+        assert!(runtime.series().id_by_name("filtered_original",).is_some(),);
+
+        drop(runtime);
+        drop(log_model);
+
+        fs::remove_dir_all(directory).unwrap();
     }
 }
