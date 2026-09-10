@@ -18,7 +18,7 @@ pub use control_loop::{
 };
 pub use controller::{
     Controller, ControllerDiagnosticError, ControllerError, ControllerKind, ControllerOperation,
-    ControllerOperationError, ControllerOutput, ControllerParameter, ControllerParameterError,
+    ControllerOperationError, ControllerOutput, ControllerParameterError,
 };
 pub use diagnostic::ControllerDiagnostic;
 pub use furnace::{

@@ -1,5 +1,11 @@
 use std::{error::Error, fmt};
 
+use super::controller::{expect_number, unknown_parameter};
+use super::{ControllerKind, ControllerParameterError};
+use crate::instrument::{
+    InstrumentValue, ParameterAccess, ParameterDescriptor, ParameterRange, ParameterValueType,
+};
+
 const ABSOLUTE_ZERO_C: f64 = -273.15;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -495,6 +501,278 @@ impl fmt::Display for FurnaceControllerError {
 }
 
 impl Error for FurnaceControllerError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FurnaceParameter {
+    Setpoint,
+    ProportionalGain,
+    IntegralGain,
+    OutputMinimum,
+    OutputMaximum,
+    AmbientTemperature,
+    MaximumPower,
+    HeaterLag,
+    LinearLoss,
+    RadiationLossAt1000C,
+}
+
+impl FurnaceParameter {
+    const ALL: [Self; 10] = [
+        Self::Setpoint,
+        Self::ProportionalGain,
+        Self::IntegralGain,
+        Self::OutputMinimum,
+        Self::OutputMaximum,
+        Self::AmbientTemperature,
+        Self::MaximumPower,
+        Self::HeaterLag,
+        Self::LinearLoss,
+        Self::RadiationLossAt1000C,
+    ];
+    fn key(self) -> &'static str {
+        self.descriptor().key
+    }
+    pub(super) fn from_key(key: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|parameter| parameter.key() == key)
+    }
+    fn descriptor(self) -> ParameterDescriptor {
+        match self {
+            Self::Setpoint => ParameterDescriptor {
+                key: "setpoint",
+                name: "setpoint",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -f64::MAX,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::ProportionalGain => ParameterDescriptor {
+                key: "kp",
+                name: "proportional gain",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::IntegralGain => ParameterDescriptor {
+                key: "ki",
+                name: "integral gain",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::OutputMinimum => ParameterDescriptor {
+                key: "output_min",
+                name: "output minimum",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -f64::MAX,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::OutputMaximum => ParameterDescriptor {
+                key: "output_max",
+                name: "output maximum",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -f64::MAX,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::AmbientTemperature => ParameterDescriptor {
+                key: "ambient_temperature",
+                name: "ambient temperature",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -273.15,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::MaximumPower => ParameterDescriptor {
+                key: "max_power",
+                name: "maximum furnace power",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::HeaterLag => ParameterDescriptor {
+                key: "heater_lag",
+                name: "heater lag",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::LinearLoss => ParameterDescriptor {
+                key: "linear_loss",
+                name: "linear heat loss",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::RadiationLossAt1000C => ParameterDescriptor {
+                key: "radiation_loss_1000c",
+                name: "radiation loss at 1000 °C",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+        }
+    }
+}
+
+impl FurnaceController {
+    pub fn parameters(&self) -> Vec<ParameterDescriptor> {
+        FurnaceParameter::ALL
+            .into_iter()
+            .filter(|parameter| *parameter != FurnaceParameter::Setpoint)
+            .map(FurnaceParameter::descriptor)
+            .collect()
+    }
+
+    pub fn parameter_values(
+        &self,
+    ) -> Result<Vec<(String, InstrumentValue)>, ControllerParameterError> {
+        FurnaceParameter::ALL
+            .into_iter()
+            .map(|parameter| {
+                let key = parameter.key();
+                self.read_parameter(key)
+                    .map(|value| (key.to_owned(), value))
+            })
+            .collect()
+    }
+
+    pub fn read_parameter(&self, key: &str) -> Result<InstrumentValue, ControllerParameterError> {
+        let parameter = FurnaceParameter::from_key(key)
+            .ok_or_else(|| unknown_parameter(ControllerKind::Furnace, key))?;
+        if !parameter.descriptor().access.readable() {
+            return Err(ControllerParameterError::NotReadable(key.to_owned()));
+        }
+
+        let model = self.model();
+
+        let value = match parameter {
+            FurnaceParameter::Setpoint => self.setpoint(),
+
+            FurnaceParameter::ProportionalGain => self.gains().proportional(),
+
+            FurnaceParameter::IntegralGain => self.gains().integral(),
+
+            FurnaceParameter::OutputMinimum => self.output_limits().minimum(),
+
+            FurnaceParameter::OutputMaximum => self.output_limits().maximum(),
+
+            FurnaceParameter::AmbientTemperature => model.ambient_temperature(),
+
+            FurnaceParameter::MaximumPower => model.max_power(),
+
+            FurnaceParameter::HeaterLag => model.heater_lag(),
+
+            FurnaceParameter::LinearLoss => model.linear_loss(),
+
+            FurnaceParameter::RadiationLossAt1000C => model.radiation_loss_1000c(),
+        };
+
+        Ok(InstrumentValue::Number(value))
+    }
+
+    pub fn configure_parameters<I, K>(&mut self, updates: I) -> Result<(), ControllerParameterError>
+    where
+        I: IntoIterator<Item = (K, InstrumentValue)>,
+        K: AsRef<str>,
+    {
+        let mut resolved = Vec::new();
+        for (key, value) in updates {
+            let key = key.as_ref();
+            let parameter = FurnaceParameter::from_key(key)
+                .ok_or_else(|| unknown_parameter(ControllerKind::Furnace, key))?;
+            if !parameter.descriptor().access.writable() {
+                return Err(ControllerParameterError::NotWritable(key.to_owned()));
+            }
+            if resolved.iter().any(|(existing, _)| *existing == parameter) {
+                return Err(ControllerParameterError::DuplicateParameter(key.to_owned()));
+            }
+            resolved.push((parameter, expect_number(key, value)?));
+        }
+
+        let mut setpoint = self.setpoint();
+
+        let current_gains = self.gains();
+        let mut kp = current_gains.proportional();
+        let mut ki = current_gains.integral();
+
+        let current_model = self.model();
+        let mut ambient = current_model.ambient_temperature();
+        let mut max_power = current_model.max_power();
+        let mut heater_lag = current_model.heater_lag();
+        let mut linear_loss = current_model.linear_loss();
+        let mut radiation_loss = current_model.radiation_loss_1000c();
+
+        let current_limits = self.output_limits();
+
+        let mut output_min = current_limits.minimum();
+
+        let mut output_max = current_limits.maximum();
+
+        for (parameter, value) in &resolved {
+            match parameter {
+                FurnaceParameter::Setpoint => setpoint = *value,
+
+                FurnaceParameter::ProportionalGain => kp = *value,
+
+                FurnaceParameter::IntegralGain => ki = *value,
+
+                FurnaceParameter::OutputMinimum => output_min = *value,
+
+                FurnaceParameter::OutputMaximum => output_max = *value,
+
+                FurnaceParameter::AmbientTemperature => ambient = *value,
+
+                FurnaceParameter::MaximumPower => max_power = *value,
+
+                FurnaceParameter::HeaterLag => heater_lag = *value,
+
+                FurnaceParameter::LinearLoss => linear_loss = *value,
+
+                FurnaceParameter::RadiationLossAt1000C => radiation_loss = *value,
+            }
+        }
+
+        let gains = FurnaceGains::new(kp, ki).map_err(ControllerParameterError::Furnace)?;
+
+        let model = FurnaceModel::new(ambient, max_power, heater_lag, linear_loss, radiation_loss)
+            .map_err(ControllerParameterError::Furnace)?;
+
+        let limits = FurnaceOutputLimits::new(output_min, output_max)
+            .map_err(ControllerParameterError::Furnace)?;
+
+        self.configure(setpoint, gains, model, limits)
+            .map_err(ControllerParameterError::Furnace)
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -1,15 +1,12 @@
 use std::{error::Error, fmt};
 
 use super::{
-    ControllerDiagnostic, FurnaceController, FurnaceControllerError, FurnaceGains, FurnaceModel,
-    FurnaceOutput, FurnaceOutputLimits, OnOffController, OnOffControllerError, OnOffOutput,
-    PidController, PidControllerError, PidGains, PidGainsError, PidOutput, PidOutputLimits,
-    PidOutputLimitsError,
+    ControllerDiagnostic, FurnaceController, FurnaceControllerError, FurnaceOutput,
+    OnOffController, OnOffControllerError, OnOffOutput, PidController, PidControllerError,
+    PidGainsError, PidOutput, PidOutputLimitsError,
 };
 
-use crate::instrument::{
-    InstrumentValue, ParameterAccess, ParameterDescriptor, ParameterRange, ParameterValueType,
-};
+use crate::instrument::{InstrumentValue, ParameterDescriptor, ParameterRange, ParameterValueType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControllerKind {
@@ -72,245 +69,6 @@ impl fmt::Display for ControllerOperationError {
 
 impl Error for ControllerOperationError {}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ControllerParameter {
-    Setpoint,
-
-    ProportionalGain,
-    IntegralGain,
-    DerivativeGain,
-
-    Hysteresis,
-
-    OutputMinimum,
-    OutputMaximum,
-
-    OutputOff,
-    OutputOn,
-
-    AmbientTemperature,
-    MaximumPower,
-    HeaterLag,
-    LinearLoss,
-    RadiationLossAt1000C,
-}
-
-impl ControllerParameter {
-    pub const ALL: [Self; 14] = [
-        Self::Setpoint,
-        Self::ProportionalGain,
-        Self::IntegralGain,
-        Self::DerivativeGain,
-        Self::Hysteresis,
-        Self::OutputMinimum,
-        Self::OutputMaximum,
-        Self::OutputOff,
-        Self::OutputOn,
-        Self::AmbientTemperature,
-        Self::MaximumPower,
-        Self::HeaterLag,
-        Self::LinearLoss,
-        Self::RadiationLossAt1000C,
-    ];
-
-    pub const fn key(self) -> &'static str {
-        self.descriptor().key
-    }
-
-    pub fn from_key(key: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|parameter| parameter.key() == key)
-    }
-
-    pub const fn descriptor(self) -> ParameterDescriptor {
-        match self {
-            Self::Setpoint => ParameterDescriptor {
-                key: "setpoint",
-                name: "setpoint",
-                access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Number,
-                range: ParameterRange::Number {
-                    minimum: -f64::MAX,
-                    maximum: f64::MAX,
-                },
-            },
-
-            Self::ProportionalGain => ParameterDescriptor {
-                key: "kp",
-                name: "proportional gain",
-                access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Number,
-                range: ParameterRange::Number {
-                    minimum: 0.0,
-                    maximum: f64::MAX,
-                },
-            },
-
-            Self::IntegralGain => ParameterDescriptor {
-                key: "ki",
-                name: "integral gain",
-                access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Number,
-                range: ParameterRange::Number {
-                    minimum: 0.0,
-                    maximum: f64::MAX,
-                },
-            },
-
-            Self::DerivativeGain => ParameterDescriptor {
-                key: "kd",
-                name: "derivative gain",
-                access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Number,
-                range: ParameterRange::Number {
-                    minimum: 0.0,
-                    maximum: f64::MAX,
-                },
-            },
-
-            Self::OutputMinimum => ParameterDescriptor {
-                key: "output_min",
-                name: "output minimum",
-                access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Number,
-                range: ParameterRange::Number {
-                    minimum: -f64::MAX,
-                    maximum: f64::MAX,
-                },
-            },
-
-            Self::OutputMaximum => ParameterDescriptor {
-                key: "output_max",
-                name: "output maximum",
-                access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Number,
-                range: ParameterRange::Number {
-                    minimum: -f64::MAX,
-                    maximum: f64::MAX,
-                },
-            },
-
-            Self::Hysteresis => ParameterDescriptor {
-                key: "hysteresis",
-                name: "hysteresis",
-                access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Number,
-                range: ParameterRange::Number {
-                    minimum: 0.0,
-                    maximum: f64::MAX,
-                },
-            },
-
-            Self::OutputOff => ParameterDescriptor {
-                key: "output_off",
-                name: "output off",
-                access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Number,
-                range: ParameterRange::Number {
-                    minimum: -f64::MAX,
-                    maximum: f64::MAX,
-                },
-            },
-
-            Self::OutputOn => ParameterDescriptor {
-                key: "output_on",
-                name: "output on",
-                access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Number,
-                range: ParameterRange::Number {
-                    minimum: -f64::MAX,
-                    maximum: f64::MAX,
-                },
-            },
-
-            Self::AmbientTemperature => ParameterDescriptor {
-                key: "ambient_temperature",
-                name: "ambient temperature",
-                access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Number,
-                range: ParameterRange::Number {
-                    minimum: -273.15,
-                    maximum: f64::MAX,
-                },
-            },
-
-            Self::MaximumPower => ParameterDescriptor {
-                key: "max_power",
-                name: "maximum furnace power",
-                access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Number,
-                range: ParameterRange::Number {
-                    minimum: 0.0,
-                    maximum: f64::MAX,
-                },
-            },
-
-            Self::HeaterLag => ParameterDescriptor {
-                key: "heater_lag",
-                name: "heater lag",
-                access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Number,
-                range: ParameterRange::Number {
-                    minimum: 0.0,
-                    maximum: f64::MAX,
-                },
-            },
-
-            Self::LinearLoss => ParameterDescriptor {
-                key: "linear_loss",
-                name: "linear heat loss",
-                access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Number,
-                range: ParameterRange::Number {
-                    minimum: 0.0,
-                    maximum: f64::MAX,
-                },
-            },
-
-            Self::RadiationLossAt1000C => ParameterDescriptor {
-                key: "radiation_loss_1000c",
-                name: "radiation loss at 1000 °C",
-                access: ParameterAccess::ReadWrite,
-                value_type: ParameterValueType::Number,
-                range: ParameterRange::Number {
-                    minimum: 0.0,
-                    maximum: f64::MAX,
-                },
-            },
-        }
-    }
-}
-
-const PID_PARAMETERS: [ControllerParameter; 6] = [
-    ControllerParameter::Setpoint,
-    ControllerParameter::ProportionalGain,
-    ControllerParameter::IntegralGain,
-    ControllerParameter::DerivativeGain,
-    ControllerParameter::OutputMinimum,
-    ControllerParameter::OutputMaximum,
-];
-
-const ON_OFF_PARAMETERS: [ControllerParameter; 4] = [
-    ControllerParameter::Setpoint,
-    ControllerParameter::Hysteresis,
-    ControllerParameter::OutputOff,
-    ControllerParameter::OutputOn,
-];
-
-const FURNACE_PARAMETERS: [ControllerParameter; 10] = [
-    ControllerParameter::Setpoint,
-    ControllerParameter::ProportionalGain,
-    ControllerParameter::IntegralGain,
-    ControllerParameter::OutputMinimum,
-    ControllerParameter::OutputMaximum,
-    ControllerParameter::AmbientTemperature,
-    ControllerParameter::MaximumPower,
-    ControllerParameter::HeaterLag,
-    ControllerParameter::LinearLoss,
-    ControllerParameter::RadiationLossAt1000C,
-];
-
 const PID_DIAGNOSTICS: &[ControllerDiagnostic] = &[
     ControllerDiagnostic::Setpoint,
     ControllerDiagnostic::Proportional,
@@ -347,60 +105,29 @@ impl Controller {
         }
     }
 
-    fn supported_parameters(&self) -> &'static [ControllerParameter] {
-        match self {
-            Self::Pid(_) => &PID_PARAMETERS,
-            Self::OnOff(_) => &ON_OFF_PARAMETERS,
-            Self::Furnace(_) => &FURNACE_PARAMETERS,
-        }
-    }
-
     pub fn parameters(&self) -> Vec<ParameterDescriptor> {
-        self.supported_parameters()
-            .iter()
-            .copied()
-            .filter(|parameter| *parameter != ControllerParameter::Setpoint)
-            .map(ControllerParameter::descriptor)
-            .collect()
+        match self {
+            Self::Pid(controller) => controller.parameters(),
+            Self::OnOff(controller) => controller.parameters(),
+            Self::Furnace(controller) => controller.parameters(),
+        }
     }
 
     pub fn parameter_values(
         &self,
     ) -> Result<Vec<(String, InstrumentValue)>, ControllerParameterError> {
-        self.supported_parameters()
-            .iter()
-            .copied()
-            .map(|parameter| {
-                let key = parameter.key();
-
-                self.read(key).map(|value| (key.to_owned(), value))
-            })
-            .collect()
+        match self {
+            Self::Pid(controller) => controller.parameter_values(),
+            Self::OnOff(controller) => controller.parameter_values(),
+            Self::Furnace(controller) => controller.parameter_values(),
+        }
     }
 
     pub fn read(&self, key: &str) -> Result<InstrumentValue, ControllerParameterError> {
-        let parameter = ControllerParameter::from_key(key)
-            .ok_or_else(|| ControllerParameterError::UnknownParameter(key.to_owned()))?;
-
-        if !self.supports_parameter(parameter) {
-            return Err(ControllerParameterError::UnsupportedParameter {
-                kind: self.kind(),
-                parameter,
-            });
-        }
-
-        let descriptor = parameter.descriptor();
-
-        if !descriptor.access.readable() {
-            return Err(ControllerParameterError::NotReadable(parameter));
-        }
-
         match self {
-            Self::Pid(controller) => Ok(read_pid_parameter(controller, parameter)),
-
-            Self::OnOff(controller) => Ok(read_on_off_parameter(controller, parameter)),
-
-            Self::Furnace(controller) => Ok(read_furnace_parameter(controller, parameter)),
+            Self::Pid(controller) => controller.read_parameter(key),
+            Self::OnOff(controller) => controller.read_parameter(key),
+            Self::Furnace(controller) => controller.read_parameter(key),
         }
     }
 
@@ -409,45 +136,10 @@ impl Controller {
         I: IntoIterator<Item = (K, InstrumentValue)>,
         K: AsRef<str>,
     {
-        let mut resolved = Vec::new();
-
-        for (key, value) in updates {
-            let key = key.as_ref();
-
-            let parameter = ControllerParameter::from_key(key)
-                .ok_or_else(|| ControllerParameterError::UnknownParameter(key.to_owned()))?;
-
-            if !self.supports_parameter(parameter) {
-                return Err(ControllerParameterError::UnsupportedParameter {
-                    kind: self.kind(),
-                    parameter,
-                });
-            }
-
-            let descriptor = parameter.descriptor();
-
-            if !descriptor.access.writable() {
-                return Err(ControllerParameterError::NotWritable(parameter));
-            }
-
-            if resolved
-                .iter()
-                .any(|(existing_parameter, _)| *existing_parameter == parameter)
-            {
-                return Err(ControllerParameterError::DuplicateParameter(parameter));
-            }
-
-            let value = expect_number(parameter, value)?;
-
-            resolved.push((parameter, value));
-        }
-
         match self {
-            Self::Pid(controller) => configure_pid(controller, &resolved),
-
-            Self::OnOff(controller) => configure_on_off(controller, &resolved),
-
-            Self::Furnace(controller) => configure_furnace(controller, &resolved),
+            Self::Pid(controller) => controller.configure_parameters(updates),
+            Self::OnOff(controller) => controller.configure_parameters(updates),
+            Self::Furnace(controller) => controller.configure_parameters(updates),
         }
     }
 
@@ -466,10 +158,6 @@ impl Controller {
         setpoint: f64,
     ) -> Result<(), ControllerParameterError> {
         self.configure([("setpoint", InstrumentValue::Number(setpoint))])
-    }
-
-    fn supports_parameter(&self, parameter: ControllerParameter) -> bool {
-        self.supported_parameters().contains(&parameter)
     }
 
     pub fn output_range(&self) -> ParameterRange {
@@ -667,262 +355,31 @@ impl Controller {
     }
 }
 
-fn read_pid_parameter(
-    controller: &PidController,
-    parameter: ControllerParameter,
-) -> InstrumentValue {
-    let value = match parameter {
-        ControllerParameter::Setpoint => controller.setpoint(),
-
-        ControllerParameter::ProportionalGain => controller.gains().proportional(),
-
-        ControllerParameter::IntegralGain => controller.gains().integral(),
-
-        ControllerParameter::DerivativeGain => controller.gains().derivative(),
-
-        ControllerParameter::OutputMinimum => controller.output_limits().minimum(),
-
-        ControllerParameter::OutputMaximum => controller.output_limits().maximum(),
-
-        _ => {
-            unreachable!("unsupported PID controller parameter")
+// Preserve the distinction between unknown keys and keys of another controller
+// without keeping a shared catalog of implementation-specific parameters.
+pub(super) fn unknown_parameter(kind: ControllerKind, key: &str) -> ControllerParameterError {
+    if super::pid::PidParameter::from_key(key).is_some()
+        || super::on_off::OnOffParameter::from_key(key).is_some()
+        || super::furnace::FurnaceParameter::from_key(key).is_some()
+    {
+        ControllerParameterError::UnsupportedParameter {
+            kind,
+            key: key.to_owned(),
         }
-    };
-
-    InstrumentValue::Number(value)
-}
-
-fn read_on_off_parameter(
-    controller: &OnOffController,
-    parameter: ControllerParameter,
-) -> InstrumentValue {
-    let value = match parameter {
-        ControllerParameter::Setpoint => controller.setpoint(),
-
-        ControllerParameter::Hysteresis => controller.hysteresis(),
-
-        ControllerParameter::OutputOff => controller.output_off(),
-
-        ControllerParameter::OutputOn => controller.output_on(),
-
-        _ => {
-            unreachable!("unsupported on/off controller parameter")
-        }
-    };
-
-    InstrumentValue::Number(value)
-}
-
-fn read_furnace_parameter(
-    controller: &FurnaceController,
-    parameter: ControllerParameter,
-) -> InstrumentValue {
-    let model = controller.model();
-
-    let value = match parameter {
-        ControllerParameter::Setpoint => controller.setpoint(),
-
-        ControllerParameter::ProportionalGain => controller.gains().proportional(),
-
-        ControllerParameter::IntegralGain => controller.gains().integral(),
-
-        ControllerParameter::OutputMinimum => controller.output_limits().minimum(),
-
-        ControllerParameter::OutputMaximum => controller.output_limits().maximum(),
-
-        ControllerParameter::AmbientTemperature => model.ambient_temperature(),
-
-        ControllerParameter::MaximumPower => model.max_power(),
-
-        ControllerParameter::HeaterLag => model.heater_lag(),
-
-        ControllerParameter::LinearLoss => model.linear_loss(),
-
-        ControllerParameter::RadiationLossAt1000C => model.radiation_loss_1000c(),
-
-        _ => {
-            unreachable!("unsupported furnace controller parameter")
-        }
-    };
-
-    InstrumentValue::Number(value)
-}
-
-fn configure_pid(
-    controller: &mut PidController,
-    updates: &[(ControllerParameter, f64)],
-) -> Result<(), ControllerParameterError> {
-    let mut setpoint = controller.setpoint();
-
-    let current_gains = controller.gains();
-
-    let mut proportional_gain = current_gains.proportional();
-
-    let mut integral_gain = current_gains.integral();
-
-    let mut derivative_gain = current_gains.derivative();
-
-    let current_limits = controller.output_limits();
-
-    let mut output_minimum = current_limits.minimum();
-
-    let mut output_maximum = current_limits.maximum();
-
-    for (parameter, value) in updates {
-        match parameter {
-            ControllerParameter::Setpoint => {
-                setpoint = *value;
-            }
-
-            ControllerParameter::ProportionalGain => {
-                proportional_gain = *value;
-            }
-
-            ControllerParameter::IntegralGain => {
-                integral_gain = *value;
-            }
-
-            ControllerParameter::DerivativeGain => {
-                derivative_gain = *value;
-            }
-
-            ControllerParameter::OutputMinimum => {
-                output_minimum = *value;
-            }
-
-            ControllerParameter::OutputMaximum => {
-                output_maximum = *value;
-            }
-
-            _ => {
-                unreachable!("unsupported PID controller parameter");
-            }
-        }
+    } else {
+        ControllerParameterError::UnknownParameter(key.to_owned())
     }
-
-    let gains = PidGains::new(proportional_gain, integral_gain, derivative_gain)
-        .map_err(ControllerParameterError::Gains)?;
-
-    let output_limits = PidOutputLimits::new(output_minimum, output_maximum)
-        .map_err(ControllerParameterError::OutputLimits)?;
-
-    controller
-        .configure(setpoint, gains, output_limits)
-        .map_err(ControllerParameterError::Pid)
 }
 
-fn configure_on_off(
-    controller: &mut OnOffController,
-    updates: &[(ControllerParameter, f64)],
-) -> Result<(), ControllerParameterError> {
-    let mut setpoint = controller.setpoint();
-
-    let mut hysteresis = controller.hysteresis();
-
-    let mut output_off = controller.output_off();
-
-    let mut output_on = controller.output_on();
-
-    for (parameter, value) in updates {
-        match parameter {
-            ControllerParameter::Setpoint => {
-                setpoint = *value;
-            }
-
-            ControllerParameter::Hysteresis => {
-                hysteresis = *value;
-            }
-
-            ControllerParameter::OutputOff => {
-                output_off = *value;
-            }
-
-            ControllerParameter::OutputOn => {
-                output_on = *value;
-            }
-
-            _ => {
-                unreachable!("unsupported on/off controller parameter");
-            }
-        }
-    }
-
-    controller
-        .configure(setpoint, hysteresis, output_off, output_on)
-        .map_err(ControllerParameterError::OnOff)
-}
-
-fn configure_furnace(
-    controller: &mut FurnaceController,
-    updates: &[(ControllerParameter, f64)],
-) -> Result<(), ControllerParameterError> {
-    let mut setpoint = controller.setpoint();
-
-    let current_gains = controller.gains();
-    let mut kp = current_gains.proportional();
-    let mut ki = current_gains.integral();
-
-    let current_model = controller.model();
-    let mut ambient = current_model.ambient_temperature();
-    let mut max_power = current_model.max_power();
-    let mut heater_lag = current_model.heater_lag();
-    let mut linear_loss = current_model.linear_loss();
-    let mut radiation_loss = current_model.radiation_loss_1000c();
-
-    let current_limits = controller.output_limits();
-
-    let mut output_min = current_limits.minimum();
-
-    let mut output_max = current_limits.maximum();
-
-    for (parameter, value) in updates {
-        match parameter {
-            ControllerParameter::Setpoint => setpoint = *value,
-
-            ControllerParameter::ProportionalGain => kp = *value,
-
-            ControllerParameter::IntegralGain => ki = *value,
-
-            ControllerParameter::OutputMinimum => output_min = *value,
-
-            ControllerParameter::OutputMaximum => output_max = *value,
-
-            ControllerParameter::AmbientTemperature => ambient = *value,
-
-            ControllerParameter::MaximumPower => max_power = *value,
-
-            ControllerParameter::HeaterLag => heater_lag = *value,
-
-            ControllerParameter::LinearLoss => linear_loss = *value,
-
-            ControllerParameter::RadiationLossAt1000C => radiation_loss = *value,
-
-            _ => unreachable!("unsupported furnace controller parameter"),
-        }
-    }
-
-    let gains = FurnaceGains::new(kp, ki).map_err(ControllerParameterError::Furnace)?;
-
-    let model = FurnaceModel::new(ambient, max_power, heater_lag, linear_loss, radiation_loss)
-        .map_err(ControllerParameterError::Furnace)?;
-
-    let limits = FurnaceOutputLimits::new(output_min, output_max)
-        .map_err(ControllerParameterError::Furnace)?;
-
-    controller
-        .configure(setpoint, gains, model, limits)
-        .map_err(ControllerParameterError::Furnace)
-}
-
-fn expect_number(
-    parameter: ControllerParameter,
+pub(super) fn expect_number(
+    key: &str,
     value: InstrumentValue,
 ) -> Result<f64, ControllerParameterError> {
     match value {
         InstrumentValue::Number(value) => Ok(value),
 
         value => Err(ControllerParameterError::TypeMismatch {
-            parameter,
+            key: key.to_owned(),
             expected: ParameterValueType::Number,
             actual: instrument_value_type(value),
         }),
@@ -1070,15 +527,15 @@ impl ControllerOutput {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ControllerParameterError {
     UnknownParameter(String),
-    DuplicateParameter(ControllerParameter),
+    DuplicateParameter(String),
     UnsupportedParameter {
         kind: ControllerKind,
-        parameter: ControllerParameter,
+        key: String,
     },
-    NotReadable(ControllerParameter),
-    NotWritable(ControllerParameter),
+    NotReadable(String),
+    NotWritable(String),
     TypeMismatch {
-        parameter: ControllerParameter,
+        key: String,
         expected: ParameterValueType,
         actual: ParameterValueType,
     },
@@ -1105,16 +562,16 @@ impl fmt::Display for ControllerParameterError {
                     formatter,
                     "Controller parameter '{}' was \
                      configured more than once",
-                    parameter.key(),
+                    parameter,
                 )
             }
 
-            Self::UnsupportedParameter { kind, parameter } => {
+            Self::UnsupportedParameter { kind, key } => {
                 write!(
                     formatter,
                     "Controller type '{kind}' does \
                      not support parameter '{}'",
-                    parameter.key(),
+                    key,
                 )
             }
 
@@ -1123,7 +580,7 @@ impl fmt::Display for ControllerParameterError {
                     formatter,
                     "Controller parameter '{}' is \
                      not readable",
-                    parameter.key(),
+                    parameter,
                 )
             }
 
@@ -1132,12 +589,12 @@ impl fmt::Display for ControllerParameterError {
                     formatter,
                     "Controller parameter '{}' is \
                      not writable",
-                    parameter.key(),
+                    parameter,
                 )
             }
 
             Self::TypeMismatch {
-                parameter,
+                key,
                 expected,
                 actual,
             } => {
@@ -1145,7 +602,7 @@ impl fmt::Display for ControllerParameterError {
                     formatter,
                     "Controller parameter '{}' \
                      expects {}, received {}",
-                    parameter.key(),
+                    key,
                     expected.as_str(),
                     actual.as_str(),
                 )
@@ -1245,15 +702,14 @@ mod tests {
     use super::{
         Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerError,
         ControllerKind, ControllerOperation, ControllerOperationError, ControllerOutput,
-        ControllerParameter, ControllerParameterError, FurnaceController, FurnaceGains,
-        FurnaceModel, FurnaceOutputLimits,
+        ControllerParameterError, FurnaceController,
     };
 
     use crate::{
         instrument::{InstrumentValue, ParameterAccess, ParameterRange, ParameterValueType},
         process_control::{
-            OnOffController, OnOffControllerError, PidController, PidControllerError, PidGains,
-            PidOutputLimits,
+            FurnaceGains, FurnaceModel, FurnaceOutputLimits, OnOffController, OnOffControllerError,
+            PidController, PidControllerError, PidGains, PidOutputLimits,
         },
     };
 
@@ -1401,23 +857,12 @@ mod tests {
     }
 
     #[test]
-    fn finds_controller_parameter_by_key() {
-        assert_eq!(
-            ControllerParameter::from_key("setpoint",),
-            Some(ControllerParameter::Setpoint,),
-        );
-
-        assert_eq!(
-            ControllerParameter::from_key("kp",),
-            Some(ControllerParameter::ProportionalGain,),
-        );
-
-        assert_eq!(ControllerParameter::from_key("missing",), None,);
-    }
-
-    #[test]
     fn describes_pid_gain_parameter() {
-        let descriptor = ControllerParameter::ProportionalGain.descriptor();
+        let descriptor = controller()
+            .parameters()
+            .into_iter()
+            .find(|parameter| parameter.key == "kp")
+            .unwrap();
 
         assert_eq!(descriptor.key, "kp",);
 
@@ -1546,7 +991,7 @@ mod tests {
         assert_eq!(
             controller.write("setpoint", InstrumentValue::Integer(120,),),
             Err(ControllerParameterError::TypeMismatch {
-                parameter: ControllerParameter::Setpoint,
+                key: "setpoint".to_owned(),
                 expected: ParameterValueType::Number,
                 actual: ParameterValueType::Integer,
             },),
@@ -1653,7 +1098,7 @@ mod tests {
                 ("setpoint", InstrumentValue::Number(130.0,),),
             ]),
             Err(ControllerParameterError::DuplicateParameter(
-                ControllerParameter::Setpoint,
+                "setpoint".to_owned(),
             ),),
         );
 
@@ -1784,7 +1229,7 @@ mod tests {
             controller.read("kp"),
             Err(ControllerParameterError::UnsupportedParameter {
                 kind: ControllerKind::OnOff,
-                parameter: ControllerParameter::ProportionalGain,
+                key: "kp".to_owned(),
             },),
         );
     }
@@ -1873,6 +1318,123 @@ mod tests {
                 diagnostic: ControllerDiagnostic::Integral,
             },),
         );
+    }
+
+    #[test]
+    fn parameter_configuration_preserves_state_and_rejects_invalid_batches() {
+        let furnace = || {
+            FurnaceController::new(
+                500.0,
+                FurnaceGains::new(0.1, 0.0005).unwrap(),
+                FurnaceModel::new(20.0, 2500.0, 90.0, 0.35, 1200.0).unwrap(),
+                FurnaceOutputLimits::new(0.0, 100.0).unwrap(),
+            )
+            .unwrap()
+            .into()
+        };
+
+        for (mut configured, mut unchanged, invalid_key, foreign_key) in [
+            (controller(), controller(), "kp", "hysteresis"),
+            (on_off_controller(), on_off_controller(), "hysteresis", "kp"),
+            (furnace(), furnace(), "max_power", "kd"),
+        ] {
+            for (timestamp, measurement) in [(0.0, 80.0), (1.0, 85.0)] {
+                configured.update(timestamp, measurement).unwrap();
+                unchanged.update(timestamp, measurement).unwrap();
+            }
+
+            let before = configured.parameter_values().unwrap();
+            // Reapplying the current configuration must retain integral,
+            // measurement history and on/off state.
+            configured.configure(before.clone()).unwrap();
+
+            for updates in [
+                vec![
+                    ("setpoint", InstrumentValue::Number(200.0)),
+                    (invalid_key, InstrumentValue::Number(-1.0)),
+                ],
+                vec![
+                    ("setpoint", InstrumentValue::Number(200.0)),
+                    ("setpoint", InstrumentValue::Number(300.0)),
+                ],
+                vec![
+                    ("setpoint", InstrumentValue::Number(200.0)),
+                    (invalid_key, InstrumentValue::Integer(1)),
+                ],
+                vec![
+                    ("setpoint", InstrumentValue::Number(200.0)),
+                    ("missing", InstrumentValue::Number(1.0)),
+                ],
+                vec![
+                    ("setpoint", InstrumentValue::Number(200.0)),
+                    (foreign_key, InstrumentValue::Number(1.0)),
+                ],
+            ] {
+                assert!(configured.configure(updates).is_err());
+                assert_eq!(configured.parameter_values().unwrap(), before);
+            }
+
+            assert_eq!(
+                configured.read(foreign_key),
+                Err(ControllerParameterError::UnsupportedParameter {
+                    kind: configured.kind(),
+                    key: foreign_key.to_owned(),
+                }),
+            );
+            assert_eq!(
+                configured.read("missing"),
+                Err(ControllerParameterError::UnknownParameter(
+                    "missing".to_owned()
+                )),
+            );
+            assert_eq!(configured.update(2.0, 90.0), unchanged.update(2.0, 90.0));
+        }
+    }
+
+    #[test]
+    fn configures_all_furnace_parameters() {
+        let mut controller: Controller = FurnaceController::new(
+            500.0,
+            FurnaceGains::new(0.1, 0.0005).unwrap(),
+            FurnaceModel::new(20.0, 2500.0, 90.0, 0.35, 1200.0).unwrap(),
+            FurnaceOutputLimits::new(0.0, 100.0).unwrap(),
+        )
+        .unwrap()
+        .into();
+        let updates = [
+            ("setpoint", 600.0),
+            ("kp", 0.2),
+            ("ki", 0.001),
+            ("output_min", 110.0),
+            ("output_max", 120.0),
+            ("ambient_temperature", 25.0),
+            ("max_power", 3000.0),
+            ("heater_lag", 100.0),
+            ("linear_loss", 0.5),
+            ("radiation_loss_1000c", 1300.0),
+        ]
+        .map(|(key, value)| (key, InstrumentValue::Number(value)));
+
+        controller.configure(updates).unwrap();
+        assert_eq!(
+            controller.parameter_values().unwrap(),
+            updates.map(|(key, value)| (key.to_owned(), value)).to_vec(),
+        );
+        assert_eq!(
+            controller
+                .parameters()
+                .iter()
+                .map(|descriptor| descriptor.key)
+                .collect::<Vec<_>>(),
+            updates
+                .iter()
+                .skip(1)
+                .map(|(key, _)| *key)
+                .collect::<Vec<_>>(),
+        );
+        for (key, value) in updates {
+            assert_eq!(controller.read(key), Ok(value));
+        }
     }
 
     #[test]

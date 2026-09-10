@@ -1,5 +1,11 @@
 use std::{error::Error, fmt};
 
+use super::controller::{expect_number, unknown_parameter};
+use super::{ControllerKind, ControllerParameterError};
+use crate::instrument::{
+    InstrumentValue, ParameterAccess, ParameterDescriptor, ParameterRange, ParameterValueType,
+};
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PidGains {
     proportional: f64,
@@ -435,6 +441,219 @@ impl fmt::Display for PidControllerError {
 }
 
 impl Error for PidControllerError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PidParameter {
+    Setpoint,
+    ProportionalGain,
+    IntegralGain,
+    DerivativeGain,
+    OutputMinimum,
+    OutputMaximum,
+}
+
+impl PidParameter {
+    const ALL: [Self; 6] = [
+        Self::Setpoint,
+        Self::ProportionalGain,
+        Self::IntegralGain,
+        Self::DerivativeGain,
+        Self::OutputMinimum,
+        Self::OutputMaximum,
+    ];
+    fn key(self) -> &'static str {
+        self.descriptor().key
+    }
+    pub(super) fn from_key(key: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|parameter| parameter.key() == key)
+    }
+    fn descriptor(self) -> ParameterDescriptor {
+        match self {
+            Self::Setpoint => ParameterDescriptor {
+                key: "setpoint",
+                name: "setpoint",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -f64::MAX,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::ProportionalGain => ParameterDescriptor {
+                key: "kp",
+                name: "proportional gain",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::IntegralGain => ParameterDescriptor {
+                key: "ki",
+                name: "integral gain",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::DerivativeGain => ParameterDescriptor {
+                key: "kd",
+                name: "derivative gain",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::OutputMinimum => ParameterDescriptor {
+                key: "output_min",
+                name: "output minimum",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -f64::MAX,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::OutputMaximum => ParameterDescriptor {
+                key: "output_max",
+                name: "output maximum",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -f64::MAX,
+                    maximum: f64::MAX,
+                },
+            },
+        }
+    }
+}
+
+impl PidController {
+    pub fn parameters(&self) -> Vec<ParameterDescriptor> {
+        PidParameter::ALL
+            .into_iter()
+            .filter(|parameter| *parameter != PidParameter::Setpoint)
+            .map(PidParameter::descriptor)
+            .collect()
+    }
+
+    pub fn parameter_values(
+        &self,
+    ) -> Result<Vec<(String, InstrumentValue)>, ControllerParameterError> {
+        PidParameter::ALL
+            .into_iter()
+            .map(|parameter| {
+                let key = parameter.key();
+                self.read_parameter(key)
+                    .map(|value| (key.to_owned(), value))
+            })
+            .collect()
+    }
+
+    pub fn read_parameter(&self, key: &str) -> Result<InstrumentValue, ControllerParameterError> {
+        let parameter = PidParameter::from_key(key)
+            .ok_or_else(|| unknown_parameter(ControllerKind::Pid, key))?;
+        if !parameter.descriptor().access.readable() {
+            return Err(ControllerParameterError::NotReadable(key.to_owned()));
+        }
+
+        let value = match parameter {
+            PidParameter::Setpoint => self.setpoint(),
+
+            PidParameter::ProportionalGain => self.gains().proportional(),
+
+            PidParameter::IntegralGain => self.gains().integral(),
+
+            PidParameter::DerivativeGain => self.gains().derivative(),
+
+            PidParameter::OutputMinimum => self.output_limits().minimum(),
+
+            PidParameter::OutputMaximum => self.output_limits().maximum(),
+        };
+
+        Ok(InstrumentValue::Number(value))
+    }
+
+    pub fn configure_parameters<I, K>(&mut self, updates: I) -> Result<(), ControllerParameterError>
+    where
+        I: IntoIterator<Item = (K, InstrumentValue)>,
+        K: AsRef<str>,
+    {
+        let mut resolved = Vec::new();
+        for (key, value) in updates {
+            let key = key.as_ref();
+            let parameter = PidParameter::from_key(key)
+                .ok_or_else(|| unknown_parameter(ControllerKind::Pid, key))?;
+            if !parameter.descriptor().access.writable() {
+                return Err(ControllerParameterError::NotWritable(key.to_owned()));
+            }
+            if resolved.iter().any(|(existing, _)| *existing == parameter) {
+                return Err(ControllerParameterError::DuplicateParameter(key.to_owned()));
+            }
+            resolved.push((parameter, expect_number(key, value)?));
+        }
+
+        let mut setpoint = self.setpoint();
+
+        let current_gains = self.gains();
+
+        let mut proportional_gain = current_gains.proportional();
+
+        let mut integral_gain = current_gains.integral();
+
+        let mut derivative_gain = current_gains.derivative();
+
+        let current_limits = self.output_limits();
+
+        let mut output_minimum = current_limits.minimum();
+
+        let mut output_maximum = current_limits.maximum();
+
+        for (parameter, value) in &resolved {
+            match parameter {
+                PidParameter::Setpoint => {
+                    setpoint = *value;
+                }
+
+                PidParameter::ProportionalGain => {
+                    proportional_gain = *value;
+                }
+
+                PidParameter::IntegralGain => {
+                    integral_gain = *value;
+                }
+
+                PidParameter::DerivativeGain => {
+                    derivative_gain = *value;
+                }
+
+                PidParameter::OutputMinimum => {
+                    output_minimum = *value;
+                }
+
+                PidParameter::OutputMaximum => {
+                    output_maximum = *value;
+                }
+            }
+        }
+
+        let gains = PidGains::new(proportional_gain, integral_gain, derivative_gain)
+            .map_err(ControllerParameterError::Gains)?;
+
+        let output_limits = PidOutputLimits::new(output_minimum, output_maximum)
+            .map_err(ControllerParameterError::OutputLimits)?;
+
+        self.configure(setpoint, gains, output_limits)
+            .map_err(ControllerParameterError::Pid)
+    }
+}
 
 #[cfg(test)]
 mod tests {

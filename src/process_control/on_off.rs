@@ -1,5 +1,11 @@
 use std::{error::Error, fmt};
 
+use super::controller::{expect_number, unknown_parameter};
+use super::{ControllerKind, ControllerParameterError};
+use crate::instrument::{
+    InstrumentValue, ParameterAccess, ParameterDescriptor, ParameterRange, ParameterValueType,
+};
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct OnOffOutput {
     value: f64,
@@ -202,6 +208,169 @@ impl fmt::Display for OnOffControllerError {
 }
 
 impl Error for OnOffControllerError {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum OnOffParameter {
+    Setpoint,
+    Hysteresis,
+    OutputOff,
+    OutputOn,
+}
+
+impl OnOffParameter {
+    const ALL: [Self; 4] = [
+        Self::Setpoint,
+        Self::Hysteresis,
+        Self::OutputOff,
+        Self::OutputOn,
+    ];
+    fn key(self) -> &'static str {
+        self.descriptor().key
+    }
+    pub(super) fn from_key(key: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|parameter| parameter.key() == key)
+    }
+    fn descriptor(self) -> ParameterDescriptor {
+        match self {
+            Self::Setpoint => ParameterDescriptor {
+                key: "setpoint",
+                name: "setpoint",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -f64::MAX,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::Hysteresis => ParameterDescriptor {
+                key: "hysteresis",
+                name: "hysteresis",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::OutputOff => ParameterDescriptor {
+                key: "output_off",
+                name: "output off",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -f64::MAX,
+                    maximum: f64::MAX,
+                },
+            },
+            Self::OutputOn => ParameterDescriptor {
+                key: "output_on",
+                name: "output on",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -f64::MAX,
+                    maximum: f64::MAX,
+                },
+            },
+        }
+    }
+}
+
+impl OnOffController {
+    pub fn parameters(&self) -> Vec<ParameterDescriptor> {
+        OnOffParameter::ALL
+            .into_iter()
+            .filter(|parameter| *parameter != OnOffParameter::Setpoint)
+            .map(OnOffParameter::descriptor)
+            .collect()
+    }
+
+    pub fn parameter_values(
+        &self,
+    ) -> Result<Vec<(String, InstrumentValue)>, ControllerParameterError> {
+        OnOffParameter::ALL
+            .into_iter()
+            .map(|parameter| {
+                let key = parameter.key();
+                self.read_parameter(key)
+                    .map(|value| (key.to_owned(), value))
+            })
+            .collect()
+    }
+
+    pub fn read_parameter(&self, key: &str) -> Result<InstrumentValue, ControllerParameterError> {
+        let parameter = OnOffParameter::from_key(key)
+            .ok_or_else(|| unknown_parameter(ControllerKind::OnOff, key))?;
+        if !parameter.descriptor().access.readable() {
+            return Err(ControllerParameterError::NotReadable(key.to_owned()));
+        }
+
+        let value = match parameter {
+            OnOffParameter::Setpoint => self.setpoint(),
+
+            OnOffParameter::Hysteresis => self.hysteresis(),
+
+            OnOffParameter::OutputOff => self.output_off(),
+
+            OnOffParameter::OutputOn => self.output_on(),
+        };
+
+        Ok(InstrumentValue::Number(value))
+    }
+
+    pub fn configure_parameters<I, K>(&mut self, updates: I) -> Result<(), ControllerParameterError>
+    where
+        I: IntoIterator<Item = (K, InstrumentValue)>,
+        K: AsRef<str>,
+    {
+        let mut resolved = Vec::new();
+        for (key, value) in updates {
+            let key = key.as_ref();
+            let parameter = OnOffParameter::from_key(key)
+                .ok_or_else(|| unknown_parameter(ControllerKind::OnOff, key))?;
+            if !parameter.descriptor().access.writable() {
+                return Err(ControllerParameterError::NotWritable(key.to_owned()));
+            }
+            if resolved.iter().any(|(existing, _)| *existing == parameter) {
+                return Err(ControllerParameterError::DuplicateParameter(key.to_owned()));
+            }
+            resolved.push((parameter, expect_number(key, value)?));
+        }
+
+        let mut setpoint = self.setpoint();
+
+        let mut hysteresis = self.hysteresis();
+
+        let mut output_off = self.output_off();
+
+        let mut output_on = self.output_on();
+
+        for (parameter, value) in &resolved {
+            match parameter {
+                OnOffParameter::Setpoint => {
+                    setpoint = *value;
+                }
+
+                OnOffParameter::Hysteresis => {
+                    hysteresis = *value;
+                }
+
+                OnOffParameter::OutputOff => {
+                    output_off = *value;
+                }
+
+                OnOffParameter::OutputOn => {
+                    output_on = *value;
+                }
+            }
+        }
+
+        self.configure(setpoint, hysteresis, output_off, output_on)
+            .map_err(ControllerParameterError::OnOff)
+    }
+}
 
 #[cfg(test)]
 mod tests {
