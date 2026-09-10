@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use super::VirtualInstrumentMessage;
 use crate::instrument::{
     InstrumentValue, ParameterRange, ParameterValueType,
     virtual_instrument::{
@@ -7,8 +8,6 @@ use crate::instrument::{
         VirtualParameterId,
     },
 };
-
-use super::VirtualInstrumentMessage;
 
 pub const ERROR_INVALID_REQUEST: u16 = 1;
 pub const ERROR_UNKNOWN_INSTRUMENT: u16 = 2;
@@ -377,7 +376,6 @@ mod tests {
         ERROR_UNKNOWN_INSTRUMENT, VirtualInstrumentModel, VirtualInstrumentModelError,
         VirtualInstrumentServer,
     };
-
     use crate::{
         instrument::{
             InstrumentValue, ParameterAccess, ParameterRange, ParameterValueType,

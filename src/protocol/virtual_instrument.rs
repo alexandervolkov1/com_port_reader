@@ -13,10 +13,9 @@ mod server;
 pub use client::{
     VirtualInstrumentClient, VirtualInstrumentClientError, VirtualInstrumentTransport,
 };
-pub use server::{VirtualInstrumentModel, VirtualInstrumentModelError, VirtualInstrumentServer};
-
 pub use frame_io::{VirtualFrameDecoder, VirtualFrameIoError, read_frame, write_frame};
 pub use message::{VirtualInstrumentMessage, VirtualMessageCodecError};
+pub use server::{VirtualInstrumentModel, VirtualInstrumentModelError, VirtualInstrumentServer};
 
 pub const MAGIC: [u8; 2] = *b"VI";
 pub const VERSION: u8 = 1;

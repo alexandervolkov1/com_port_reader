@@ -30,9 +30,7 @@ local definition = {
 }
 
 function definition.setup()
-    app.log(
-        "Application initialized from startup.lua."
-    )
+    app.log("Application initialized from startup.lua.")
 end
 
 return definition

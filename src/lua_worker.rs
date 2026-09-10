@@ -245,7 +245,6 @@ mod tests {
     use crossbeam_channel::{Receiver, Sender, unbounded};
 
     use super::{LuaEvent, LuaWorker, load_application_scripts};
-
     use crate::{
         application_definition::ApplicationDefinition,
         user_command::{AcquisitionCommand, UserCommand},

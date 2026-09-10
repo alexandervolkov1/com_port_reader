@@ -158,6 +158,18 @@ function Metakon5x3:write(
 )
 end
 
+---Creates a PID controller whose output is written to this parameter.
+---@param parameter Metakon5x3Parameter Writable output parameter.
+---@param options PidControllerOptions
+---@return Controller
+function Metakon5x3:pid(parameter, options) end
+
+---Creates an on/off controller whose output is written to this parameter.
+---@param parameter Metakon5x3Parameter Writable output parameter.
+---@param options OnOffControllerOptions
+---@return Controller
+function Metakon5x3:on_off(parameter, options) end
+
 ---@class VirtualInstrumentOptions
 ---@field connection? string Serial connection name. Default: "primary".
 ---@field id? integer One-based virtual instrument ID. Default: 1.
@@ -207,6 +219,172 @@ function VirtualInstrument:write(
     value
 )
 end
+
+---Creates a PID controller whose output is written to this parameter.
+---@param parameter string Writable output parameter key.
+---@param options PidControllerOptions
+---@return Controller
+function VirtualInstrument:pid(parameter, options) end
+
+---Creates an on/off controller whose output is written to this parameter.
+---@param parameter string Writable output parameter key.
+---@param options OnOffControllerOptions
+---@return Controller
+function VirtualInstrument:on_off(parameter, options) end
+
+---@class ExponentialFilterSeriesOptions
+---@field name string Unique output series name.
+---@field color? SeriesColor
+---@field kind '"exponential"'
+---@field time_constant number Positive time constant in seconds.
+
+---@class MovingAverageFilterSeriesOptions
+---@field name string Unique output series name.
+---@field color? SeriesColor
+---@field kind '"moving_average"'
+---@field window integer Positive sample window size.
+
+---@class MedianFilterSeriesOptions
+---@field name string Unique output series name.
+---@field color? SeriesColor
+---@field kind '"median"'
+---@field window integer Positive odd sample window size.
+
+---@alias FilterSeriesOptions
+---| ExponentialFilterSeriesOptions
+---| MovingAverageFilterSeriesOptions
+---| MedianFilterSeriesOptions
+
+---@class ExponentialFilterDefinition
+---@field kind '"exponential"'
+---@field time_constant number Positive time constant in seconds.
+
+---@class MovingAverageFilterDefinition
+---@field kind '"moving_average"'
+---@field window integer Positive sample window size.
+
+---@class MedianFilterDefinition
+---@field kind '"median"'
+---@field window integer Positive odd sample window size.
+
+---@alias SignalFilterDefinition
+---| ExponentialFilterDefinition
+---| MovingAverageFilterDefinition
+---| MedianFilterDefinition
+
+---@class PidControllerOptions
+---@field name string Unique controller name.
+---@field input string Input series name.
+---@field setpoint number Initial fixed setpoint.
+---@field kp number Proportional gain.
+---@field ki? number Integral gain. Default: 0.0.
+---@field kd? number Derivative gain. Default: 0.0.
+---@field output_min number Minimum controller output.
+---@field output_max number Maximum controller output.
+---@field safe_output? number Value written when the controller is paused.
+
+---@class OnOffControllerOptions
+---@field name string Unique controller name.
+---@field input string Input series name.
+---@field setpoint number Initial fixed setpoint.
+---@field hysteresis number Switching hysteresis.
+---@field output_off number Output in the off state.
+---@field output_on number Output in the on state.
+---@field safe_output? number Value written when the controller is paused.
+
+---@alias ControllerDiagnostic
+---| '"setpoint"'
+---| '"proportional"'
+---| '"integral"'
+---| '"derivative"'
+---| '"output"'
+---| '"unconstrained_output"'
+
+---@alias ControllerState
+---| '"running"'
+---| '"paused"'
+
+---@alias ReferenceKind
+---| '"fixed"'
+---| '"ramp"'
+
+---@class ControllerSeriesOptions
+---@field name? string Unique series name. Defaults to <controller>_<diagnostic>.
+---@field color? SeriesColor
+
+---@class RampReferenceOptions
+---@field start number Initial value.
+---@field target number Target value.
+---@field rate number Positive change per second.
+
+---@class Controller
+local Controller = {}
+
+---@return string
+function Controller:name() end
+
+---Returns the parameters supported by this controller type.
+---@return InstrumentParameterInfo[]
+function Controller:parameters() end
+
+---Returns the diagnostics supported by this controller type.
+---@return ControllerDiagnostic[]
+function Controller:diagnostics() end
+
+---Adds a controller diagnostic as an event-driven series.
+---Controller diagnostic series do not accept an interval.
+---@param diagnostic ControllerDiagnostic
+---@param options? string|ControllerSeriesOptions
+function Controller:add(diagnostic, options) end
+
+---@param key string
+---@return InstrumentValue
+function Controller:read(key) end
+
+---@param key string
+---@param value InstrumentValue
+---@return InstrumentValue
+function Controller:write(key, value) end
+
+---Applies several controller parameter updates atomically.
+---@param updates table<string, InstrumentValue>
+function Controller:configure(updates) end
+
+---@return ReferenceKind|nil
+function Controller:reference_kind() end
+
+---@return InstrumentParameterInfo[]
+function Controller:reference_parameters() end
+
+---@param key string
+---@return InstrumentValue
+function Controller:read_reference(key) end
+
+---@param key string
+---@param value InstrumentValue
+---@return InstrumentValue
+function Controller:write_reference(key, value) end
+
+---Applies several reference parameter updates atomically.
+---@param updates table<string, InstrumentValue>
+function Controller:configure_reference(updates) end
+
+---@param value number
+function Controller:set_fixed_reference(value) end
+
+---@param options RampReferenceOptions
+function Controller:set_ramp_reference(options) end
+
+---@param input_name string Existing series name.
+function Controller:set_input(input_name) end
+
+---@return ControllerState
+function Controller:state() end
+
+function Controller:pause() end
+function Controller:resume() end
+function Controller:reset_integral() end
+function Controller:reset() end
 
 ---@class ControlReadoutDefinition
 ---@field kind '"readout"'
@@ -290,6 +468,16 @@ function app.add_serial(
     options
 )
 end
+
+---Creates a filtered series derived from an existing series.
+---@param input_name string Existing input series name.
+---@param options FilterSeriesOptions
+function app.filter(input_name, options) end
+
+---Replaces an existing filtered series definition and resets its filter state.
+---@param name string Existing filtered series name.
+---@param definition SignalFilterDefinition
+function app.set_filter(name, definition) end
 
 ---Creates a typed Metakon 5X3 controller.
 ---@param options? Metakon5x3Options

@@ -390,7 +390,6 @@ mod tests {
         VirtualInstrumentDescriptor, VirtualInstrumentId, VirtualInstrumentSchemaError,
         VirtualParameterDescriptor, VirtualParameterId,
     };
-
     use crate::instrument::{ParameterAccess, ParameterRange, ParameterValueType};
 
     fn number_parameter(id: u16, key: &str) -> VirtualParameterDescriptor {

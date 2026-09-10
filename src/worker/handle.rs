@@ -2,6 +2,7 @@ use std::{error::Error, fmt};
 
 use crossbeam_channel::Sender;
 
+use super::command::{ConnectionCommand, WorkerCommand};
 use crate::{
     acquisition::{
         InstrumentReadResult, InstrumentWriteCompletion, InstrumentWriteCompletionId,
@@ -12,8 +13,6 @@ use crate::{
     process_recorder::ProcessActionId,
     serial_connection::SerialPortConfig,
 };
-
-use super::command::{ConnectionCommand, WorkerCommand};
 
 #[derive(Clone)]
 pub struct WorkerHandle {
@@ -155,7 +154,6 @@ mod tests {
     use crossbeam_channel::{bounded, unbounded};
 
     use super::WorkerHandle;
-
     use crate::{
         acquisition::InstrumentWriteCompletionId,
         connection::ConnectionId,

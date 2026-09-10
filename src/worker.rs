@@ -810,7 +810,6 @@ mod tests {
         MAX_CONSECUTIVE_POLL_FAILURES, SeriesSchedule, WorkerEvent, WorkerEventSender,
         synchronize_series_schedules, update_series_polling_health,
     };
-
     use crate::{
         acquisition::{AcquisitionError, SeriesAcquisitionFailure},
         connection::ConnectionId,

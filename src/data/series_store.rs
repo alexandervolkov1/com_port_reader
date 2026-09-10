@@ -3,14 +3,13 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use crate::{
-    connection::ConnectionId, instrument::InstrumentReadRequest,
-    signal_processing::SignalFilterDefinition,
-};
-
 use super::{
     NewSeries, Series, SeriesColor, SeriesId, SeriesMetadata, SeriesNameError, SeriesPollingState,
     SeriesSample, SeriesSource, series_name::normalize_series_name,
+};
+use crate::{
+    connection::ConnectionId, instrument::InstrumentReadRequest,
+    signal_processing::SignalFilterDefinition,
 };
 
 struct SeriesStoreInner {
@@ -542,7 +541,6 @@ fn generate_default_name(series: &[Series], prefix: &str, id: SeriesId) -> Strin
 #[cfg(test)]
 mod tests {
     use super::{AppendSeriesSamplesError, RenameSeriesError, SeriesStore};
-
     use crate::{
         connection::ConnectionId,
         data::{

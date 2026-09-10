@@ -1,5 +1,6 @@
 use crossbeam_channel::{Sender, bounded};
 
+use super::{ConnectionWorkerEvent, Worker, WorkerConfig, WorkerHandle, WorkerServices};
 use crate::{
     acquisition::{CombinedSource, SerialCommandSource},
     data::{SeriesId, SeriesStore},
@@ -7,8 +8,6 @@ use crate::{
     serial_connection::SerialConfigStore,
     signal_processing::ProcessingHandle,
 };
-
-use super::{ConnectionWorkerEvent, Worker, WorkerConfig, WorkerHandle, WorkerServices};
 
 const CONNECTION_COMMAND_CAPACITY: usize = 32;
 

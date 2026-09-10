@@ -1,6 +1,7 @@
+use std::time::Duration;
+
 use eframe::egui;
 use rfd::FileDialog;
-use std::time::Duration;
 
 use crate::{
     application_definition::ApplicationDefinition,

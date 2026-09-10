@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use super::{MessageKind, VirtualFrameError, VirtualInstrumentFrame};
 use crate::instrument::{
     InstrumentValue, ParameterAccess, ParameterRange, ParameterValueType,
     virtual_instrument::{
@@ -7,8 +8,6 @@ use crate::instrument::{
         VirtualParameterDescriptor, VirtualParameterId,
     },
 };
-
-use super::{MessageKind, VirtualFrameError, VirtualInstrumentFrame};
 
 const ACCESS_READ_ONLY: u8 = 1;
 const ACCESS_WRITE_ONLY: u8 = 2;
@@ -749,7 +748,6 @@ impl From<VirtualInstrumentSchemaError> for VirtualMessageCodecError {
 #[cfg(test)]
 mod tests {
     use super::{VALUE_BOOLEAN, VirtualInstrumentMessage, VirtualMessageCodecError};
-
     use crate::{
         instrument::{
             InstrumentValue, ParameterAccess, ParameterRange, ParameterValueType,

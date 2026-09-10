@@ -168,7 +168,6 @@ mod tests {
     use std::io::Cursor;
 
     use super::{VirtualFrameDecoder, VirtualFrameIoError, read_frame, write_frame};
-
     use crate::protocol::virtual_instrument::{MessageKind, VirtualInstrumentFrame};
 
     #[test]

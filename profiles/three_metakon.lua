@@ -24,9 +24,7 @@ local definition = {
 }
 
 function definition.setup()
-    app.log(
-        "Three Metakon controllers configured on COM5."
-    )
+    app.log("Three Metakon controllers configured on COM5.")
 end
 
 return definition

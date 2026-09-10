@@ -1,3 +1,4 @@
+use super::{AcquisitionError, AcquisitionSource};
 use crate::{
     data::{Sample, SeriesMetadata},
     instrument::{
@@ -5,8 +6,6 @@ use crate::{
         virtual_instrument::VirtualInstrumentDescriptor,
     },
 };
-
-use super::{AcquisitionError, AcquisitionSource};
 
 pub struct CombinedSource {
     sources: Vec<Box<dyn AcquisitionSource>>,
@@ -131,9 +130,10 @@ impl AcquisitionSource for CombinedSource {
 #[cfg(test)]
 mod tests {
     use super::{AcquisitionError, AcquisitionSource, CombinedSource};
-
-    use crate::data::{Sample, SeriesId, SeriesMetadata, SeriesSample, SeriesSource};
-    use crate::{connection::ConnectionId, data::SeriesPollingState};
+    use crate::{
+        connection::ConnectionId,
+        data::{Sample, SeriesId, SeriesMetadata, SeriesPollingState, SeriesSample, SeriesSource},
+    };
 
     struct FixedSource {
         series_id: SeriesId,

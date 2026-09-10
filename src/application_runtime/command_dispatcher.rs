@@ -1,6 +1,16 @@
-use crossbeam_channel::Receiver;
 use std::collections::{BTreeSet, HashMap};
 
+use crossbeam_channel::Receiver;
+
+use super::{
+    acquisition_command_handler::AcquisitionCommandHandler,
+    acquisition_controller::AcquisitionController,
+    controller_command_handler::ControllerCommandHandler,
+    device_emulator_service::DeviceEmulatorService,
+    emulator_command_handler::EmulatorCommandHandler,
+    instrument_command_handler::InstrumentCommandHandler,
+    serial_command_handler::SerialCommandHandler, series_command_handler::SeriesCommandHandler,
+};
 use crate::{
     app_log::LogHandle,
     application_definition::ApplicationDefinition,
@@ -14,16 +24,6 @@ use crate::{
     signal_processing::ProcessingHandle,
     user_command::UserCommand,
     worker::{ConnectionRouter, ConnectionWorkerEvent, WorkerEvent},
-};
-
-use super::{
-    acquisition_command_handler::AcquisitionCommandHandler,
-    acquisition_controller::AcquisitionController,
-    controller_command_handler::ControllerCommandHandler,
-    device_emulator_service::DeviceEmulatorService,
-    emulator_command_handler::EmulatorCommandHandler,
-    instrument_command_handler::InstrumentCommandHandler,
-    serial_command_handler::SerialCommandHandler, series_command_handler::SeriesCommandHandler,
 };
 
 pub(crate) struct CommandDispatcherConnections {
@@ -447,6 +447,11 @@ mod tests {
     use crossbeam_channel::{bounded, unbounded};
     use serialport::{DataBits, FlowControl, Parity, StopBits};
 
+    use super::{
+        AcquisitionActionEventOutcome, AcquisitionActionKind, PendingAcquisitionAction,
+        rollback_acquisition_connections, update_pending_acquisition_action,
+        worker_event_should_be_logged,
+    };
     use crate::{
         acquisition::AcquisitionError,
         app_log::LogModel,
@@ -474,12 +479,6 @@ mod tests {
         worker::{
             ConnectionRouter, ConnectionWorkerEvent, WorkerCommand, WorkerEvent, WorkerHandle,
         },
-    };
-
-    use super::{
-        AcquisitionActionEventOutcome, AcquisitionActionKind, PendingAcquisitionAction,
-        rollback_acquisition_connections, update_pending_acquisition_action,
-        worker_event_should_be_logged,
     };
 
     fn test_serial_config(port_name: &str) -> SerialPortConfig {

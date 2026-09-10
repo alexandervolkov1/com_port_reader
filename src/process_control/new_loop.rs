@@ -88,7 +88,6 @@ impl Error for NewControllerError {}
 #[cfg(test)]
 mod tests {
     use super::NewController;
-
     use crate::process_control::{ControllerKind, OnOffController};
 
     fn controller() -> OnOffController {

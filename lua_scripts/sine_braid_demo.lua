@@ -1,18 +1,5 @@
--- Symmetric sine-wave braid.
--- Eight virtual sine generators.
--- Phase step: 45 degrees = pi / 4.
-
-local base_amplitudes = {
-    100.0,
-    90.0,
-    80.0,
-    70.0,
-    70.0,
-    80.0,
-    90.0,
-    100.0,
-}
-
+-- Symmetric braid of eight sine waves with a 45-degree phase step.
+local base_amplitudes = { 100.0, 90.0, 80.0, 70.0, 70.0, 80.0, 90.0, 100.0 }
 local colors = {
     "#35B779", -- green
     "#20A486",
@@ -24,288 +11,103 @@ local colors = {
     "#3B528B", -- blue
 }
 
-local amplitude_multiplier =
-    rawget(
-        _G,
-        "SINE_BRAID_AMPLITUDE_MULTIPLIER"
-    ) or 1.0
-
+local amplitude_multiplier = rawget(_G, "SINE_BRAID_AMPLITUDE_MULTIPLIER") or 1.0
 if type(amplitude_multiplier) ~= "number"
     or amplitude_multiplier ~= amplitude_multiplier
     or amplitude_multiplier == math.huge
     or amplitude_multiplier == -math.huge
     or amplitude_multiplier <= 0.0
 then
-    error(
-        "SINE_BRAID_AMPLITUDE_MULTIPLIER "
-            .. "must be a positive finite number"
-    )
+    error("SINE_BRAID_AMPLITUDE_MULTIPLIER must be a positive finite number")
 end
 
 local amplitudes = {}
-
 for index, amplitude in ipairs(base_amplitudes) do
-    amplitudes[index] =
-        amplitude * amplitude_multiplier
+    amplitudes[index] = amplitude * amplitude_multiplier
 end
+
+local controls = {
+    { kind = "number", id = "period", label = "Period, s", initial = 300.0,
+      min = 0.1, max = 86400.0, step = 1.0, on_change = "set_period" },
+    { kind = "number", id = "phase_step", label = "Phase step, rad",
+      initial = math.pi / 4.0, min = 0.0, max = 2.0 * math.pi, step = 0.01,
+      on_change = "set_phase_step" },
+}
+
+for index, amplitude in ipairs(amplitudes) do
+    controls[#controls + 1] = {
+        kind = "number",
+        id = "amplitude_" .. index,
+        label = "Amplitude " .. index,
+        initial = amplitude,
+        min = 0.0,
+        max = 1000000.0,
+        step = 1.0,
+        on_change = "set_amplitude_" .. index,
+    }
+end
+
+controls[#controls + 1] = { kind = "button", id = "start", label = "Start braid", on_click = "run" }
+controls[#controls + 1] = { kind = "button", id = "stop", label = "Stop braid", on_click = "stop" }
 
 local script = {
     id = "sine_braid",
-
-    panels = {
-        {
-            id = "controls",
-            title = "Sine braid demo",
-
-            controls = {
-                {
-                    kind = "number",
-                    id = "period",
-                    label = "Period, s",
-                    initial = 300.0,
-                    min = 0.1,
-                    max = 86400.0,
-                    step = 1.0,
-                    on_change = "set_period",
-                },
-
-                {
-                    kind = "number",
-                    id = "phase_step",
-                    label = "Phase step, rad",
-                    initial = math.pi / 4.0,
-                    min = 0.0,
-                    max = 2.0 * math.pi,
-                    step = 0.01,
-                    on_change = "set_phase_step",
-                },
-
-                {
-                    kind = "number",
-                    id = "amplitude_1",
-                    label = "Amplitude 1",
-                    initial = amplitudes[1],
-                    min = 0.0,
-                    max = 1000000.0,
-                    step = 1.0,
-                    on_change = "set_amplitude_1",
-                },
-
-                {
-                    kind = "number",
-                    id = "amplitude_2",
-                    label = "Amplitude 2",
-                    initial = amplitudes[2],
-                    min = 0.0,
-                    max = 1000000.0,
-                    step = 1.0,
-                    on_change = "set_amplitude_2",
-                },
-
-                {
-                    kind = "number",
-                    id = "amplitude_3",
-                    label = "Amplitude 3",
-                    initial = amplitudes[3],
-                    min = 0.0,
-                    max = 1000000.0,
-                    step = 1.0,
-                    on_change = "set_amplitude_3",
-                },
-
-                {
-                    kind = "number",
-                    id = "amplitude_4",
-                    label = "Amplitude 4",
-                    initial = amplitudes[4],
-                    min = 0.0,
-                    max = 1000000.0,
-                    step = 1.0,
-                    on_change = "set_amplitude_4",
-                },
-
-                {
-                    kind = "number",
-                    id = "amplitude_5",
-                    label = "Amplitude 5",
-                    initial = amplitudes[5],
-                    min = 0.0,
-                    max = 1000000.0,
-                    step = 1.0,
-                    on_change = "set_amplitude_5",
-                },
-
-                {
-                    kind = "number",
-                    id = "amplitude_6",
-                    label = "Amplitude 6",
-                    initial = amplitudes[6],
-                    min = 0.0,
-                    max = 1000000.0,
-                    step = 1.0,
-                    on_change = "set_amplitude_6",
-                },
-
-                {
-                    kind = "number",
-                    id = "amplitude_7",
-                    label = "Amplitude 7",
-                    initial = amplitudes[7],
-                    min = 0.0,
-                    max = 1000000.0,
-                    step = 1.0,
-                    on_change = "set_amplitude_7",
-                },
-
-                {
-                    kind = "number",
-                    id = "amplitude_8",
-                    label = "Amplitude 8",
-                    initial = amplitudes[8],
-                    min = 0.0,
-                    max = 1000000.0,
-                    step = 1.0,
-                    on_change = "set_amplitude_8",
-                },
-
-                {
-                    kind = "button",
-                    id = "start",
-                    label = "Start braid",
-                    on_click = "run",
-                },
-
-                {
-                    kind = "button",
-                    id = "stop",
-                    label = "Stop braid",
-                    on_click = "stop",
-                },
-            },
-        },
-    },
+    panels = {{
+        id = "controls",
+        title = "Sine braid demo",
+        controls = controls,
+    }},
 }
 
 local period = 300.0
 local phase_step = math.pi / 4.0
 local generators = {}
 
-local function require_finite_number(
-    name,
-    value
-)
-    if type(value) ~= "number"
-        or value ~= value
-        or value == math.huge
-        or value == -math.huge
+local function require_finite_number(name, value)
+    if type(value) ~= "number" or value ~= value
+        or value == math.huge or value == -math.huge
     then
-        error(
-            name .. " must be a finite number"
-        )
+        error(name .. " must be a finite number")
     end
 end
 
-local function set_amplitude(
-    index,
-    value
-)
-    require_finite_number(
-        "amplitude",
-        value
-    )
-
-    if value < 0.0 then
-        error(
-            "amplitude must not be negative"
-        )
-    end
+local function set_amplitude(index, value)
+    require_finite_number("amplitude", value)
+    if value < 0.0 then error("amplitude must not be negative") end
 
     amplitudes[index] = value
-
     local generator = generators[index]
-
-    if generator ~= nil then
-        generator:write(
-            "amplitude",
-            value
-        )
-    end
+    if generator then generator:write("amplitude", value) end
 end
 
 function script.set_period(value)
-    require_finite_number(
-        "period",
-        value
-    )
-
-    if value <= 0.0 then
-        error(
-            "period must be greater than zero"
-        )
-    end
+    require_finite_number("period", value)
+    if value <= 0.0 then error("period must be greater than zero") end
 
     period = value
-
-    for _, generator in ipairs(generators) do
-        generator:write(
-            "period",
-            period
-        )
-    end
+    for _, generator in ipairs(generators) do generator:write("period", period) end
 end
 
 function script.set_phase_step(value)
-    require_finite_number(
-        "phase step",
-        value
-    )
-
+    require_finite_number("phase step", value)
     phase_step = value
-
     for index, generator in ipairs(generators) do
-        generator:write(
-            "phase",
-            (index - 1) * phase_step
-        )
+        generator:write("phase", (index - 1) * phase_step)
     end
 end
 
-function script.set_amplitude_1(value)
-    set_amplitude(1, value)
-end
-
-function script.set_amplitude_2(value)
-    set_amplitude(2, value)
-end
-
-function script.set_amplitude_3(value)
-    set_amplitude(3, value)
-end
-
-function script.set_amplitude_4(value)
-    set_amplitude(4, value)
-end
-
-function script.set_amplitude_5(value)
-    set_amplitude(5, value)
-end
-
-function script.set_amplitude_6(value)
-    set_amplitude(6, value)
-end
-
-function script.set_amplitude_7(value)
-    set_amplitude(7, value)
-end
-
-function script.set_amplitude_8(value)
-    set_amplitude(8, value)
-end
+function script.set_amplitude_1(value) set_amplitude(1, value) end
+function script.set_amplitude_2(value) set_amplitude(2, value) end
+function script.set_amplitude_3(value) set_amplitude(3, value) end
+function script.set_amplitude_4(value) set_amplitude(4, value) end
+function script.set_amplitude_5(value) set_amplitude(5, value) end
+function script.set_amplitude_6(value) set_amplitude(6, value) end
+function script.set_amplitude_7(value) set_amplitude(7, value) end
+function script.set_amplitude_8(value) set_amplitude(8, value) end
 
 function script.stop()
     app.stop()
     app.stop_emu()
-
     generators = {}
 end
 
@@ -313,51 +115,26 @@ function script.run()
     app.stop()
     app.stop_emu()
     app.clear()
-
     generators = {}
 
     app.start_emu()
-
     for index, amplitude in ipairs(amplitudes) do
-        local generator =
-            app.virtual_instrument({
-                id = index,
-            })
-
-        generator:write(
-            "amplitude",
-            amplitude
-        )
-
-        generator:write(
-            "period",
-            period
-        )
-
-        generator:write(
-            "phase",
-            (index - 1) * phase_step
-        )
-
-        generator:add(
-            "value",
-            {
-                name = "braid_" .. index,
-                interval = 1.0,
-                color = colors[index],
-            }
-        )
-
+        local generator = app.virtual_instrument({ id = index })
+        generator:write("amplitude", amplitude)
+        generator:write("period", period)
+        generator:write("phase", (index - 1) * phase_step)
+        generator:add("value", {
+            name = "braid_" .. index,
+            interval = 1.0,
+            color = colors[index],
+        })
         generators[index] = generator
     end
-
     app.start()
 end
 
--- Run first so a failed initialization does not
--- leave a non-working panel in the application.
+-- Run first so failed initialization does not leave a non-working panel behind.
 script.run()
 
--- Registration makes the panel available in the GUI
--- and keeps this table alive in the Lua runtime.
+-- Registration exposes the panel and keeps this table alive in the Lua runtime.
 app.register_script(script)

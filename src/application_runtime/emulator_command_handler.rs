@@ -1,3 +1,4 @@
+use super::device_emulator_service::DeviceEmulatorService;
 use crate::{
     acquisition::AcquisitionError,
     application_definition::ApplicationDefinition,
@@ -6,8 +7,6 @@ use crate::{
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
     user_command::EmulatorCommand,
 };
-
-use super::device_emulator_service::DeviceEmulatorService;
 
 pub(crate) struct EmulatorCommandHandler<'a> {
     application_definition: &'a ApplicationDefinition,

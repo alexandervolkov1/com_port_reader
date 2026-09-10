@@ -87,7 +87,6 @@ fn plot_point_from_sample(sample: Sample) -> PlotPoint {
 #[cfg(test)]
 mod tests {
     use super::downsample_min_max_into;
-
     use crate::data::Sample;
 
     #[test]

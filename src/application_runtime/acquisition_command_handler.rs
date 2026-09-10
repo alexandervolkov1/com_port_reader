@@ -1,17 +1,16 @@
 use std::collections::{BTreeSet, HashMap};
 
-use crate::{
-    app_log::LogHandle,
-    process_recorder::{ProcessActionContext, ProcessActionId, ProcessRecorder},
-    user_command::AcquisitionCommand,
-    worker::ConnectionRouter,
-};
-
 use super::{
     AcquisitionController,
     command_dispatcher::{
         AcquisitionActionKind, PendingAcquisitionAction, rollback_acquisition_connections,
     },
+};
+use crate::{
+    app_log::LogHandle,
+    process_recorder::{ProcessActionContext, ProcessActionId, ProcessRecorder},
+    user_command::AcquisitionCommand,
+    worker::ConnectionRouter,
 };
 
 pub(crate) struct AcquisitionCommandHandler<'a> {

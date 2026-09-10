@@ -1,10 +1,9 @@
 use std::{error::Error, fmt};
 
-use crate::instrument::{InstrumentValue, ParameterDescriptor};
-
 use super::{
     ReferenceParameterError, ReferenceSource, ReferenceSourceError, ReferenceSourceParameter,
 };
+use crate::instrument::{InstrumentValue, ParameterDescriptor};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReferenceRuntime {
@@ -231,7 +230,6 @@ impl Error for ReferenceRuntimeError {
 #[cfg(test)]
 mod tests {
     use super::{ReferenceRuntime, ReferenceRuntimeError};
-
     use crate::{
         instrument::InstrumentValue,
         process_control::{ReferenceParameterError, ReferenceSource, ReferenceSourceError},

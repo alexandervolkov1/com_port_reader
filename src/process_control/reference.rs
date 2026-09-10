@@ -633,7 +633,6 @@ mod tests {
         FixedReference, RampReference, ReferenceKind, ReferenceParameterError, ReferenceSource,
         ReferenceSourceError, ReferenceSourceParameter,
     };
-
     use crate::instrument::{InstrumentValue, ParameterValueType};
 
     #[test]

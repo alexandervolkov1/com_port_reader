@@ -602,6 +602,7 @@ impl Error for OutputArbiterError {}
 
 #[cfg(test)]
 mod tests {
+    use super::{OutputArbiter, OutputArbiterError, OutputMode, OutputSource};
     use crate::{
         acquisition::{AcquisitionError, InstrumentWriteCompletionId},
         connection::ConnectionId,
@@ -611,8 +612,6 @@ mod tests {
         },
         process_control::ControllerInstanceId,
     };
-
-    use super::{OutputArbiter, OutputArbiterError, OutputMode, OutputSource};
 
     fn target() -> ConnectedParameterAddress {
         ConnectedParameterAddress::new(

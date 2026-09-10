@@ -1,7 +1,11 @@
-use crate::instrument::{InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest};
-use crate::process_recorder::ProcessActionId;
-use crate::serial_connection::SerialConnectionError;
-use crate::{acquisition::AcquisitionError, connection::ConnectionId, data::SeriesId};
+use crate::{
+    acquisition::AcquisitionError,
+    connection::ConnectionId,
+    data::SeriesId,
+    instrument::{InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest},
+    process_recorder::ProcessActionId,
+    serial_connection::SerialConnectionError,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConnectionWorkerEvent {
@@ -247,7 +251,6 @@ impl std::fmt::Display for WorkerEvent {
 #[cfg(test)]
 mod tests {
     use super::{ConnectionWorkerEvent, WorkerEvent};
-
     use crate::connection::ConnectionId;
 
     #[test]

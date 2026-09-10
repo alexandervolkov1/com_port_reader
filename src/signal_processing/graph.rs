@@ -383,7 +383,6 @@ mod tests {
         ProcessedSignal, SignalProcessingError, SignalProcessingGraph,
         SignalProcessingGraphDefinitionError, SignalProcessingGraphUpdateError,
     };
-
     use crate::signal_processing::{SignalFilterDefinition, SignalFilterError};
 
     #[test]

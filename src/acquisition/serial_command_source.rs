@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use super::{AcquisitionError, AcquisitionSource};
 use crate::{
     connection::ConnectionId,
     data::{Sample, SeriesMetadata, SeriesSource},
@@ -12,8 +13,6 @@ use crate::{
     serial_connection::{SerialConfigStore, SerialConnection},
     utils::current_time_f64,
 };
-
-use super::{AcquisitionError, AcquisitionSource};
 
 pub struct SerialCommandSource {
     connection_id: ConnectionId,
@@ -360,7 +359,6 @@ impl AcquisitionSource for SerialCommandSource {
 #[cfg(test)]
 mod tests {
     use super::{AcquisitionSource, SerialCommandSource, scale_instrument_value};
-
     use crate::{
         connection::ConnectionId,
         data::{SeriesId, SeriesMetadata, SeriesPollingState, SeriesSource},

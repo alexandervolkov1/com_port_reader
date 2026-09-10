@@ -1,12 +1,11 @@
 use std::fmt;
 
+use super::{ControlOutputParameter, ControlOutputTarget};
 use crate::instrument::{
     InstrumentValue, InstrumentWriteRequest, ParameterRange, ParameterValueType,
     metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3ValueError, Metakon5x3Write},
     virtual_instrument::{VirtualInstrumentId, VirtualParameterId},
 };
-
-use super::{ControlOutputParameter, ControlOutputTarget};
 
 impl ControlOutputTarget {
     pub fn write_request(
@@ -284,6 +283,7 @@ impl std::error::Error for ControlOutputConversionError {
 
 #[cfg(test)]
 mod tests {
+    use super::ControlOutputConversionError;
     use crate::{
         connection::ConnectionId,
         instrument::{
@@ -296,8 +296,6 @@ mod tests {
         },
         process_control::ControlOutputTarget,
     };
-
-    use super::ControlOutputConversionError;
 
     fn metakon_target(parameter: Metakon5x3Register, scale: f64) -> ControlOutputTarget {
         ControlOutputTarget::metakon_5x3(

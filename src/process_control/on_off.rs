@@ -1,7 +1,9 @@
 use std::{error::Error, fmt};
 
-use super::controller::{expect_number, unknown_parameter};
-use super::{ControllerKind, ControllerParameterError};
+use super::{
+    ControllerKind, ControllerParameterError,
+    controller::{expect_number, unknown_parameter},
+};
 use crate::instrument::{
     InstrumentValue, ParameterAccess, ParameterDescriptor, ParameterRange, ParameterValueType,
 };

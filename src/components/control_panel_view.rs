@@ -1,7 +1,6 @@
 use eframe::egui;
 
 use super::control_panel_model::{ControlPanelModel, ControlState};
-
 use crate::lua_application_script::{LuaControlArgument, LuaControlInvocation};
 
 const VIEWPORT_ID: &str = "application_control_panel";

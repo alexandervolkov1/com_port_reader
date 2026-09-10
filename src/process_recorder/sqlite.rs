@@ -7,12 +7,11 @@ use std::{
 
 use rusqlite::{Connection, params};
 
-use crate::data::SeriesId;
-
 use super::{
     ProcessAction, ProcessActionId, ProcessActionOrigin, ProcessActionResult, ProcessControlOutput,
     ProcessLogLevel, ProcessMeasurement, ProcessRecord, ProcessRecordWriter, ProcessRecorderError,
 };
+use crate::data::SeriesId;
 
 pub(crate) struct SqliteProcessRecordWriter {
     connection: Connection,

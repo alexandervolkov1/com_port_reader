@@ -490,7 +490,6 @@ fn validate_number_value(
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::control_panel::{ControlDefinition, ControlPanelDefinition};
 
     fn definition() -> ControlPanelDefinition {

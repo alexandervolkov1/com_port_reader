@@ -21,8 +21,7 @@ local definition = {
     emulator = {
         connection = "primary",
         port = "COM11",
-        script =
-            "../emulator_scripts/pid_thermal_plant.lua",
+        script = "../emulator_scripts/pid_thermal_plant.lua",
     },
 
     scripts = {
@@ -31,9 +30,7 @@ local definition = {
 }
 
 function definition.setup()
-    app.log(
-        "Thermal PID test profile initialized."
-    )
+    app.log("Thermal PID test profile initialized.")
 end
 
 return definition

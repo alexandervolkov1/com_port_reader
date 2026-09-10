@@ -5,7 +5,6 @@ use super::{
     OnOffController, OnOffControllerError, OnOffOutput, PidController, PidControllerError,
     PidGainsError, PidOutput, PidOutputLimitsError,
 };
-
 use crate::instrument::{InstrumentValue, ParameterDescriptor, ParameterRange, ParameterValueType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -704,7 +703,6 @@ mod tests {
         ControllerKind, ControllerOperation, ControllerOperationError, ControllerOutput,
         ControllerParameterError, FurnaceController,
     };
-
     use crate::{
         instrument::{InstrumentValue, ParameterAccess, ParameterRange, ParameterValueType},
         process_control::{

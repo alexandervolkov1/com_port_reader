@@ -1,3 +1,4 @@
+use super::{ParameterAccess, ParameterDescriptor, ParameterRange, ParameterValueType};
 use crate::{
     protocol::metakon::{
         ReadRegisterError, ReadRegisterRequest, RegisterDataType, RegisterValue,
@@ -6,8 +7,6 @@ use crate::{
     },
     serial_connection::SerialConnection,
 };
-
-use super::{ParameterAccess, ParameterDescriptor, ParameterRange, ParameterValueType};
 
 pub const DEFAULT_DEVICE: u8 = 1;
 pub const DEFAULT_CHANNEL: u8 = 0;
@@ -814,7 +813,6 @@ fn validate_range(
 #[cfg(test)]
 mod tests {
     use super::{Metakon5x3, Metakon5x3Register, Metakon5x3Write, Metakon5x3WriteConversionError};
-
     use crate::protocol::metakon::{
         ReadRegisterRequest, RegisterDataType, WriteRegisterRequest, WriteRegisterValue,
     };

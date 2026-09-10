@@ -3,9 +3,8 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use crate::connection::ConnectionId;
-
 use super::WorkerHandle;
+use crate::connection::ConnectionId;
 
 #[derive(Clone, Default)]
 pub struct ConnectionRouter {

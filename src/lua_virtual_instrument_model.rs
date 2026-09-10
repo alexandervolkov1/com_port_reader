@@ -446,7 +446,6 @@ mod tests {
     use std::{f64::consts::FRAC_PI_2, time::Duration};
 
     use super::LuaVirtualInstrumentModel;
-
     use crate::{
         instrument::{
             InstrumentValue, ParameterAccess, ParameterRange,

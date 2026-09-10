@@ -1,15 +1,14 @@
 use std::fmt;
 
-use crate::instrument::{
-    ConnectedParameterAddress, InstrumentValue, InstrumentWriteRequest, ParameterDescriptor,
-    ParameterRange,
-};
-
 use super::{
     ControlLoop, ControlLoopDefinition, ControlLoopExecutionError, ControlLoopParameterError,
     ControlLoopReferenceError, ControlLoopState, ControlOutputConversionError, ControlOutputTarget,
     Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerInstanceId,
     ControllerOperationError, ControllerOutput, ReferenceKind, ReferenceSource,
+};
+use crate::instrument::{
+    ConnectedParameterAddress, InstrumentValue, InstrumentWriteRequest, ParameterDescriptor,
+    ParameterRange,
 };
 
 pub struct ControllerRegistry<SignalId> {
@@ -689,6 +688,10 @@ impl std::error::Error for ControlExecutionError {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        ControlEvent, ControlExecutionError, ControllerAccessError, ControllerRegistry,
+        ControllerRegistryError,
+    };
     use crate::{
         connection::ConnectionId,
         instrument::{
@@ -705,11 +708,6 @@ mod tests {
             ControllerOperationError, OnOffController, PidController, PidControllerError, PidGains,
             PidOutputLimits, ReferenceKind, ReferenceSource,
         },
-    };
-
-    use super::{
-        ControlEvent, ControlExecutionError, ControllerAccessError, ControllerRegistry,
-        ControllerRegistryError,
     };
 
     fn virtual_target(connection: u64, instrument: u16, parameter: u16) -> ControlOutputTarget {

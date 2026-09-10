@@ -388,7 +388,6 @@ mod tests {
     use super::{
         SerialConfigStore, SerialConnectionRegistry, parse_f64_response, parse_text_response,
     };
-
     use crate::connection::ConnectionId;
 
     #[test]

@@ -1,6 +1,7 @@
+use std::path::Path;
+
 use eframe::egui;
 use egui_extras::{Size, StripBuilder};
-use std::path::Path;
 
 use crate::{
     app_log::LogModel,

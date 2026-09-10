@@ -1,5 +1,6 @@
 use std::fmt;
 
+use super::ControlOutputConversionError;
 use crate::{
     connection::ConnectionId,
     instrument::{
@@ -9,8 +10,6 @@ use crate::{
         virtual_instrument::{VirtualInstrumentId, VirtualParameterDescriptor, VirtualParameterId},
     },
 };
-
-use super::ControlOutputConversionError;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ControlOutputTarget {
@@ -232,6 +231,7 @@ impl std::error::Error for ControlOutputTargetError {}
 
 #[cfg(test)]
 mod tests {
+    use super::{ControlOutputParameter, ControlOutputTarget, ControlOutputTargetError};
     use crate::{
         connection::ConnectionId,
         instrument::{
@@ -243,8 +243,6 @@ mod tests {
         },
         process_control::ControlOutputConversionError,
     };
-
-    use super::{ControlOutputParameter, ControlOutputTarget, ControlOutputTargetError};
 
     #[test]
     fn creates_metakon_output_target() {

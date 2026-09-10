@@ -4,14 +4,13 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use crate::instrument::{InstrumentValue, ParameterAccess, ParameterDescriptor, ParameterRange};
-
 use super::{
     Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerError,
     ControllerOperationError, ControllerOutput, ControllerParameterError, ReferenceKind,
     ReferenceParameter, ReferenceParameterError, ReferenceRuntime, ReferenceRuntimeError,
     ReferenceSource, ReferenceSourceError,
 };
+use crate::instrument::{InstrumentValue, ParameterAccess, ParameterDescriptor, ParameterRange};
 
 static NEXT_CONTROLLER_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -600,12 +599,12 @@ mod tests {
         ControlLoop, ControlLoopDefinition, ControlLoopDefinitionError, ControlLoopParameterError,
         ControlLoopReferenceError, ControlLoopState,
     };
-
-    use crate::instrument::{InstrumentValue, ParameterAccess};
-
-    use crate::process_control::{
-        ControllerKind, OnOffController, PidController, PidGains, PidOutputLimits, ReferenceKind,
-        ReferenceParameter, ReferenceSource,
+    use crate::{
+        instrument::{InstrumentValue, ParameterAccess},
+        process_control::{
+            ControllerKind, OnOffController, PidController, PidGains, PidOutputLimits,
+            ReferenceKind, ReferenceParameter, ReferenceSource,
+        },
     };
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]

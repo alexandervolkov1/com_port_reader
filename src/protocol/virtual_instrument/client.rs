@@ -1,5 +1,9 @@
 use std::io::{Read, Write};
 
+use super::{
+    MessageKind, VirtualFrameIoError, VirtualInstrumentMessage, VirtualMessageCodecError,
+    read_frame, write_frame,
+};
 use crate::{
     instrument::{
         InstrumentValue,
@@ -8,11 +12,6 @@ use crate::{
         },
     },
     serial_connection::SerialConnection,
-};
-
-use super::{
-    MessageKind, VirtualFrameIoError, VirtualInstrumentMessage, VirtualMessageCodecError,
-    read_frame, write_frame,
 };
 
 pub trait VirtualInstrumentTransport: Read + Write {
@@ -210,7 +209,6 @@ mod tests {
     use super::{
         VirtualInstrumentClient, VirtualInstrumentClientError, VirtualInstrumentTransport,
     };
-
     use crate::{
         instrument::{
             InstrumentValue,

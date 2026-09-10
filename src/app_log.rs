@@ -9,6 +9,7 @@ use std::{
 use chrono::{Local, NaiveDate};
 use crossbeam_channel::Receiver;
 
+pub use crate::process_recorder::ProcessLogLevel as LogLevel;
 use crate::{
     instrument::InstrumentValue,
     process_control::ReferenceSource,
@@ -16,8 +17,6 @@ use crate::{
         ProcessAction, ProcessActionId, ProcessActionResult, ProcessRecord, ProcessRecorder,
     },
 };
-
-pub use crate::process_recorder::ProcessLogLevel as LogLevel;
 
 const MAX_LOG_ENTRIES: usize = 2_000;
 
@@ -667,6 +666,7 @@ mod tests {
         sync::atomic::{AtomicU64, Ordering},
     };
 
+    use super::{LogFileWriter, LogLevel};
     use crate::{
         connection::ConnectionId,
         data::SeriesId,
@@ -676,8 +676,6 @@ mod tests {
             ProcessAction, ProcessActionOrigin, ProcessActionResult, ProcessRecorder,
         },
     };
-
-    use super::{LogFileWriter, LogLevel};
 
     static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(1);
 

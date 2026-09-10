@@ -1,7 +1,7 @@
-use serialport::{DataBits, FlowControl, Parity, StopBits};
 use std::{error::Error, fmt, fs, path::Path, time::Duration};
 
 use mlua::{Lua, Table, Value};
+use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 use crate::{
     application_definition::{
@@ -629,7 +629,6 @@ mod tests {
     use serialport::{DataBits, FlowControl, Parity, StopBits};
 
     use super::{apply_lua_definition, load_lua_definition_or_base};
-
     use crate::{
         application_definition::{ApplicationDefinition, SerialConnectionDefinition},
         connection::ConnectionId,

@@ -1,5 +1,7 @@
-use self::metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write};
-use self::virtual_instrument::{VirtualInstrumentId, VirtualParameterId};
+use self::{
+    metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
+    virtual_instrument::{VirtualInstrumentId, VirtualParameterId},
+};
 use crate::connection::ConnectionId;
 
 pub mod metakon_5x3;

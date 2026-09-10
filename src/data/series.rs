@@ -1,9 +1,8 @@
+use super::{Sample, SamplingInterval, SeriesColor};
 use crate::{
     connection::ConnectionId, instrument::InstrumentReadRequest,
     process_control::ControllerDiagnostic, signal_processing::SignalFilterDefinition,
 };
-
-use super::{Sample, SamplingInterval, SeriesColor};
 
 pub const DEFAULT_METAKON_DEVICE: u8 = 1;
 pub const DEFAULT_METAKON_CHANNEL: u8 = 0;

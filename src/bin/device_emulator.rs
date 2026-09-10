@@ -1,4 +1,3 @@
-use serialport::{DataBits, FlowControl, Parity, StopBits};
 use std::{
     env,
     error::Error,
@@ -10,6 +9,7 @@ use std::{
 };
 
 use com_port_reader::device_emulator_handle::{DeviceEmulatorHandle, DeviceEmulatorPortConfig};
+use serialport::{DataBits, FlowControl, Parity, StopBits};
 
 const DEFAULT_BAUD_RATE: u32 = 9_600;
 

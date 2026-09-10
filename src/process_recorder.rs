@@ -605,12 +605,11 @@ impl From<io::Error> for ProcessRecorderError {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use crate::connection::ConnectionId;
-
     use super::{
         ProcessAction, ProcessActionOrigin, ProcessActionResult, ProcessLogLevel, ProcessRecord,
         ProcessRecordWriter, ProcessRecorder, ProcessRecorderError,
     };
+    use crate::connection::ConnectionId;
 
     struct CollectingWriter {
         records: Arc<Mutex<Vec<ProcessRecord>>>,

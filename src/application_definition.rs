@@ -512,7 +512,6 @@ mod tests {
     use super::{
         ApplicationDefinition, EmulatorDefinition, RuntimeDefinition, SerialConnectionDefinition,
     };
-
     use crate::{connection::ConnectionId, serial_connection::SerialPortConfig};
 
     fn serial_config(port_name: &str) -> SerialPortConfig {

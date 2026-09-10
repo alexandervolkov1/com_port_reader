@@ -97,6 +97,8 @@ impl Default for LuaRuntime {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::Path};
+
     use crossbeam_channel::unbounded;
     use serialport::{DataBits, FlowControl, Parity, StopBits};
 
@@ -138,6 +140,54 @@ mod tests {
     ) -> InstrumentWriteRequest {
         InstrumentWriteRequest::metakon_5x3(Metakon5x3::new(device, channel), parameter, scale)
             .unwrap()
+    }
+
+    fn collect_lua_files(path: &Path, files: &mut Vec<std::path::PathBuf>) {
+        if path.is_file() {
+            files.push(path.to_owned());
+            return;
+        }
+
+        let mut entries = fs::read_dir(path)
+            .unwrap_or_else(|error| panic!("failed to read '{}': {error}", path.display()))
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+
+        entries.sort();
+        for entry in entries {
+            if entry.is_dir()
+                || entry
+                    .extension()
+                    .is_some_and(|extension| extension == "lua")
+            {
+                collect_lua_files(&entry, files);
+            }
+        }
+    }
+
+    #[test]
+    fn bundled_lua_files_have_valid_syntax() {
+        let runtime = LuaRuntime::new();
+        let mut files = vec![Path::new("startup.lua").to_owned()];
+
+        for directory in ["emulator_scripts", "lua_scripts", "lua_types", "profiles"] {
+            collect_lua_files(Path::new(directory), &mut files);
+        }
+
+        for path in files {
+            let source = fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("failed to read '{}': {error}", path.display()));
+            let name = path.display().to_string();
+
+            runtime
+                .lua
+                .load(&source)
+                .set_name(name)
+                .into_function()
+                .unwrap_or_else(|error| {
+                    panic!("invalid Lua syntax in '{}': {error}", path.display())
+                });
+        }
     }
 
     #[test]

@@ -4,9 +4,8 @@ use std::{
     fmt,
 };
 
-use crate::{connection::ConnectionId, process_recorder::ProcessActionId};
-
 use super::{ConnectionRouter, Worker, WorkerHandleError};
+use crate::{connection::ConnectionId, process_recorder::ProcessActionId};
 
 pub struct ConnectionWorkers {
     workers: BTreeMap<ConnectionId, Worker>,
@@ -160,7 +159,6 @@ mod tests {
     use crossbeam_channel::{Sender, bounded, unbounded};
 
     use super::ConnectionWorkers;
-
     use crate::{
         acquisition::{AcquisitionError, AcquisitionSource},
         connection::ConnectionId,

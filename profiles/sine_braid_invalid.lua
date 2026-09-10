@@ -30,9 +30,7 @@ local definition = {
 }
 
 function definition.setup()
-    error(
-        "Intentional profile initialization failure"
-    )
+    error("Intentional profile initialization failure")
 end
 
 return definition

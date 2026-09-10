@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use super::controller_command_handler::pause_controller_safely;
 use crate::{
     acquisition::AcquisitionError,
     app_log::LogHandle,
@@ -11,8 +12,6 @@ use crate::{
     user_command::{PauseControllerError, SeriesCommand},
     worker::{ConnectionRouter, WorkerHandle},
 };
-
-use super::controller_command_handler::pause_controller_safely;
 
 pub(crate) struct SeriesCommandHandler<'a> {
     connections: &'a ConnectionRouter,
