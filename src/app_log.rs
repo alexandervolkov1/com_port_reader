@@ -9,8 +9,12 @@ use std::{
 use chrono::{Local, NaiveDate};
 use crossbeam_channel::Receiver;
 
-use crate::process_recorder::{
-    ProcessAction, ProcessActionId, ProcessActionResult, ProcessRecord, ProcessRecorder,
+use crate::{
+    instrument::InstrumentValue,
+    process_control::ReferenceSource,
+    process_recorder::{
+        ProcessAction, ProcessActionId, ProcessActionResult, ProcessRecord, ProcessRecorder,
+    },
 };
 
 pub use crate::process_recorder::ProcessLogLevel as LogLevel;
@@ -200,6 +204,31 @@ impl LogModel {
     }
 }
 
+fn format_parameter_updates(updates: &[(String, InstrumentValue)]) -> String {
+    updates
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn format_reference_source(source: ReferenceSource) -> String {
+    match source {
+        ReferenceSource::Fixed(reference) => {
+            format!("fixed(value={})", reference.value(),)
+        }
+
+        ReferenceSource::Ramp(reference) => {
+            format!(
+                "ramp(start={}, target={}, rate={})",
+                reference.start(),
+                reference.target(),
+                reference.rate(),
+            )
+        }
+    }
+}
+
 fn action_description(action: &ProcessAction) -> String {
     match action {
         ProcessAction::StartAcquisition => "Acquisition start".to_owned(),
@@ -221,44 +250,64 @@ fn action_description(action: &ProcessAction) -> String {
             format!("Add filtered series '{name}'",)
         }
 
-        ProcessAction::AddController { name, .. } => {
-            format!("Add controller '{name}'")
-        }
-
-        ProcessAction::WriteControllerParameter { name, key, .. } => {
+        ProcessAction::AddController {
+            name,
+            input_name,
+            kind,
+            parameters,
+            ..
+        } => {
             format!(
-                "Write controller '{name}' \
-                 parameter '{key}'",
+                "Add {kind} controller '{name}' \
+                 with input '{input_name}' and \
+                 parameters: {}",
+                format_parameter_updates(parameters),
             )
         }
 
-        ProcessAction::ConfigureController { name, .. } => {
-            format!("Configure controller '{name}'",)
-        }
-
-        ProcessAction::WriteControllerReferenceParameter { name, key, .. } => {
-            format!(
-                "Write controller '{name}' \
-                 reference parameter '{key}'",
-            )
-        }
-
-        ProcessAction::ConfigureControllerReference { name, .. } => {
-            format!(
-                "Configure controller '{name}' \
-                 reference",
-            )
-        }
-
-        ProcessAction::SetControllerReference { name, .. } => {
+        ProcessAction::WriteControllerParameter { name, key, value } => {
             format!(
                 "Set controller '{name}' \
-                 reference",
+                 parameter '{key}' to {value}",
             )
         }
 
-        ProcessAction::SetControllerInput { name, .. } => {
-            format!("Set controller '{name}' input",)
+        ProcessAction::ConfigureController { name, updates } => {
+            format!(
+                "Configure controller '{name}': {}",
+                format_parameter_updates(updates),
+            )
+        }
+
+        ProcessAction::WriteControllerReferenceParameter { name, key, value } => {
+            format!(
+                "Set controller '{name}' \
+                 reference parameter '{key}' \
+                 to {value}",
+            )
+        }
+
+        ProcessAction::ConfigureControllerReference { name, updates } => {
+            format!(
+                "Configure controller '{name}' \
+                 reference: {}",
+                format_parameter_updates(updates),
+            )
+        }
+
+        ProcessAction::SetControllerReference { name, source } => {
+            format!(
+                "Set controller '{name}' reference \
+                 to {}",
+                format_reference_source(*source),
+            )
+        }
+
+        ProcessAction::SetControllerInput { name, input_name } => {
+            format!(
+                "Set controller '{name}' input \
+                 to '{input_name}'",
+            )
         }
 
         ProcessAction::PauseController { name } => {
@@ -280,10 +329,12 @@ fn action_description(action: &ProcessAction) -> String {
             format!("Reset controller '{name}'")
         }
 
-        ProcessAction::SetFilter { name, .. } => {
+        ProcessAction::SetFilter {
+            name, definition, ..
+        } => {
             format!(
                 "Change filter for series \
-                 '{name}'",
+                 '{name}' to {definition}",
             )
         }
 
@@ -442,6 +493,76 @@ fn action_applied_message(
             }
         },
 
+        ProcessAction::AddController {
+            name,
+            input_name,
+            output_target,
+            kind,
+            parameters,
+            ..
+        } => {
+            format!(
+                "{kind} controller '{name}' added: \
+                 input='{input_name}', \
+                 output={output_target}, \
+                 parameters: {}.",
+                format_parameter_updates(parameters),
+            )
+        }
+
+        ProcessAction::WriteControllerParameter { name, key, value } => {
+            format!(
+                "Controller '{name}' parameter \
+                 '{key}' set to {value}.",
+            )
+        }
+
+        ProcessAction::ConfigureController { name, updates } => {
+            format!(
+                "Controller '{name}' configured: {}.",
+                format_parameter_updates(updates),
+            )
+        }
+
+        ProcessAction::WriteControllerReferenceParameter { name, key, value } => {
+            format!(
+                "Controller '{name}' reference \
+                 parameter '{key}' set to {value}.",
+            )
+        }
+
+        ProcessAction::ConfigureControllerReference { name, updates } => {
+            format!(
+                "Controller '{name}' reference \
+                 configured: {}.",
+                format_parameter_updates(updates),
+            )
+        }
+
+        ProcessAction::SetControllerReference { name, source } => {
+            format!(
+                "Controller '{name}' reference \
+                 set to {}.",
+                format_reference_source(*source),
+            )
+        }
+
+        ProcessAction::SetControllerInput { name, input_name } => {
+            format!(
+                "Controller '{name}' input \
+                 set to '{input_name}'.",
+            )
+        }
+
+        ProcessAction::SetFilter {
+            name, definition, ..
+        } => {
+            format!(
+                "Filter for series '{name}' \
+                 changed to {definition}.",
+            )
+        }
+
         ProcessAction::AddSeries { .. } | ProcessAction::AddFilteredSeries { .. } => {
             match (series_name, series_id) {
                 (Some(name), Some(id)) => {
@@ -549,6 +670,8 @@ mod tests {
     use crate::{
         connection::ConnectionId,
         data::SeriesId,
+        instrument::InstrumentValue,
+        process_control::ReferenceSource,
         process_recorder::{
             ProcessAction, ProcessActionOrigin, ProcessActionResult, ProcessRecorder,
         },
@@ -632,6 +755,61 @@ mod tests {
         assert!(message.contains("Serial command 'get'",));
 
         assert!(message.contains("returned: 42"));
+    }
+
+    #[test]
+    fn renders_controller_parameter_value() {
+        let action = ProcessAction::WriteControllerParameter {
+            name: "pid".to_owned(),
+            key: "setpoint".to_owned(),
+            value: InstrumentValue::Number(150.0),
+        };
+
+        let message = super::action_applied_message(&action, None, None, None);
+
+        assert_eq!(
+            message,
+            "Controller 'pid' parameter \
+             'setpoint' set to 150.",
+        );
+    }
+
+    #[test]
+    fn renders_controller_configuration_values() {
+        let action = ProcessAction::ConfigureController {
+            name: "pid".to_owned(),
+            updates: vec![
+                ("kp".to_owned(), InstrumentValue::Number(1.2)),
+                ("ki".to_owned(), InstrumentValue::Number(0.0333)),
+                ("kd".to_owned(), InstrumentValue::Number(0.0)),
+            ],
+        };
+
+        let message = super::action_applied_message(&action, None, None, None);
+
+        assert_eq!(
+            message,
+            "Controller 'pid' configured: \
+             kp=1.2, ki=0.0333, kd=0.",
+        );
+    }
+
+    #[test]
+    fn renders_controller_reference_values() {
+        let source = ReferenceSource::ramp(150.0, 220.0, 2.0).unwrap();
+
+        let action = ProcessAction::SetControllerReference {
+            name: "pid".to_owned(),
+            source,
+        };
+
+        let message = super::action_applied_message(&action, None, None, None);
+
+        assert_eq!(
+            message,
+            "Controller 'pid' reference set to \
+             ramp(start=150, target=220, rate=2).",
+        );
     }
 
     #[test]
