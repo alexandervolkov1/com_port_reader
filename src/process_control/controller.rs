@@ -1,8 +1,10 @@
 use std::{error::Error, fmt};
 
 use super::{
-    ControllerDiagnostic, OnOffController, OnOffControllerError, OnOffOutput, PidController,
-    PidControllerError, PidGains, PidGainsError, PidOutput, PidOutputLimits, PidOutputLimitsError,
+    ControllerDiagnostic, FurnaceController, FurnaceControllerError, FurnaceGains, FurnaceModel,
+    FurnaceOutput, FurnaceOutputLimits, OnOffController, OnOffControllerError, OnOffOutput,
+    PidController, PidControllerError, PidGains, PidGainsError, PidOutput, PidOutputLimits,
+    PidOutputLimitsError,
 };
 
 use crate::instrument::{
@@ -13,6 +15,7 @@ use crate::instrument::{
 pub enum ControllerKind {
     Pid,
     OnOff,
+    Furnace,
 }
 
 impl ControllerKind {
@@ -20,6 +23,7 @@ impl ControllerKind {
         match self {
             Self::Pid => "pid",
             Self::OnOff => "on_off",
+            Self::Furnace => "furnace",
         }
     }
 }
@@ -83,10 +87,16 @@ pub enum ControllerParameter {
 
     OutputOff,
     OutputOn,
+
+    AmbientTemperature,
+    MaximumPower,
+    HeaterLag,
+    LinearLoss,
+    RadiationLossAt1000C,
 }
 
 impl ControllerParameter {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 14] = [
         Self::Setpoint,
         Self::ProportionalGain,
         Self::IntegralGain,
@@ -96,6 +106,11 @@ impl ControllerParameter {
         Self::OutputMaximum,
         Self::OutputOff,
         Self::OutputOn,
+        Self::AmbientTemperature,
+        Self::MaximumPower,
+        Self::HeaterLag,
+        Self::LinearLoss,
+        Self::RadiationLossAt1000C,
     ];
 
     pub const fn key(self) -> &'static str {
@@ -208,6 +223,61 @@ impl ControllerParameter {
                     maximum: f64::MAX,
                 },
             },
+
+            Self::AmbientTemperature => ParameterDescriptor {
+                key: "ambient_temperature",
+                name: "ambient temperature",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: -273.15,
+                    maximum: f64::MAX,
+                },
+            },
+
+            Self::MaximumPower => ParameterDescriptor {
+                key: "max_power",
+                name: "maximum furnace power",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+
+            Self::HeaterLag => ParameterDescriptor {
+                key: "heater_lag",
+                name: "heater lag",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+
+            Self::LinearLoss => ParameterDescriptor {
+                key: "linear_loss",
+                name: "linear heat loss",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
+
+            Self::RadiationLossAt1000C => ParameterDescriptor {
+                key: "radiation_loss_1000c",
+                name: "radiation loss at 1000 °C",
+                access: ParameterAccess::ReadWrite,
+                value_type: ParameterValueType::Number,
+                range: ParameterRange::Number {
+                    minimum: 0.0,
+                    maximum: f64::MAX,
+                },
+            },
         }
     }
 }
@@ -228,6 +298,19 @@ const ON_OFF_PARAMETERS: [ControllerParameter; 4] = [
     ControllerParameter::OutputOn,
 ];
 
+const FURNACE_PARAMETERS: [ControllerParameter; 10] = [
+    ControllerParameter::Setpoint,
+    ControllerParameter::ProportionalGain,
+    ControllerParameter::IntegralGain,
+    ControllerParameter::OutputMinimum,
+    ControllerParameter::OutputMaximum,
+    ControllerParameter::AmbientTemperature,
+    ControllerParameter::MaximumPower,
+    ControllerParameter::HeaterLag,
+    ControllerParameter::LinearLoss,
+    ControllerParameter::RadiationLossAt1000C,
+];
+
 const PID_DIAGNOSTICS: &[ControllerDiagnostic] = &[
     ControllerDiagnostic::Setpoint,
     ControllerDiagnostic::Proportional,
@@ -240,10 +323,19 @@ const PID_DIAGNOSTICS: &[ControllerDiagnostic] = &[
 const ON_OFF_DIAGNOSTICS: &[ControllerDiagnostic] =
     &[ControllerDiagnostic::Setpoint, ControllerDiagnostic::Output];
 
+const FURNACE_DIAGNOSTICS: &[ControllerDiagnostic] = &[
+    ControllerDiagnostic::Setpoint,
+    ControllerDiagnostic::Proportional,
+    ControllerDiagnostic::Integral,
+    ControllerDiagnostic::Output,
+    ControllerDiagnostic::UnconstrainedOutput,
+];
+
 #[derive(Debug)]
 pub enum Controller {
     Pid(PidController),
     OnOff(OnOffController),
+    Furnace(FurnaceController),
 }
 
 impl Controller {
@@ -251,6 +343,7 @@ impl Controller {
         match self {
             Self::Pid(_) => ControllerKind::Pid,
             Self::OnOff(_) => ControllerKind::OnOff,
+            Self::Furnace(_) => ControllerKind::Furnace,
         }
     }
 
@@ -258,6 +351,7 @@ impl Controller {
         match self {
             Self::Pid(_) => &PID_PARAMETERS,
             Self::OnOff(_) => &ON_OFF_PARAMETERS,
+            Self::Furnace(_) => &FURNACE_PARAMETERS,
         }
     }
 
@@ -305,6 +399,8 @@ impl Controller {
             Self::Pid(controller) => Ok(read_pid_parameter(controller, parameter)),
 
             Self::OnOff(controller) => Ok(read_on_off_parameter(controller, parameter)),
+
+            Self::Furnace(controller) => Ok(read_furnace_parameter(controller, parameter)),
         }
     }
 
@@ -350,6 +446,8 @@ impl Controller {
             Self::Pid(controller) => configure_pid(controller, &resolved),
 
             Self::OnOff(controller) => configure_on_off(controller, &resolved),
+
+            Self::Furnace(controller) => configure_furnace(controller, &resolved),
         }
     }
 
@@ -395,6 +493,15 @@ impl Controller {
                     maximum: output_off.max(output_on),
                 }
             }
+
+            Self::Furnace(controller) => {
+                let limits = controller.output_limits();
+
+                ParameterRange::Number {
+                    minimum: limits.minimum(),
+                    maximum: limits.maximum(),
+                }
+            }
         }
     }
 
@@ -429,6 +536,18 @@ impl Controller {
 
                 Self::OnOff(controller)
             }
+
+            Self::Furnace(controller) => {
+                let controller = FurnaceController::new(
+                    controller.setpoint(),
+                    controller.gains(),
+                    controller.model(),
+                    controller.output_limits(),
+                )
+                .map_err(ControllerParameterError::Furnace)?;
+
+                Self::Furnace(controller)
+            }
         };
 
         candidate.configure(updates)?;
@@ -461,6 +580,16 @@ impl Controller {
 
                 Ok(ControllerOutput::OnOff { setpoint, output })
             }
+
+            Self::Furnace(controller) => {
+                let setpoint = controller.setpoint();
+
+                let output = controller
+                    .update(timestamp, measurement)
+                    .map_err(ControllerError::Furnace)?;
+
+                Ok(ControllerOutput::Furnace { setpoint, output })
+            }
         }
     }
 
@@ -475,6 +604,11 @@ impl Controller {
                 kind: ControllerKind::OnOff,
                 operation: ControllerOperation::ResetIntegral,
             }),
+
+            Self::Furnace(controller) => {
+                controller.reset_integral();
+                Ok(())
+            }
         }
     }
 
@@ -485,6 +619,10 @@ impl Controller {
             }
 
             Self::OnOff(controller) => {
+                controller.resynchronize();
+            }
+
+            Self::Furnace(controller) => {
                 controller.resynchronize();
             }
         }
@@ -499,6 +637,10 @@ impl Controller {
             Self::OnOff(controller) => {
                 controller.reset();
             }
+
+            Self::Furnace(controller) => {
+                controller.reset();
+            }
         }
     }
 
@@ -506,6 +648,7 @@ impl Controller {
         match self {
             Self::Pid(_) => PID_DIAGNOSTICS,
             Self::OnOff(_) => ON_OFF_DIAGNOSTICS,
+            Self::Furnace(_) => FURNACE_DIAGNOSTICS,
         }
     }
 
@@ -570,6 +713,41 @@ fn read_on_off_parameter(
     InstrumentValue::Number(value)
 }
 
+fn read_furnace_parameter(
+    controller: &FurnaceController,
+    parameter: ControllerParameter,
+) -> InstrumentValue {
+    let model = controller.model();
+
+    let value = match parameter {
+        ControllerParameter::Setpoint => controller.setpoint(),
+
+        ControllerParameter::ProportionalGain => controller.gains().proportional(),
+
+        ControllerParameter::IntegralGain => controller.gains().integral(),
+
+        ControllerParameter::OutputMinimum => controller.output_limits().minimum(),
+
+        ControllerParameter::OutputMaximum => controller.output_limits().maximum(),
+
+        ControllerParameter::AmbientTemperature => model.ambient_temperature(),
+
+        ControllerParameter::MaximumPower => model.max_power(),
+
+        ControllerParameter::HeaterLag => model.heater_lag(),
+
+        ControllerParameter::LinearLoss => model.linear_loss(),
+
+        ControllerParameter::RadiationLossAt1000C => model.radiation_loss_1000c(),
+
+        _ => {
+            unreachable!("unsupported furnace controller parameter")
+        }
+    };
+
+    InstrumentValue::Number(value)
+}
+
 fn configure_pid(
     controller: &mut PidController,
     updates: &[(ControllerParameter, f64)],
@@ -616,9 +794,7 @@ fn configure_pid(
                 output_maximum = *value;
             }
 
-            ControllerParameter::Hysteresis
-            | ControllerParameter::OutputOff
-            | ControllerParameter::OutputOn => {
+            _ => {
                 unreachable!("unsupported PID controller parameter");
             }
         }
@@ -676,6 +852,68 @@ fn configure_on_off(
         .map_err(ControllerParameterError::OnOff)
 }
 
+fn configure_furnace(
+    controller: &mut FurnaceController,
+    updates: &[(ControllerParameter, f64)],
+) -> Result<(), ControllerParameterError> {
+    let mut setpoint = controller.setpoint();
+
+    let current_gains = controller.gains();
+    let mut kp = current_gains.proportional();
+    let mut ki = current_gains.integral();
+
+    let current_model = controller.model();
+    let mut ambient = current_model.ambient_temperature();
+    let mut max_power = current_model.max_power();
+    let mut heater_lag = current_model.heater_lag();
+    let mut linear_loss = current_model.linear_loss();
+    let mut radiation_loss = current_model.radiation_loss_1000c();
+
+    let current_limits = controller.output_limits();
+
+    let mut output_min = current_limits.minimum();
+
+    let mut output_max = current_limits.maximum();
+
+    for (parameter, value) in updates {
+        match parameter {
+            ControllerParameter::Setpoint => setpoint = *value,
+
+            ControllerParameter::ProportionalGain => kp = *value,
+
+            ControllerParameter::IntegralGain => ki = *value,
+
+            ControllerParameter::OutputMinimum => output_min = *value,
+
+            ControllerParameter::OutputMaximum => output_max = *value,
+
+            ControllerParameter::AmbientTemperature => ambient = *value,
+
+            ControllerParameter::MaximumPower => max_power = *value,
+
+            ControllerParameter::HeaterLag => heater_lag = *value,
+
+            ControllerParameter::LinearLoss => linear_loss = *value,
+
+            ControllerParameter::RadiationLossAt1000C => radiation_loss = *value,
+
+            _ => unreachable!("unsupported furnace controller parameter"),
+        }
+    }
+
+    let gains = FurnaceGains::new(kp, ki).map_err(ControllerParameterError::Furnace)?;
+
+    let model = FurnaceModel::new(ambient, max_power, heater_lag, linear_loss, radiation_loss)
+        .map_err(ControllerParameterError::Furnace)?;
+
+    let limits = FurnaceOutputLimits::new(output_min, output_max)
+        .map_err(ControllerParameterError::Furnace)?;
+
+    controller
+        .configure(setpoint, gains, model, limits)
+        .map_err(ControllerParameterError::Furnace)
+}
+
 fn expect_number(
     parameter: ControllerParameter,
     value: InstrumentValue,
@@ -713,10 +951,26 @@ impl From<OnOffController> for Controller {
     }
 }
 
+impl From<FurnaceController> for Controller {
+    fn from(controller: FurnaceController) -> Self {
+        Self::Furnace(controller)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ControllerOutput {
-    Pid { setpoint: f64, output: PidOutput },
-    OnOff { setpoint: f64, output: OnOffOutput },
+    Pid {
+        setpoint: f64,
+        output: PidOutput,
+    },
+    OnOff {
+        setpoint: f64,
+        output: OnOffOutput,
+    },
+    Furnace {
+        setpoint: f64,
+        output: FurnaceOutput,
+    },
 }
 
 impl ControllerOutput {
@@ -725,6 +979,8 @@ impl ControllerOutput {
             Self::Pid { .. } => ControllerKind::Pid,
 
             Self::OnOff { .. } => ControllerKind::OnOff,
+
+            Self::Furnace { .. } => ControllerKind::Furnace,
         }
     }
 
@@ -733,6 +989,8 @@ impl ControllerOutput {
             Self::Pid { output, .. } => output.value(),
 
             Self::OnOff { output, .. } => output.value(),
+
+            Self::Furnace { output, .. } => output.value(),
         }
     }
 
@@ -754,7 +1012,9 @@ impl ControllerOutput {
 
     pub const fn setpoint(&self) -> Option<f64> {
         match self {
-            Self::Pid { setpoint, .. } | Self::OnOff { setpoint, .. } => Some(*setpoint),
+            Self::Pid { setpoint, .. }
+            | Self::OnOff { setpoint, .. }
+            | Self::Furnace { setpoint, .. } => Some(*setpoint),
         }
     }
 
@@ -763,6 +1023,8 @@ impl ControllerOutput {
             Self::Pid { output, .. } => Some(output.unconstrained_value()),
 
             Self::OnOff { .. } => None,
+
+            Self::Furnace { output, .. } => Some(output.unconstrained_value()),
         }
     }
 
@@ -771,6 +1033,8 @@ impl ControllerOutput {
             Self::Pid { output, .. } => Some(output.proportional()),
 
             Self::OnOff { .. } => None,
+
+            Self::Furnace { output, .. } => Some(output.proportional()),
         }
     }
 
@@ -779,6 +1043,8 @@ impl ControllerOutput {
             Self::Pid { output, .. } => Some(output.integral()),
 
             Self::OnOff { .. } => None,
+
+            Self::Furnace { output, .. } => Some(output.integral()),
         }
     }
 
@@ -786,7 +1052,7 @@ impl ControllerOutput {
         match self {
             Self::Pid { output, .. } => Some(output.derivative()),
 
-            Self::OnOff { .. } => None,
+            Self::Furnace { .. } | Self::OnOff { .. } => None,
         }
     }
 
@@ -795,6 +1061,8 @@ impl ControllerOutput {
             Self::Pid { output, .. } => Some(output.saturated()),
 
             Self::OnOff { .. } => None,
+
+            Self::Furnace { output, .. } => Some(output.saturated()),
         }
     }
 }
@@ -818,6 +1086,7 @@ pub enum ControllerParameterError {
     OnOff(OnOffControllerError),
     Gains(PidGainsError),
     OutputLimits(PidOutputLimitsError),
+    Furnace(FurnaceControllerError),
 }
 
 impl fmt::Display for ControllerParameterError {
@@ -889,6 +1158,8 @@ impl fmt::Display for ControllerParameterError {
             Self::Gains(error) => error.fmt(formatter),
 
             Self::OutputLimits(error) => error.fmt(formatter),
+
+            Self::Furnace(error) => error.fmt(formatter),
         }
     }
 }
@@ -910,6 +1181,8 @@ impl Error for ControllerParameterError {
             | Self::NotReadable(_)
             | Self::NotWritable(_)
             | Self::TypeMismatch { .. } => None,
+
+            Self::Furnace(error) => Some(error),
         }
     }
 }
@@ -918,6 +1191,7 @@ impl Error for ControllerParameterError {
 pub enum ControllerError {
     Pid(PidControllerError),
     OnOff(OnOffControllerError),
+    Furnace(FurnaceControllerError),
 }
 
 impl fmt::Display for ControllerError {
@@ -926,6 +1200,8 @@ impl fmt::Display for ControllerError {
             Self::Pid(error) => error.fmt(formatter),
 
             Self::OnOff(error) => error.fmt(formatter),
+
+            Self::Furnace(error) => error.fmt(formatter),
         }
     }
 }
@@ -935,6 +1211,7 @@ impl Error for ControllerError {
         match self {
             Self::Pid(error) => Some(error),
             Self::OnOff(error) => Some(error),
+            Self::Furnace(error) => Some(error),
         }
     }
 }
@@ -968,7 +1245,8 @@ mod tests {
     use super::{
         Controller, ControllerDiagnostic, ControllerDiagnosticError, ControllerError,
         ControllerKind, ControllerOperation, ControllerOperationError, ControllerOutput,
-        ControllerParameter, ControllerParameterError,
+        ControllerParameter, ControllerParameterError, FurnaceController, FurnaceGains,
+        FurnaceModel, FurnaceOutputLimits,
     };
 
     use crate::{
@@ -1594,6 +1872,43 @@ mod tests {
                 kind: ControllerKind::OnOff,
                 diagnostic: ControllerDiagnostic::Integral,
             },),
+        );
+    }
+
+    #[test]
+    fn updates_furnace_through_controller_api() {
+        let furnace = FurnaceController::new(
+            500.0,
+            FurnaceGains::new(0.1, 0.0005).unwrap(),
+            FurnaceModel::new(20.0, 2500.0, 90.0, 0.35, 1200.0).unwrap(),
+            FurnaceOutputLimits::new(0.0, 100.0).unwrap(),
+        )
+        .unwrap();
+
+        let mut controller: Controller = furnace.into();
+
+        assert_eq!(controller.kind(), ControllerKind::Furnace,);
+
+        let output = controller.update(0.0, 20.0).unwrap();
+
+        assert_eq!(output.kind(), ControllerKind::Furnace,);
+
+        assert_eq!(output.setpoint(), Some(500.0),);
+
+        assert!(output.value() > 0.0);
+
+        assert_eq!(
+            controller.read("max_power"),
+            Ok(InstrumentValue::Number(2500.0)),
+        );
+
+        controller
+            .write("heater_lag", InstrumentValue::Number(120.0))
+            .unwrap();
+
+        assert_eq!(
+            controller.read("heater_lag"),
+            Ok(InstrumentValue::Number(120.0)),
         );
     }
 }

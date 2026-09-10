@@ -1,6 +1,7 @@
 mod control_loop;
 mod controller;
 mod diagnostic;
+mod furnace;
 mod new_loop;
 mod on_off;
 mod output_conversion;
@@ -20,6 +21,10 @@ pub use controller::{
     ControllerOperationError, ControllerOutput, ControllerParameter, ControllerParameterError,
 };
 pub use diagnostic::ControllerDiagnostic;
+pub use furnace::{
+    FurnaceController, FurnaceControllerError, FurnaceGains, FurnaceModel, FurnaceOutput,
+    FurnaceOutputLimits,
+};
 pub use new_loop::{NewController, NewControllerError};
 pub use on_off::{OnOffController, OnOffControllerError, OnOffOutput};
 pub use output_conversion::ControlOutputConversionError;
