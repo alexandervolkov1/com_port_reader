@@ -2,6 +2,8 @@ mod control_loop;
 mod controller;
 mod diagnostic;
 mod furnace;
+#[cfg(test)]
+mod furnace_comparison_tests;
 mod new_loop;
 mod on_off;
 mod output_conversion;
