@@ -630,6 +630,7 @@ fn action_type_name(action: &ProcessAction) -> &'static str {
         ProcessAction::SetControllerReference { .. } => "set_controller_reference",
         ProcessAction::SetControllerInput { .. } => "set_controller_input",
         ProcessAction::PauseController { .. } => "pause_controller",
+        ProcessAction::RemoveController { .. } => "remove_controller",
         ProcessAction::ResumeController { .. } => "resume_controller",
         ProcessAction::ResetControllerIntegral { .. } => "reset_controller_integral",
         ProcessAction::ResetController { .. } => "reset_controller",
@@ -669,6 +670,7 @@ fn action_connection_id(action: &ProcessAction) -> Option<String> {
         | ProcessAction::SetControllerReference { .. }
         | ProcessAction::SetControllerInput { .. }
         | ProcessAction::PauseController { .. }
+        | ProcessAction::RemoveController { .. }
         | ProcessAction::ResumeController { .. }
         | ProcessAction::ResetControllerIntegral { .. }
         | ProcessAction::ResetController { .. }

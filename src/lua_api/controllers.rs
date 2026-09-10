@@ -695,6 +695,21 @@ impl LuaControllerHandle {
         receive_controller_response(response_receiver, "pause")
     }
 
+    fn remove(&self) -> mlua::Result<()> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        send_application_command(
+            &self.command_sender,
+            ControllerCommand::Remove {
+                name: self.name.clone(),
+                response_sender,
+            }
+            .into(),
+        )?;
+
+        receive_controller_response(response_receiver, "removal")
+    }
+
     fn resume(&self) -> mlua::Result<()> {
         let (response_sender, response_receiver) = bounded(1);
 
@@ -890,6 +905,8 @@ impl UserData for LuaControllerHandle {
         });
 
         methods.add_method("pause", |_, controller, ()| controller.pause());
+
+        methods.add_method("remove", |_, controller, ()| controller.remove());
 
         methods.add_method("resume", |_, controller, ()| controller.resume());
 

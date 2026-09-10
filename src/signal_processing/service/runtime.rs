@@ -264,6 +264,17 @@ pub(super) fn run_processing<SignalId>(
                 let _ = response_sender.send(result);
             }
 
+            ProcessingCommand::RemoveController {
+                name,
+                response_sender,
+            } => {
+                let removed = registry.remove(&name);
+
+                controller_diagnostics.retain(|binding| binding.controller != name);
+
+                let _ = response_sender.send(removed);
+            }
+
             ProcessingCommand::PauseController {
                 name,
                 response_sender,

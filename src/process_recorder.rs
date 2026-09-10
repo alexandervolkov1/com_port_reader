@@ -130,6 +130,10 @@ pub enum ProcessAction {
         name: String,
     },
 
+    RemoveController {
+        name: String,
+    },
+
     ResumeController {
         name: String,
     },

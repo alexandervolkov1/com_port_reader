@@ -114,6 +114,11 @@ pub(super) enum ProcessingCommand<SignalId> {
         response_sender: Sender<Result<ControlLoopState, ControllerAccessError>>,
     },
 
+    RemoveController {
+        name: String,
+        response_sender: Sender<bool>,
+    },
+
     PauseController {
         name: String,
         response_sender: Sender<Result<(), ControllerAccessError>>,

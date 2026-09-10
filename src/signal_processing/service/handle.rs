@@ -400,6 +400,24 @@ impl<SignalId> ProcessingHandle<SignalId> {
             .map_err(Into::into)
     }
 
+    pub(crate) fn remove_controller(
+        &self,
+        name: &str,
+    ) -> Result<bool, ProcessingServiceDisconnected> {
+        let (response_sender, response_receiver) = bounded(1);
+
+        self.command_sender
+            .send(ProcessingCommand::RemoveController {
+                name: name.to_owned(),
+                response_sender,
+            })
+            .map_err(|_| ProcessingServiceDisconnected)?;
+
+        response_receiver
+            .recv()
+            .map_err(|_| ProcessingServiceDisconnected)
+    }
+
     pub fn pause_controller(&self, name: impl Into<String>) -> Result<(), ControllerRequestError> {
         let (response_sender, response_receiver) = bounded(1);
 

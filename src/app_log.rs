@@ -313,6 +313,10 @@ fn action_description(action: &ProcessAction) -> String {
             format!("Pause controller '{name}'")
         }
 
+        ProcessAction::RemoveController { name } => {
+            format!("Remove controller '{name}'")
+        }
+
         ProcessAction::ResumeController { name } => {
             format!("Resume controller '{name}'")
         }

@@ -1239,6 +1239,46 @@ mod tests {
     }
 
     #[test]
+    fn removing_controller_detaches_diagnostics_and_preserves_input_filter() {
+        let service = ProcessingService::<u64>::spawn().unwrap();
+        let handle = service.handle();
+
+        handle
+            .add_filter(1, 2, SignalFilterDefinition::moving_average(2).unwrap())
+            .unwrap();
+        handle
+            .add_control_loop(pid_definition("heater", 2, 1))
+            .unwrap();
+        handle
+            .add_controller_diagnostic("heater".to_owned(), ControllerDiagnostic::Output, 3)
+            .unwrap();
+
+        assert!(handle.remove_controller("heater").unwrap());
+        assert!(!handle.remove_controller("heater").unwrap());
+
+        handle
+            .add_control_loop(pid_definition("heater", 2, 1))
+            .unwrap();
+        handle.process(1, 1000.0, 80.0).unwrap();
+
+        assert_eq!(
+            receive_pid_output(&service.control_event_receiver()).input,
+            2
+        );
+
+        let ProcessingEvent::Samples(samples) = service
+            .event_receiver()
+            .recv_timeout(EVENT_TIMEOUT)
+            .unwrap()
+        else {
+            panic!("expected samples");
+        };
+
+        assert!(samples.iter().any(|sample| sample.signal_id == 2));
+        assert!(samples.iter().all(|sample| sample.signal_id != 3));
+    }
+
+    #[test]
     fn pauses_and_resumes_controller_without_losing_state() {
         let service = ProcessingService::<u64>::spawn().unwrap();
 

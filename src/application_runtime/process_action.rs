@@ -215,6 +215,10 @@ pub(super) fn process_action_from_command(command: &UserCommand) -> Option<Proce
                 input_name: input_name.clone(),
             }),
 
+            ControllerCommand::Remove { name, .. } => {
+                Some(ProcessAction::RemoveController { name: name.clone() })
+            }
+
             ControllerCommand::Pause { name, .. } => {
                 Some(ProcessAction::PauseController { name: name.clone() })
             }

@@ -304,6 +304,11 @@ impl From<SeriesCommand> for UserCommand {
 
 #[derive(Debug)]
 pub(crate) enum ControllerCommand {
+    Remove {
+        name: String,
+        response_sender: Sender<Result<(), String>>,
+    },
+
     AddDiagnostic(NewControllerDiagnosticSeries),
 
     Add(NewController<ControlOutputTarget>),

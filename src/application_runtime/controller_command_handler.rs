@@ -66,6 +66,24 @@ pub(super) fn resume_controller_safely(
     Ok(())
 }
 
+fn remove_controller_safely(
+    output_control: &OutputHandle,
+    processing: &ProcessingHandle<SeriesId>,
+    name: &str,
+) -> Result<(), String> {
+    pause_controller_safely(output_control, processing, name)
+        .map_err(|error| format!("Cannot remove controller '{name}': {error}"))?;
+
+    // A failed release leaves the paused controller available for a retry.
+    output_control
+        .release_controller(name)
+        .map_err(|error| error.to_string())?;
+    processing
+        .remove_controller(name)
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 pub(crate) struct ControllerCommandHandler<'a> {
     series: &'a SeriesStore,
     processing: &'a ProcessingHandle<SeriesId>,
@@ -97,6 +115,14 @@ impl<'a> ControllerCommandHandler<'a> {
         action_context: Option<ProcessActionContext>,
     ) {
         match command {
+            ControllerCommand::Remove {
+                name,
+                response_sender,
+            } => {
+                let result = remove_controller_safely(self.output_control, self.processing, &name);
+                self.record_result(action_context, &result);
+                let _ = response_sender.send(result);
+            }
             ControllerCommand::AddDiagnostic(diagnostic) => {
                 self.add_controller_diagnostic(diagnostic);
             }
@@ -460,5 +486,122 @@ impl<'a> ControllerCommandHandler<'a> {
              controller '{controller}' \
              diagnostic '{diagnostic}'.",
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{thread, time::Duration};
+
+    use crossbeam_channel::unbounded;
+    use serialport::{DataBits, FlowControl, Parity, StopBits};
+
+    use super::remove_controller_safely;
+    use crate::{
+        connection::ConnectionId,
+        data::SeriesId,
+        instrument::{
+            InstrumentValue, ParameterAccess, ParameterValueType,
+            virtual_instrument::{
+                VirtualInstrumentId, VirtualParameterDescriptor, VirtualParameterId,
+            },
+        },
+        output_control::OutputService,
+        process_control::{
+            ControlLoopDefinition, ControlLoopState, ControlOutputTarget, OnOffController,
+        },
+        serial_connection::{SerialConnectionRegistry, SerialPortConfig},
+        signal_processing::ProcessingService,
+        worker::{ConnectionCommand, ConnectionRouter, WorkerCommand, WorkerHandle},
+    };
+
+    #[test]
+    fn removal_waits_for_safe_write_and_retains_controller_on_failure() {
+        let processing = ProcessingService::<SeriesId>::spawn().unwrap();
+        let handle = processing.handle();
+        let parameter = VirtualParameterDescriptor::new(
+            VirtualParameterId::new(1),
+            "power",
+            "Power",
+            ParameterAccess::ReadWrite,
+            ParameterValueType::Number,
+        );
+        let target = ControlOutputTarget::virtual_instrument(
+            ConnectionId::PRIMARY,
+            VirtualInstrumentId::new(1),
+            &parameter,
+        )
+        .unwrap()
+        .with_safe_value(0.0)
+        .unwrap();
+        let definition = ControlLoopDefinition::new(
+            "heater",
+            SeriesId::new(1),
+            target,
+            OnOffController::new(100.0, 2.0, 0.0, 100.0).unwrap().into(),
+        )
+        .unwrap();
+        let instance_id = definition.instance_id();
+        let address = definition.output_target().connected_parameter_address();
+        let safe_request = definition.output_target().safe_write_request().unwrap();
+        handle.add_control_loop(definition).unwrap();
+        let connections = SerialConnectionRegistry::new();
+        connections.primary().set(Some(SerialPortConfig::new(
+            "mock".to_owned(),
+            9600,
+            DataBits::Eight,
+            Parity::None,
+            StopBits::One,
+            FlowControl::None,
+            250,
+        )));
+        let router = ConnectionRouter::default();
+        let (sender, receiver) = unbounded();
+        router.insert(WorkerHandle::new(ConnectionId::PRIMARY, sender));
+        let output = OutputService::spawn(router, connections).unwrap();
+        let output_handle = output.handle();
+        output_handle
+            .register_controller(address, "heater", instance_id, safe_request)
+            .unwrap();
+
+        for succeeds in [false, true] {
+            thread::scope(|scope| {
+                let removal =
+                    scope.spawn(|| remove_controller_safely(&output_handle, &handle, "heater"));
+                let command = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+                let WorkerCommand::Connection(ConnectionCommand::WriteInstrument {
+                    request,
+                    response_sender,
+                    ..
+                }) = command
+                else {
+                    panic!("expected safe write");
+                };
+                assert_eq!(Some(request), safe_request);
+                assert_eq!(handle.controller_names().unwrap(), vec!["heater"]);
+                let result = if succeeds {
+                    Ok(InstrumentValue::Number(0.0))
+                } else {
+                    Err("mock write failed".into())
+                };
+                response_sender.send(result).unwrap();
+                assert_eq!(removal.join().unwrap().is_ok(), succeeds);
+            });
+            if !succeeds {
+                assert_eq!(
+                    handle.controller_state("heater"),
+                    Ok(ControlLoopState::Paused)
+                );
+                assert!(
+                    output_handle
+                        .register_controller(address, "other", instance_id, safe_request)
+                        .is_err()
+                );
+            }
+        }
+        assert!(handle.controller_names().unwrap().is_empty());
+        output_handle
+            .register_controller(address, "other", instance_id, safe_request)
+            .unwrap();
     }
 }
