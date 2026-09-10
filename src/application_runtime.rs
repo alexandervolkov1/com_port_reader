@@ -936,13 +936,17 @@ mod tests {
         app_log::LogModel,
         application_paths::ApplicationPaths,
         connection::ConnectionId,
-        data::{NewSeries, SamplingInterval, SeriesColor, SeriesId, SeriesSource, SeriesStore},
+        data::{
+            NewSeries, SamplingInterval, SeriesColor, SeriesId, SeriesPollingState, SeriesSource,
+            SeriesStore,
+        },
         instrument::{
             InstrumentValue, ParameterAccess, ParameterRange, ParameterValueType,
             virtual_instrument::{
                 VirtualInstrumentId, VirtualParameterDescriptor, VirtualParameterId,
             },
         },
+        lua_worker::LuaEvent,
         process_control::{
             ControlEvent, ControlLoopDefinition, ControlLoopState, ControlOutputTarget,
             ControllerKind, NewController, OnOffController, PidController, PidGains,
@@ -950,7 +954,7 @@ mod tests {
         },
         process_recorder::ProcessRecorder,
         signal_processing::SignalFilterDefinition,
-        user_command::{ControllerCommand, SeriesCommand, UserCommand},
+        user_command::{AcquisitionCommand, ControllerCommand, SeriesCommand, UserCommand},
     };
 
     fn runtime_test_directory(name: &str) -> PathBuf {
@@ -1012,7 +1016,13 @@ mod tests {
         )
     }
 
-    fn build_test_runtime(profile_path: &Path) -> (ApplicationRuntime, LogModel) {
+    fn build_test_runtime(
+        profile_path: &Path,
+    ) -> (
+        ApplicationRuntime,
+        LogModel,
+        crossbeam_channel::Receiver<LuaEvent>,
+    ) {
         let paths = ApplicationPaths::from_startup_script(profile_path).unwrap();
 
         let log_directory = paths.resolve_data("logs");
@@ -1023,11 +1033,11 @@ mod tests {
 
         let (log_model, log) = LogModel::new(log_directory, recorder.clone());
 
-        let (runtime, _lua_events) =
+        let (runtime, lua_events) =
             ApplicationRuntime::build_initialized(definition, log, recorder, paths, Some(source))
                 .unwrap();
 
-        (runtime, log_model)
+        (runtime, log_model, lua_events)
     }
 
     fn wait_for_series(runtime: &mut ApplicationRuntime, name: &str) {
@@ -1044,6 +1054,40 @@ mod tests {
                 Instant::now() < deadline,
                 "series '{name}' was not created \
                  before the E2E test timeout",
+            );
+
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn wait_for_polling_state(
+        runtime: &mut ApplicationRuntime,
+        log_model: &mut LogModel,
+        name: &str,
+        expected: SeriesPollingState,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+
+        loop {
+            runtime.poll();
+            log_model.poll();
+
+            let state = runtime
+                .series()
+                .metadata()
+                .into_iter()
+                .find(|series| series.name == name)
+                .map(|series| series.polling_state)
+                .unwrap_or_else(|| panic!("series '{name}' not found"));
+
+            if state == expected {
+                return;
+            }
+
+            assert!(
+                Instant::now() < deadline,
+                "series '{name}' did not reach \
+                 polling state {expected:?}",
             );
 
             thread::sleep(Duration::from_millis(5));
@@ -1494,7 +1538,7 @@ mod tests {
 
         let profile = write_test_profile(&directory, "startup.lua", &source);
 
-        let (mut runtime, log_model) = build_test_runtime(&profile);
+        let (mut runtime, log_model, _lua_events) = build_test_runtime(&profile);
 
         wait_for_series(&mut runtime, "temperature_filtered");
 
@@ -1534,7 +1578,7 @@ mod tests {
 
         let first_profile = write_test_profile(&directory, "first.lua", &first_source);
 
-        let (mut runtime, log_model) = build_test_runtime(&first_profile);
+        let (mut runtime, log_model, _lua_events) = build_test_runtime(&first_profile);
 
         wait_for_series(&mut runtime, "filtered_first");
 
@@ -1571,7 +1615,7 @@ mod tests {
 
         let valid_profile = write_test_profile(&directory, "valid.lua", &valid_source);
 
-        let (mut runtime, log_model) = build_test_runtime(&valid_profile);
+        let (mut runtime, log_model, _lua_events) = build_test_runtime(&valid_profile);
 
         wait_for_series(&mut runtime, "filtered_original");
 
@@ -1620,7 +1664,7 @@ mod tests {
 
         let profile = write_test_profile(&directory, "startup.lua", &source);
 
-        let (mut runtime, log_model) = build_test_runtime(&profile);
+        let (mut runtime, log_model, _lua_events) = build_test_runtime(&profile);
 
         wait_for_series(&mut runtime, "temperature_filtered");
 
@@ -1905,6 +1949,214 @@ mod tests {
             ControlLoopState::Running,
         );
 
+        drop(runtime);
+        drop(log_model);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn lua_execution_failure_does_not_kill_runtime() {
+        let directory = runtime_test_directory("lua_execution_failure");
+
+        let source = test_profile_source("temperature_raw", "temperature_filtered", "COM255");
+
+        let profile = write_test_profile(&directory, "startup.lua", &source);
+
+        let (runtime, log_model, lua_events) = build_test_runtime(&profile);
+
+        runtime
+            .lua_handle()
+            .execute("error('Intentional E2E runtime failure')")
+            .unwrap();
+
+        let event = lua_events.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        let LuaEvent::ExecutionFailed(error) = event else {
+            panic!("expected Lua execution failure");
+        };
+
+        assert!(
+            error.contains("Intentional E2E runtime failure",),
+            "{error}",
+        );
+
+        /*
+         * A normal Lua error must not terminate
+         * the persistent Lua worker.
+         */
+        runtime.lua_handle().execute("return 42").unwrap();
+
+        assert_eq!(
+            lua_events.recv_timeout(Duration::from_secs(1),).unwrap(),
+            LuaEvent::ExecutionSucceeded(vec!["42".to_owned()],),
+        );
+
+        drop(runtime);
+        drop(log_model);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn suspends_failed_polling_retries_and_shuts_down_cleanly() {
+        let directory = runtime_test_directory("polling_failure");
+
+        /*
+         * This is intentionally not a valid system
+         * serial-port name.
+         */
+        let missing_port = "__com_port_reader_missing_port__";
+
+        let source = format!(
+            r#"
+    local definition = {{
+        application = {{
+            poll_interval = 0.05,
+        }},
+
+        connections = {{
+            primary = {{
+                port = "{missing_port}",
+                timeout = 0.05,
+            }},
+        }},
+    }}
+
+    function definition.setup()
+        app.add_serial(
+            "get",
+            {{
+                name = "broken_series",
+                interval = 0.05,
+            }}
+        )
+    end
+
+    return definition
+    "#
+        );
+
+        let profile = write_test_profile(&directory, "startup.lua", &source);
+
+        let (mut runtime, mut log_model, _lua_events) = build_test_runtime(&profile);
+
+        wait_for_series(&mut runtime, "broken_series");
+
+        /*
+         * Starting acquisition itself succeeds.
+         * The COM port is opened lazily when the
+         * first sample is requested.
+         */
+        runtime.execute(UserCommand::Acquisition(AcquisitionCommand::Start));
+
+        let running_deadline = Instant::now() + Duration::from_secs(1);
+
+        while !runtime.is_running() {
+            runtime.poll();
+
+            assert!(
+                Instant::now() < running_deadline,
+                "acquisition did not start",
+            );
+
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        /*
+         * Three consecutive reads from the missing
+         * port must suspend only this series.
+         */
+        wait_for_polling_state(
+            &mut runtime,
+            &mut log_model,
+            "broken_series",
+            SeriesPollingState::Suspended,
+        );
+
+        /*
+         * A failed series must not stop the whole
+         * acquisition worker.
+         */
+        assert!(runtime.is_running());
+
+        let first_suspension_count = log_model
+            .entries()
+            .iter()
+            .filter(|entry| {
+                let text = entry.text();
+
+                text.contains("broken_series")
+                    && text.contains(
+                        "polling was suspended \
+                             after three consecutive \
+                             polling failures",
+                    )
+            })
+            .count();
+
+        assert!(
+            first_suspension_count >= 1,
+            "polling suspension was not logged",
+        );
+
+        /*
+         * Retry must re-enable the series and refresh
+         * the worker schedule.
+         */
+        runtime.execute(
+            SeriesCommand::Retry {
+                name: "broken_series".to_owned(),
+            }
+            .into(),
+        );
+
+        /*
+         * Because the port is still missing, the
+         * retried series must eventually suspend
+         * for a second time.
+         */
+        let retry_deadline = Instant::now() + Duration::from_secs(3);
+
+        loop {
+            runtime.poll();
+            log_model.poll();
+
+            let suspension_count = log_model
+                .entries()
+                .iter()
+                .filter(|entry| {
+                    let text = entry.text();
+
+                    text.contains("broken_series")
+                        && text.contains(
+                            "polling was suspended \
+                             after three consecutive \
+                             polling failures",
+                        )
+                })
+                .count();
+
+            if suspension_count > first_suspension_count {
+                break;
+            }
+
+            assert!(
+                Instant::now() < retry_deadline,
+                "retried polling did not fail \
+                 and suspend again",
+            );
+
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(runtime.is_running());
+
+        /*
+         * Deliberately do NOT stop acquisition here.
+         * Dropping ApplicationRuntime must shut down
+         * and join all its worker threads itself.
+         */
         drop(runtime);
         drop(log_model);
 
