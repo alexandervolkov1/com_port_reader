@@ -23,8 +23,8 @@ use crate::{
     serial_connection::SerialConnectionRegistry,
     signal_processing::{ProcessingEvent, ProcessingService},
     user_command::{
-        AcquisitionCommand, EmulatorCommand, InstrumentCommand, SerialCommand, SeriesCommand,
-        UserCommand,
+        AcquisitionCommand, ControllerCommand, EmulatorCommand, InstrumentCommand, SerialCommand,
+        SeriesCommand, UserCommand,
     },
     worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
 };
@@ -32,6 +32,7 @@ use crate::{
 mod acquisition_command_handler;
 mod acquisition_controller;
 mod command_dispatcher;
+mod controller_command_handler;
 mod device_emulator_service;
 mod emulator_command_handler;
 mod instrument_command_handler;
@@ -823,89 +824,96 @@ fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
             SeriesCommand::Retry { .. } | SeriesCommand::RetryAll => None,
         },
 
-        UserCommand::AddController(new_controller) => {
-            let controller = new_controller.controller();
+        UserCommand::Controller(command) => match command {
+            ControllerCommand::Add(new_controller) => {
+                let controller = new_controller.controller();
 
-            let parameters = controller.parameter_values().ok()?;
+                let parameters = controller.parameter_values().ok()?;
 
-            Some(ProcessAction::AddController {
-                connection_id: new_controller.output_target().connection_id(),
-                name: new_controller.name().to_owned(),
-                input_name: new_controller.input_name().to_owned(),
-                output_target: new_controller.output_target().to_string(),
-                kind: controller.kind(),
-                parameters,
-            })
-        }
+                Some(ProcessAction::AddController {
+                    connection_id: new_controller.output_target().connection_id(),
 
-        UserCommand::WriteControllerParameter {
-            name, key, value, ..
-        } => Some(ProcessAction::WriteControllerParameter {
-            name: name.clone(),
-            key: key.clone(),
-            value: *value,
-        }),
+                    name: new_controller.name().to_owned(),
 
-        UserCommand::ConfigureController { name, updates, .. } => {
-            Some(ProcessAction::ConfigureController {
+                    input_name: new_controller.input_name().to_owned(),
+
+                    output_target: new_controller.output_target().to_string(),
+
+                    kind: controller.kind(),
+
+                    parameters,
+                })
+            }
+
+            ControllerCommand::WriteParameter {
+                name, key, value, ..
+            } => Some(ProcessAction::WriteControllerParameter {
                 name: name.clone(),
-                updates: updates.clone(),
-            })
-        }
+                key: key.clone(),
+                value: *value,
+            }),
 
-        UserCommand::WriteControllerReferenceParameter {
-            name, key, value, ..
-        } => Some(ProcessAction::WriteControllerReferenceParameter {
-            name: name.clone(),
-            key: key.clone(),
-            value: *value,
-        }),
+            ControllerCommand::Configure { name, updates, .. } => {
+                Some(ProcessAction::ConfigureController {
+                    name: name.clone(),
+                    updates: updates.clone(),
+                })
+            }
 
-        UserCommand::ConfigureControllerReference { name, updates, .. } => {
-            Some(ProcessAction::ConfigureControllerReference {
+            ControllerCommand::WriteReferenceParameter {
+                name, key, value, ..
+            } => Some(ProcessAction::WriteControllerReferenceParameter {
                 name: name.clone(),
-                updates: updates.clone(),
-            })
-        }
+                key: key.clone(),
+                value: *value,
+            }),
 
-        UserCommand::SetControllerReference { name, source, .. } => {
-            Some(ProcessAction::SetControllerReference {
+            ControllerCommand::ConfigureReference { name, updates, .. } => {
+                Some(ProcessAction::ConfigureControllerReference {
+                    name: name.clone(),
+                    updates: updates.clone(),
+                })
+            }
+
+            ControllerCommand::SetReference { name, source, .. } => {
+                Some(ProcessAction::SetControllerReference {
+                    name: name.clone(),
+                    source: *source,
+                })
+            }
+
+            ControllerCommand::SetInput {
+                name, input_name, ..
+            } => Some(ProcessAction::SetControllerInput {
                 name: name.clone(),
-                source: *source,
-            })
-        }
+                input_name: input_name.clone(),
+            }),
 
-        UserCommand::SetControllerInput {
-            name, input_name, ..
-        } => Some(ProcessAction::SetControllerInput {
-            name: name.clone(),
-            input_name: input_name.clone(),
-        }),
+            ControllerCommand::Pause { name, .. } => {
+                Some(ProcessAction::PauseController { name: name.clone() })
+            }
 
-        UserCommand::PauseController { name, .. } => {
-            Some(ProcessAction::PauseController { name: name.clone() })
-        }
+            ControllerCommand::Resume { name, .. } => {
+                Some(ProcessAction::ResumeController { name: name.clone() })
+            }
 
-        UserCommand::ResumeController { name, .. } => {
-            Some(ProcessAction::ResumeController { name: name.clone() })
-        }
+            ControllerCommand::ResetIntegral { name, .. } => {
+                Some(ProcessAction::ResetControllerIntegral { name: name.clone() })
+            }
 
-        UserCommand::ResetControllerIntegral { name, .. } => {
-            Some(ProcessAction::ResetControllerIntegral { name: name.clone() })
-        }
+            ControllerCommand::Reset { name, .. } => {
+                Some(ProcessAction::ResetController { name: name.clone() })
+            }
 
-        UserCommand::ResetController { name, .. } => {
-            Some(ProcessAction::ResetController { name: name.clone() })
-        }
-
-        UserCommand::AddControllerDiagnostic(_)
-        | UserCommand::ControllerParameters { .. }
-        | UserCommand::ControllerDiagnostics { .. }
-        | UserCommand::ReadControllerParameter { .. }
-        | UserCommand::ControllerReferenceKind { .. }
-        | UserCommand::ControllerReferenceParameters { .. }
-        | UserCommand::ReadControllerReferenceParameter { .. }
-        | UserCommand::ControllerState { .. } => None,
+            ControllerCommand::AddDiagnostic(_)
+            | ControllerCommand::Parameters { .. }
+            | ControllerCommand::Diagnostics { .. }
+            | ControllerCommand::ReadParameter { .. }
+            | ControllerCommand::ReferenceKind { .. }
+            | ControllerCommand::ReferenceParameters { .. }
+            | ControllerCommand::ReadReferenceParameter { .. }
+            | ControllerCommand::State { .. } => None,
+        },
 
         UserCommand::Log { .. } => None,
     }
@@ -932,7 +940,7 @@ mod tests {
             ReferenceSource,
         },
         signal_processing::SignalFilterDefinition,
-        user_command::{SeriesCommand, UserCommand},
+        user_command::{ControllerCommand, SeriesCommand, UserCommand},
     };
 
     #[test]
@@ -1119,12 +1127,13 @@ mod tests {
     fn records_controller_parameter_write_action() {
         let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
 
-        let command = UserCommand::WriteControllerParameter {
+        let command: UserCommand = ControllerCommand::WriteParameter {
             name: "heater".to_owned(),
             key: "kd".to_owned(),
             value: InstrumentValue::Number(2.5),
             response_sender,
-        };
+        }
+        .into();
 
         assert_eq!(
             process_action_from_command(&command),
@@ -1145,11 +1154,12 @@ mod tests {
             ("ki".to_owned(), InstrumentValue::Number(0.25)),
         ];
 
-        let command = UserCommand::ConfigureController {
+        let command: UserCommand = ControllerCommand::Configure {
             name: "heater".to_owned(),
             updates: updates.clone(),
             response_sender,
-        };
+        }
+        .into();
 
         assert_eq!(
             process_action_from_command(&command),
@@ -1164,12 +1174,13 @@ mod tests {
     fn records_controller_reference_parameter_write_action() {
         let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
 
-        let command = UserCommand::WriteControllerReferenceParameter {
+        let command: UserCommand = ControllerCommand::WriteReferenceParameter {
             name: "heater".to_owned(),
             key: "target".to_owned(),
             value: InstrumentValue::Number(220.0),
             response_sender,
-        };
+        }
+        .into();
 
         assert_eq!(
             process_action_from_command(&command),
@@ -1190,11 +1201,12 @@ mod tests {
             ("rate".to_owned(), InstrumentValue::Number(2.0)),
         ];
 
-        let command = UserCommand::ConfigureControllerReference {
+        let command: UserCommand = ControllerCommand::ConfigureReference {
             name: "heater".to_owned(),
             updates: updates.clone(),
             response_sender,
-        };
+        }
+        .into();
 
         assert_eq!(
             process_action_from_command(&command),
@@ -1211,11 +1223,12 @@ mod tests {
 
         let source = ReferenceSource::ramp(175.0, 220.0, 2.0).unwrap();
 
-        let command = UserCommand::SetControllerReference {
+        let command: UserCommand = ControllerCommand::SetReference {
             name: "heater".to_owned(),
             source,
             response_sender,
-        };
+        }
+        .into();
 
         assert_eq!(
             process_action_from_command(&command),
@@ -1230,11 +1243,12 @@ mod tests {
     fn records_controller_lifecycle_actions() {
         let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
 
-        let command = UserCommand::SetControllerInput {
+        let command: UserCommand = ControllerCommand::SetInput {
             name: "heater".to_owned(),
             input_name: "temperature_filtered".to_owned(),
             response_sender,
-        };
+        }
+        .into();
 
         assert_eq!(
             process_action_from_command(&command),
@@ -1246,10 +1260,11 @@ mod tests {
 
         let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
 
-        let command = UserCommand::PauseController {
+        let command: UserCommand = ControllerCommand::Pause {
             name: "heater".to_owned(),
             response_sender,
-        };
+        }
+        .into();
 
         assert_eq!(
             process_action_from_command(&command),
@@ -1260,10 +1275,11 @@ mod tests {
 
         let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
 
-        let command = UserCommand::ResumeController {
+        let command: UserCommand = ControllerCommand::Resume {
             name: "heater".to_owned(),
             response_sender,
-        };
+        }
+        .into();
 
         assert_eq!(
             process_action_from_command(&command),
@@ -1274,10 +1290,11 @@ mod tests {
 
         let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
 
-        let command = UserCommand::ResetControllerIntegral {
+        let command: UserCommand = ControllerCommand::ResetIntegral {
             name: "heater".to_owned(),
             response_sender,
-        };
+        }
+        .into();
 
         assert_eq!(
             process_action_from_command(&command),
@@ -1288,10 +1305,11 @@ mod tests {
 
         let (response_sender, _response_receiver) = crossbeam_channel::bounded(1);
 
-        let command = UserCommand::ResetController {
+        let command: UserCommand = ControllerCommand::Reset {
             name: "heater".to_owned(),
             response_sender,
-        };
+        }
+        .into();
 
         assert_eq!(
             process_action_from_command(&command),
@@ -1324,9 +1342,10 @@ mod tests {
 
         let controller = OnOffController::new(150.0, 2.0, 0.0, 100.0).unwrap();
 
-        let command = UserCommand::AddController(
+        let command: UserCommand = ControllerCommand::Add(
             NewController::new("thermostat", "temperature_filtered", target, controller).unwrap(),
-        );
+        )
+        .into();
 
         assert_eq!(
             process_action_from_command(&command,),

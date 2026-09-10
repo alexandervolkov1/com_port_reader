@@ -12,7 +12,7 @@ use crate::{
     worker::{ConnectionRouter, WorkerHandle},
 };
 
-use super::command_dispatcher::pause_controller_safely;
+use super::controller_command_handler::pause_controller_safely;
 
 pub(crate) struct SeriesCommandHandler<'a> {
     connections: &'a ConnectionRouter,

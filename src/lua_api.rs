@@ -25,8 +25,8 @@ use crate::{
     },
     signal_processing::SignalFilterDefinition,
     user_command::{
-        AcquisitionCommand, EmulatorCommand, InstrumentCommand, SerialCommand, SeriesCommand,
-        UserCommand,
+        AcquisitionCommand, ControllerCommand, EmulatorCommand, InstrumentCommand, SerialCommand,
+        SeriesCommand, UserCommand,
     },
 };
 
@@ -517,7 +517,10 @@ fn add_pid_loop(
     let new_controller = NewController::new(name.clone(), input_name, output_target, controller)
         .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
-    send_application_command(command_sender, UserCommand::AddController(new_controller))?;
+    send_application_command(
+        command_sender,
+        ControllerCommand::Add(new_controller).into(),
+    )?;
 
     Ok(LuaControllerHandle {
         name,
@@ -583,7 +586,10 @@ fn add_on_off_loop(
     let new_controller = NewController::new(name.clone(), input_name, output_target, controller)
         .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
-    send_application_command(command_sender, UserCommand::AddController(new_controller))?;
+    send_application_command(
+        command_sender,
+        ControllerCommand::Add(new_controller).into(),
+    )?;
 
     Ok(LuaControllerHandle {
         name,
@@ -888,10 +894,11 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::ControllerParameters {
+            ControllerCommand::Parameters {
                 name: self.name.clone(),
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "parameter discovery")
@@ -908,10 +915,11 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::ControllerReferenceKind {
+            ControllerCommand::ReferenceKind {
                 name: self.name.clone(),
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         let kind: Option<ReferenceKind> =
@@ -925,10 +933,11 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::ControllerReferenceParameters {
+            ControllerCommand::ReferenceParameters {
                 name: self.name.clone(),
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "reference parameter discovery")
@@ -959,11 +968,12 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::ReadControllerReferenceParameter {
+            ControllerCommand::ReadReferenceParameter {
                 name: self.name.clone(),
                 key: key.to_owned(),
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "reference parameter read")
@@ -978,12 +988,13 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::WriteControllerReferenceParameter {
+            ControllerCommand::WriteReferenceParameter {
                 name: self.name.clone(),
                 key: key.to_owned(),
                 value,
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "reference parameter write")
@@ -1027,11 +1038,12 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::ConfigureControllerReference {
+            ControllerCommand::ConfigureReference {
                 name: self.name.clone(),
                 updates: resolved_updates,
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "reference configuration")
@@ -1042,11 +1054,12 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::SetControllerReference {
+            ControllerCommand::SetReference {
                 name: self.name.clone(),
                 source,
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "reference replacement")
@@ -1117,7 +1130,7 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::AddControllerDiagnostic(series),
+            ControllerCommand::AddDiagnostic(series).into(),
         )
     }
 
@@ -1126,10 +1139,11 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::ControllerDiagnostics {
+            ControllerCommand::Diagnostics {
                 name: self.name.clone(),
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "diagnostic discovery")
@@ -1164,11 +1178,12 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::ReadControllerParameter {
+            ControllerCommand::ReadParameter {
                 name: self.name.clone(),
                 key: key.to_owned(),
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "parameter read")
@@ -1179,12 +1194,13 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::WriteControllerParameter {
+            ControllerCommand::WriteParameter {
                 name: self.name.clone(),
                 key: key.to_owned(),
                 value,
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "parameter write")
@@ -1229,11 +1245,12 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::ConfigureController {
+            ControllerCommand::Configure {
                 name: self.name.clone(),
                 updates: resolved_updates,
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "configuration")
@@ -1244,11 +1261,12 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::SetControllerInput {
+            ControllerCommand::SetInput {
                 name: self.name.clone(),
                 input_name: input_name.to_owned(),
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "input change")
@@ -1259,10 +1277,11 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::ControllerState {
+            ControllerCommand::State {
                 name: self.name.clone(),
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "state read")
@@ -1273,10 +1292,11 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::PauseController {
+            ControllerCommand::Pause {
                 name: self.name.clone(),
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "pause")
@@ -1287,10 +1307,11 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::ResumeController {
+            ControllerCommand::Resume {
                 name: self.name.clone(),
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "resume")
@@ -1301,10 +1322,11 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::ResetControllerIntegral {
+            ControllerCommand::ResetIntegral {
                 name: self.name.clone(),
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "integral reset")
@@ -1315,10 +1337,11 @@ impl LuaControllerHandle {
 
         send_application_command(
             &self.command_sender,
-            UserCommand::ResetController {
+            ControllerCommand::Reset {
                 name: self.name.clone(),
                 response_sender,
-            },
+            }
+            .into(),
         )?;
 
         receive_controller_response(response_receiver, "reset")
@@ -2493,7 +2516,7 @@ mod controller_handle_tests {
             ControlLoopState, ControlOutputTarget, ControllerDiagnostic, ReferenceKind,
             ReferenceSource,
         },
-        user_command::UserCommand,
+        user_command::{ControllerCommand, UserCommand},
     };
 
     #[test]
@@ -2515,10 +2538,10 @@ mod controller_handle_tests {
         let responder = thread::spawn(move || {
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::ControllerDiagnostics {
+            let UserCommand::Controller(ControllerCommand::Diagnostics {
                 name,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!("expected ControllerDiagnostics command");
             };
@@ -2531,7 +2554,7 @@ mod controller_handle_tests {
 
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::AddControllerDiagnostic(series) = command else {
+            let UserCommand::Controller(ControllerCommand::AddDiagnostic(series)) = command else {
                 panic!("expected AddControllerDiagnostic command");
             };
 
@@ -2542,14 +2565,14 @@ mod controller_handle_tests {
 
         lua.load(
             r##"
-                controller:add(
-                    "integral",
-                    {
-                        name = "heater_i",
-                        color = "#112233",
-                    }
-                )
-            "##,
+                    controller:add(
+                        "integral",
+                        {
+                            name = "heater_i",
+                            color = "#112233",
+                        }
+                    )
+                "##,
         )
         .exec()
         .unwrap();
@@ -2588,10 +2611,10 @@ mod controller_handle_tests {
         let responder = thread::spawn(move || {
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::ControllerDiagnostics {
+            let UserCommand::Controller(ControllerCommand::Diagnostics {
                 name,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!("expected ControllerDiagnostics command");
             };
@@ -2604,7 +2627,7 @@ mod controller_handle_tests {
 
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::AddControllerDiagnostic(series) = command else {
+            let UserCommand::Controller(ControllerCommand::AddDiagnostic(series)) = command else {
                 panic!("expected AddControllerDiagnostic command");
             };
 
@@ -2615,10 +2638,10 @@ mod controller_handle_tests {
 
         lua.load(
             r#"
-                controller:add(
-                    "proportional"
-                )
-            "#,
+                    controller:add(
+                        "proportional"
+                    )
+                "#,
         )
         .exec()
         .unwrap();
@@ -2659,13 +2682,13 @@ mod controller_handle_tests {
         let error = lua
             .load(
                 r#"
-                    controller:add(
-                        "integral",
-                        {
-                            interval = 1.0,
-                        }
-                    )
-                "#,
+                        controller:add(
+                            "integral",
+                            {
+                                interval = 1.0,
+                            }
+                        )
+                    "#,
             )
             .exec()
             .unwrap_err()
@@ -2674,7 +2697,7 @@ mod controller_handle_tests {
         assert!(
             error.contains("cannot have 'interval'",),
             "unexpected Lua error: \
-             {error}",
+                 {error}",
         );
 
         assert!(command_receiver.try_recv().is_err());
@@ -2699,15 +2722,15 @@ mod controller_handle_tests {
         let responder = std::thread::spawn(move || {
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::SetControllerInput {
+            let UserCommand::Controller(ControllerCommand::SetInput {
                 name,
                 input_name,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!(
                     "expected SetControllerInput \
-                         command"
+                             command"
                 );
             };
 
@@ -2720,10 +2743,10 @@ mod controller_handle_tests {
 
         lua.load(
             r#"
-                controller:set_input(
-                    "temperature_filtered"
-                )
-            "#,
+                    controller:set_input(
+                        "temperature_filtered"
+                    )
+                "#,
         )
         .exec()
         .unwrap();
@@ -2750,10 +2773,10 @@ mod controller_handle_tests {
         let responder = std::thread::spawn(move || {
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::ControllerState {
+            let UserCommand::Controller(ControllerCommand::State {
                 name,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!("expected ControllerState command");
             };
@@ -2764,10 +2787,10 @@ mod controller_handle_tests {
 
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::PauseController {
+            let UserCommand::Controller(ControllerCommand::Pause {
                 name,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!("expected PauseController command");
             };
@@ -2778,10 +2801,10 @@ mod controller_handle_tests {
 
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::ResumeController {
+            let UserCommand::Controller(ControllerCommand::Resume {
                 name,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!("expected ResumeController command");
             };
@@ -2792,14 +2815,14 @@ mod controller_handle_tests {
 
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::ResetControllerIntegral {
+            let UserCommand::Controller(ControllerCommand::ResetIntegral {
                 name,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!(
                     "expected \
-                         ResetControllerIntegral command"
+                             ResetControllerIntegral command"
                 );
             };
 
@@ -2810,15 +2833,15 @@ mod controller_handle_tests {
 
         lua.load(
             r#"
-                assert(
-                    controller:state()
-                        == "running"
-                )
+                    assert(
+                        controller:state()
+                            == "running"
+                    )
 
-                controller:pause()
-                controller:resume()
-                controller:reset_integral()
-            "#,
+                    controller:pause()
+                    controller:resume()
+                    controller:reset_integral()
+                "#,
         )
         .exec()
         .unwrap();
@@ -2885,7 +2908,7 @@ mod controller_handle_tests {
 
         let command = command_receiver.try_recv().unwrap();
 
-        let UserCommand::AddController(new_controller) = command else {
+        let UserCommand::Controller(ControllerCommand::Add(new_controller)) = command else {
             panic!("expected AddController command",);
         };
 
@@ -2942,14 +2965,14 @@ mod controller_handle_tests {
         let responder = thread::spawn(move || {
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::ControllerDiagnostics {
+            let UserCommand::Controller(ControllerCommand::Diagnostics {
                 name,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!(
                     "expected \
-                         ControllerDiagnostics"
+                             ControllerDiagnostics"
                 );
             };
 
@@ -2968,10 +2991,10 @@ mod controller_handle_tests {
         let error = lua
             .load(
                 r#"
-                    controller:add(
-                        "integral"
-                    )
-                "#,
+                        controller:add(
+                            "integral"
+                        )
+                    "#,
             )
             .exec()
             .unwrap_err()
@@ -2980,7 +3003,7 @@ mod controller_handle_tests {
         assert!(
             error.contains(
                 "does not support diagnostic \
-                 'integral'",
+                     'integral'",
             ),
             "unexpected Lua error: {error}",
         );
@@ -3009,14 +3032,14 @@ mod controller_handle_tests {
         let responder = thread::spawn(move || {
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::ControllerReferenceKind {
+            let UserCommand::Controller(ControllerCommand::ReferenceKind {
                 name,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!(
                     "expected \
-                         ControllerReferenceKind"
+                             ControllerReferenceKind"
                 );
             };
 
@@ -3026,14 +3049,14 @@ mod controller_handle_tests {
 
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::ControllerReferenceParameters {
+            let UserCommand::Controller(ControllerCommand::ReferenceParameters {
                 name,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!(
                     "expected \
-                         ControllerReferenceParameters"
+                             ControllerReferenceParameters"
                 );
             };
 
@@ -3047,15 +3070,15 @@ mod controller_handle_tests {
 
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::ReadControllerReferenceParameter {
+            let UserCommand::Controller(ControllerCommand::ReadReferenceParameter {
                 name,
                 key,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!(
                     "expected \
-                         ReadControllerReferenceParameter"
+                             ReadControllerReferenceParameter"
                 );
             };
 
@@ -3069,14 +3092,15 @@ mod controller_handle_tests {
 
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::ControllerReferenceParameters {
-                response_sender, ..
-            } = command
+            let UserCommand::Controller(ControllerCommand::ReferenceParameters {
+                response_sender,
+                ..
+            }) = command
             else {
                 panic!(
                     "expected reference \
-                         parameter discovery \
-                         before write"
+                             parameter discovery \
+                             before write"
                 );
             };
 
@@ -3088,16 +3112,16 @@ mod controller_handle_tests {
 
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::WriteControllerReferenceParameter {
+            let UserCommand::Controller(ControllerCommand::WriteReferenceParameter {
                 name,
                 key,
                 value,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!(
                     "expected \
-                         WriteControllerReferenceParameter"
+                             WriteControllerReferenceParameter"
                 );
             };
 
@@ -3113,14 +3137,15 @@ mod controller_handle_tests {
 
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::ControllerReferenceParameters {
-                response_sender, ..
-            } = command
+            let UserCommand::Controller(ControllerCommand::ReferenceParameters {
+                response_sender,
+                ..
+            }) = command
             else {
                 panic!(
                     "expected reference \
-                         parameter discovery \
-                         before configuration"
+                             parameter discovery \
+                             before configuration"
                 );
             };
 
@@ -3132,15 +3157,15 @@ mod controller_handle_tests {
 
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::ConfigureControllerReference {
+            let UserCommand::Controller(ControllerCommand::ConfigureReference {
                 name,
                 updates,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!(
                     "expected \
-                         ConfigureControllerReference"
+                             ConfigureControllerReference"
                 );
             };
 
@@ -3156,15 +3181,15 @@ mod controller_handle_tests {
 
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::SetControllerReference {
+            let UserCommand::Controller(ControllerCommand::SetReference {
                 name,
                 source,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!(
                     "expected \
-                         SetControllerReference"
+                             SetControllerReference"
                 );
             };
 
@@ -3176,15 +3201,15 @@ mod controller_handle_tests {
 
             let command = command_receiver.recv().unwrap();
 
-            let UserCommand::SetControllerReference {
+            let UserCommand::Controller(ControllerCommand::SetReference {
                 name,
                 source,
                 response_sender,
-            } = command
+            }) = command
             else {
                 panic!(
                     "expected second \
-                         SetControllerReference"
+                             SetControllerReference"
                 );
             };
 
@@ -3199,69 +3224,69 @@ mod controller_handle_tests {
 
         lua.load(
             r#"
-                assert(
-                    controller:reference_kind()
-                        == "ramp"
-                )
-
-                local parameters =
-                    controller:
-                        reference_parameters()
-
-                assert(
-                    #parameters == 3
-                )
-
-                assert(
-                    parameters[1].key
-                        == "start"
-                )
-
-                assert(
-                    parameters[2].key
-                        == "target"
-                )
-
-                assert(
-                    parameters[3].key
-                        == "rate"
-                )
-
-                assert(
-                    controller:
-                        read_reference(
-                            "target"
-                        )
-                        == 150
-                )
-
-                assert(
-                    controller:
-                        write_reference(
-                            "target",
-                            200
-                        )
-                        == 200
-                )
-
-                controller:
-                    configure_reference({
-                        target = 250,
-                        rate = 5,
-                    })
-
-                controller:
-                    set_fixed_reference(
-                        175
+                    assert(
+                        controller:reference_kind()
+                            == "ramp"
                     )
 
-                controller:
-                    set_ramp_reference({
-                        start = 175,
-                        target = 220,
-                        rate = 2,
-                    })
-            "#,
+                    local parameters =
+                        controller:
+                            reference_parameters()
+
+                    assert(
+                        #parameters == 3
+                    )
+
+                    assert(
+                        parameters[1].key
+                            == "start"
+                    )
+
+                    assert(
+                        parameters[2].key
+                            == "target"
+                    )
+
+                    assert(
+                        parameters[3].key
+                            == "rate"
+                    )
+
+                    assert(
+                        controller:
+                            read_reference(
+                                "target"
+                            )
+                            == 150
+                    )
+
+                    assert(
+                        controller:
+                            write_reference(
+                                "target",
+                                200
+                            )
+                            == 200
+                    )
+
+                    controller:
+                        configure_reference({
+                            target = 250,
+                            rate = 5,
+                        })
+
+                    controller:
+                        set_fixed_reference(
+                            175
+                        )
+
+                    controller:
+                        set_ramp_reference({
+                            start = 175,
+                            target = 220,
+                            rate = 2,
+                        })
+                "#,
         )
         .exec()
         .unwrap();

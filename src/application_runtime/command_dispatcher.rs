@@ -5,24 +5,22 @@ use crate::{
     app_log::LogHandle,
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
-    data::{NewControllerDiagnosticSeries, NewSeries, SeriesId, SeriesStore},
-    instrument::ConnectedParameterAddress,
+    data::{SeriesId, SeriesStore},
     output_control::OutputHandle,
-    process_control::{ControlLoopDefinition, ControlOutputTarget, NewController},
     process_recorder::{
         ProcessActionContext, ProcessActionId, ProcessActionResult, ProcessRecorder,
     },
     serial_connection::SerialConnectionRegistry,
     signal_processing::ProcessingHandle,
-    user_command::{
-        PauseControllerError, ResumeControllerError, SetControllerInputError, UserCommand,
-    },
+    user_command::UserCommand,
     worker::{ConnectionRouter, ConnectionWorkerEvent, WorkerEvent},
 };
 
 use super::{
     acquisition_command_handler::AcquisitionCommandHandler,
-    acquisition_controller::AcquisitionController, device_emulator_service::DeviceEmulatorService,
+    acquisition_controller::AcquisitionController,
+    controller_command_handler::ControllerCommandHandler,
+    device_emulator_service::DeviceEmulatorService,
     emulator_command_handler::EmulatorCommandHandler,
     instrument_command_handler::InstrumentCommandHandler,
     serial_command_handler::SerialCommandHandler, series_command_handler::SeriesCommandHandler,
@@ -155,61 +153,6 @@ pub(crate) struct CommandDispatcher {
     pending_acquisition_actions: HashMap<ProcessActionId, PendingAcquisitionAction>,
     event_receiver: Receiver<ConnectionWorkerEvent>,
     log: LogHandle,
-}
-
-pub(super) fn pause_controller_safely(
-    output_control: &OutputHandle,
-    processing: &ProcessingHandle<SeriesId>,
-    name: &str,
-) -> Result<(), PauseControllerError> {
-    let safe_output_result = output_control.apply_safe(name);
-
-    let pause_result = processing.pause_controller(name);
-
-    match safe_output_result {
-        Err(output) => match pause_result {
-            Ok(()) => Err(PauseControllerError::Output(output)),
-
-            Err(pause) => Err(PauseControllerError::OutputAndControllerPause { output, pause }),
-        },
-
-        Ok(response) => {
-            let safe_write_result = response.recv();
-
-            match (safe_write_result, pause_result) {
-                (Ok(_), Ok(())) => Ok(()),
-
-                (Err(write), Ok(())) => Err(PauseControllerError::SafeOutputWrite(write)),
-
-                (Ok(_), Err(pause)) => Err(PauseControllerError::ControllerAfterSafeOutput(pause)),
-
-                (Err(write), Err(pause)) => {
-                    Err(PauseControllerError::SafeOutputWriteAndControllerPause { write, pause })
-                }
-            }
-        }
-    }
-}
-
-fn resume_controller_safely(
-    output_control: &OutputHandle,
-    processing: &ProcessingHandle<SeriesId>,
-    name: &str,
-) -> Result<(), ResumeControllerError> {
-    output_control.request_automatic(name)?;
-
-    if let Err(controller_error) = processing.resume_controller(name) {
-        if let Err(rollback_error) = output_control.rollback_automatic_request(name) {
-            return Err(ResumeControllerError::Rollback {
-                controller: controller_error,
-                rollback: rollback_error,
-            });
-        }
-
-        return Err(ResumeControllerError::Controller(controller_error));
-    }
-
-    Ok(())
 }
 
 pub(super) fn rollback_acquisition_connections(
@@ -382,14 +325,6 @@ impl CommandDispatcher {
         }
     }
 
-    fn resume_controller(&self, name: &str) -> Result<(), ResumeControllerError> {
-        resume_controller_safely(&self.output_control, &self.processing, name)
-    }
-
-    fn pause_controller(&self, name: &str) -> Result<(), PauseControllerError> {
-        pause_controller_safely(&self.output_control, &self.processing, name)
-    }
-
     pub fn execute(
         &mut self,
         command: UserCommand,
@@ -450,555 +385,21 @@ impl CommandDispatcher {
                 .execute(command, action_context);
             }
 
-            UserCommand::AddControllerDiagnostic(diagnostic) => {
-                self.add_controller_diagnostic(diagnostic);
-            }
-
-            UserCommand::AddController(new_controller) => {
-                match self.add_controller(new_controller) {
-                    Ok(()) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_applied(
-                                action_context.action_id(),
-                                None,
-                                None,
-                            );
-                        }
-                    }
-
-                    Err(error) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder
-                                .record_action_failed(action_context.action_id(), error);
-                        }
-                    }
-                }
-            }
-
-            UserCommand::ControllerParameters {
-                name,
-                response_sender,
-            } => {
-                let result = self.processing.controller_parameters(&name);
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::ControllerDiagnostics {
-                name,
-                response_sender,
-            } => {
-                let result = self.processing.controller_diagnostics(&name);
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::ReadControllerParameter {
-                name,
-                key,
-                response_sender,
-            } => {
-                let result = self.processing.read_controller_parameter(&name, &key);
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::WriteControllerParameter {
-                name,
-                key,
-                value,
-                response_sender,
-            } => {
-                let result = self
-                    .processing
-                    .write_controller_parameter(&name, &key, value);
-
-                match &result {
-                    Ok(_) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_applied(
-                                action_context.action_id(),
-                                None,
-                                None,
-                            );
-                        }
-                    }
-
-                    Err(error) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_failed(
-                                action_context.action_id(),
-                                error.to_string(),
-                            );
-                        }
-                    }
-                }
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::ConfigureController {
-                name,
-                updates,
-                response_sender,
-            } => {
-                let result = self.processing.configure_controller(&name, updates);
-
-                match &result {
-                    Ok(_) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_applied(
-                                action_context.action_id(),
-                                None,
-                                None,
-                            );
-                        }
-                    }
-
-                    Err(error) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_failed(
-                                action_context.action_id(),
-                                error.to_string(),
-                            );
-                        }
-                    }
-                }
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::ControllerReferenceKind {
-                name,
-                response_sender,
-            } => {
-                let result = self.processing.reference_kind(&name);
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::ControllerReferenceParameters {
-                name,
-                response_sender,
-            } => {
-                let result = self.processing.reference_parameters(&name);
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::ReadControllerReferenceParameter {
-                name,
-                key,
-                response_sender,
-            } => {
-                let result = self.processing.read_reference_parameter(&name, &key);
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::WriteControllerReferenceParameter {
-                name,
-                key,
-                value,
-                response_sender,
-            } => {
-                let result = self
-                    .processing
-                    .write_reference_parameter(&name, &key, value);
-
-                match &result {
-                    Ok(_) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_applied(
-                                action_context.action_id(),
-                                None,
-                                None,
-                            );
-                        }
-                    }
-
-                    Err(error) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_failed(
-                                action_context.action_id(),
-                                error.to_string(),
-                            );
-                        }
-                    }
-                }
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::ConfigureControllerReference {
-                name,
-                updates,
-                response_sender,
-            } => {
-                let result = self.processing.configure_reference(&name, updates);
-
-                match &result {
-                    Ok(_) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_applied(
-                                action_context.action_id(),
-                                None,
-                                None,
-                            );
-                        }
-                    }
-
-                    Err(error) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_failed(
-                                action_context.action_id(),
-                                error.to_string(),
-                            );
-                        }
-                    }
-                }
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::SetControllerReference {
-                name,
-                source,
-                response_sender,
-            } => {
-                let result = self.processing.set_reference(&name, source);
-
-                match &result {
-                    Ok(()) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_applied(
-                                action_context.action_id(),
-                                None,
-                                None,
-                            );
-                        }
-                    }
-
-                    Err(error) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_failed(
-                                action_context.action_id(),
-                                error.to_string(),
-                            );
-                        }
-                    }
-                }
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::ResetController {
-                name,
-                response_sender,
-            } => {
-                let result = self.processing.reset_controller(&name);
-
-                match &result {
-                    Ok(()) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_applied(
-                                action_context.action_id(),
-                                None,
-                                None,
-                            );
-                        }
-                    }
-
-                    Err(error) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_failed(
-                                action_context.action_id(),
-                                error.to_string(),
-                            );
-                        }
-                    }
-                }
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::SetControllerInput {
-                name,
-                input_name,
-                response_sender,
-            } => {
-                let result = match self.series.id_by_name(&input_name) {
-                    Some(input_id) => self
-                        .processing
-                        .set_controller_input(&name, input_id)
-                        .map_err(Into::into),
-
-                    None => Err(SetControllerInputError::SeriesNotFound(input_name)),
-                };
-
-                match &result {
-                    Ok(()) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_applied(
-                                action_context.action_id(),
-                                None,
-                                None,
-                            );
-                        }
-                    }
-
-                    Err(error) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_failed(
-                                action_context.action_id(),
-                                error.to_string(),
-                            );
-                        }
-                    }
-                }
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::ControllerState {
-                name,
-                response_sender,
-            } => {
-                let result = self.processing.controller_state(&name);
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::PauseController {
-                name,
-                response_sender,
-            } => {
-                let result = self.pause_controller(&name);
-
-                match &result {
-                    Ok(()) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_applied(
-                                action_context.action_id(),
-                                None,
-                                None,
-                            );
-                        }
-                    }
-
-                    Err(error) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_failed(
-                                action_context.action_id(),
-                                error.to_string(),
-                            );
-                        }
-                    }
-                }
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::ResumeController {
-                name,
-                response_sender,
-            } => {
-                let result = self.resume_controller(&name);
-
-                match &result {
-                    Ok(()) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_applied(
-                                action_context.action_id(),
-                                None,
-                                None,
-                            );
-                        }
-                    }
-
-                    Err(error) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_failed(
-                                action_context.action_id(),
-                                error.to_string(),
-                            );
-                        }
-                    }
-                }
-
-                let _ = response_sender.send(result);
-            }
-
-            UserCommand::ResetControllerIntegral {
-                name,
-                response_sender,
-            } => {
-                let result = self.processing.reset_controller_integral(&name);
-
-                match &result {
-                    Ok(()) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_applied(
-                                action_context.action_id(),
-                                None,
-                                None,
-                            );
-                        }
-                    }
-
-                    Err(error) => {
-                        if let Some(action_context) = action_context {
-                            self.process_recorder.record_action_failed(
-                                action_context.action_id(),
-                                error.to_string(),
-                            );
-                        }
-                    }
-                }
-
-                let _ = response_sender.send(result);
+            UserCommand::Controller(command) => {
+                ControllerCommandHandler::new(
+                    &self.series,
+                    &self.processing,
+                    &self.output_control,
+                    &self.process_recorder,
+                    &self.log,
+                )
+                .execute(command, action_context);
             }
 
             UserCommand::Log { message } => {
                 self.log.info(message);
             }
         }
-    }
-
-    fn install_control_loop(
-        &self,
-        name: &str,
-        target: ConnectedParameterAddress,
-        definition: ControlLoopDefinition<SeriesId, ControlOutputTarget>,
-    ) -> Result<(), String> {
-        let instance_id = definition.instance_id();
-
-        let safe_request = definition
-            .output_target()
-            .safe_write_request()
-            .map_err(|error| {
-                format!(
-                    "failed to create safe \
-                         output request: {error}",
-                )
-            })?;
-
-        self.output_control
-            .register_controller(target, name, instance_id, safe_request)
-            .map_err(|error| {
-                format!(
-                    "failed to register output: \
-                     {error}",
-                )
-            })?;
-
-        if let Err(error) = self.processing.add_control_loop(definition) {
-            let rollback_result = self
-                .output_control
-                .rollback_controller_registration(target, name);
-
-            return match rollback_result {
-                Ok(()) => Err(error.to_string()),
-
-                Err(rollback_error) => Err(format!(
-                    "{error}; output ownership \
-                         rollback also failed: \
-                         {rollback_error}",
-                )),
-            };
-        }
-
-        Ok(())
-    }
-
-    fn add_controller(
-        &self,
-        new_controller: NewController<ControlOutputTarget>,
-    ) -> Result<(), String> {
-        let (name, input_name, output_target, controller) = new_controller.into_parts();
-
-        let kind = controller.kind();
-
-        let target = output_target.connected_parameter_address();
-
-        let Some(input_id) = self.series.id_by_name(&input_name) else {
-            return Err(format!(
-                "Failed to add {kind} controller \
-                 '{name}': input series \
-                 '{input_name}' was not found",
-            ));
-        };
-
-        let definition =
-            ControlLoopDefinition::new(name.clone(), input_id, output_target, controller).map_err(
-                |error| {
-                    format!(
-                        "Failed to add {kind} controller \
-                 '{name}': {error}",
-                    )
-                },
-            )?;
-
-        self.install_control_loop(&name, target, definition)
-            .map_err(|error| {
-                format!(
-                    "Failed to add {kind} controller \
-                 '{name}': {error}",
-                )
-            })?;
-
-        Ok(())
-    }
-
-    fn add_controller_diagnostic(&self, diagnostic_series: NewControllerDiagnosticSeries) {
-        let (controller, diagnostic, name, connection_id, color) = diagnostic_series.into_parts();
-
-        let mut new_series =
-            NewSeries::named_controller_diagnostic(controller.clone(), diagnostic, name.clone())
-                .with_connection(connection_id);
-
-        if let Some(color) = color {
-            new_series = new_series.with_color(color);
-        }
-
-        let output_id = match self.series.add_series(new_series) {
-            Ok(output_id) => output_id,
-
-            Err(error) => {
-                self.log.error(format!(
-                    "Failed to add controller \
-                             diagnostic series \
-                             '{name}': {error}",
-                ));
-
-                return;
-            }
-        };
-
-        if let Err(error) =
-            self.processing
-                .add_controller_diagnostic(controller.clone(), diagnostic, output_id)
-        {
-            self.series.remove_series(output_id);
-
-            self.log.error(format!(
-                "Signal processing failed: \
-                     cannot add diagnostic \
-                     series '{name}' for \
-                     controller '{controller}': \
-                     {error}",
-            ));
-
-            return;
-        }
-
-        self.log.info(format!(
-            "Controller diagnostic \
-                 series '{name}' \
-                 ({output_id}) added for \
-                 controller '{controller}' \
-                 diagnostic '{diagnostic}'.",
-        ));
     }
 }
 
@@ -1049,6 +450,9 @@ mod tests {
     use crate::{
         acquisition::AcquisitionError,
         app_log::LogModel,
+        application_runtime::controller_command_handler::{
+            pause_controller_safely, resume_controller_safely,
+        },
         connection::ConnectionId,
         data::SeriesId,
         instrument::{
@@ -1074,8 +478,8 @@ mod tests {
 
     use super::{
         AcquisitionActionEventOutcome, AcquisitionActionKind, PendingAcquisitionAction,
-        pause_controller_safely, resume_controller_safely, rollback_acquisition_connections,
-        update_pending_acquisition_action, worker_event_should_be_logged,
+        rollback_acquisition_connections, update_pending_acquisition_action,
+        worker_event_should_be_logged,
     };
 
     fn test_serial_config(port_name: &str) -> SerialPortConfig {

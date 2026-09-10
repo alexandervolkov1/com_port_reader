@@ -303,114 +303,123 @@ impl From<SeriesCommand> for UserCommand {
 }
 
 #[derive(Debug)]
+pub(crate) enum ControllerCommand {
+    AddDiagnostic(NewControllerDiagnosticSeries),
+
+    Add(NewController<ControlOutputTarget>),
+
+    Parameters {
+        name: String,
+        response_sender: Sender<Result<Vec<ParameterDescriptor>, ControllerRequestError>>,
+    },
+
+    Diagnostics {
+        name: String,
+        response_sender: Sender<Result<Vec<ControllerDiagnostic>, ControllerRequestError>>,
+    },
+
+    ReadParameter {
+        name: String,
+        key: String,
+        response_sender: Sender<Result<InstrumentValue, ControllerRequestError>>,
+    },
+
+    WriteParameter {
+        name: String,
+        key: String,
+        value: InstrumentValue,
+        response_sender: Sender<Result<InstrumentValue, ControllerRequestError>>,
+    },
+
+    Configure {
+        name: String,
+        updates: Vec<(String, InstrumentValue)>,
+        response_sender: Sender<Result<(), ControllerRequestError>>,
+    },
+
+    ReferenceKind {
+        name: String,
+        response_sender: Sender<Result<Option<ReferenceKind>, ControllerRequestError>>,
+    },
+
+    ReferenceParameters {
+        name: String,
+        response_sender: Sender<Result<Vec<ParameterDescriptor>, ControllerRequestError>>,
+    },
+
+    ReadReferenceParameter {
+        name: String,
+        key: String,
+        response_sender: Sender<Result<InstrumentValue, ControllerRequestError>>,
+    },
+
+    WriteReferenceParameter {
+        name: String,
+        key: String,
+        value: InstrumentValue,
+        response_sender: Sender<Result<InstrumentValue, ControllerRequestError>>,
+    },
+
+    ConfigureReference {
+        name: String,
+        updates: Vec<(String, InstrumentValue)>,
+        response_sender: Sender<Result<(), ControllerRequestError>>,
+    },
+
+    SetReference {
+        name: String,
+        source: ReferenceSource,
+        response_sender: Sender<Result<(), ControllerRequestError>>,
+    },
+
+    SetInput {
+        name: String,
+        input_name: String,
+        response_sender: Sender<Result<(), SetControllerInputError>>,
+    },
+
+    State {
+        name: String,
+        response_sender: Sender<Result<ControlLoopState, ControllerRequestError>>,
+    },
+
+    Pause {
+        name: String,
+        response_sender: Sender<Result<(), PauseControllerError>>,
+    },
+
+    Resume {
+        name: String,
+        response_sender: Sender<Result<(), ResumeControllerError>>,
+    },
+
+    ResetIntegral {
+        name: String,
+        response_sender: Sender<Result<(), ControllerRequestError>>,
+    },
+
+    Reset {
+        name: String,
+        response_sender: Sender<Result<(), ControllerRequestError>>,
+    },
+}
+
+impl From<ControllerCommand> for UserCommand {
+    fn from(command: ControllerCommand) -> Self {
+        Self::Controller(command)
+    }
+}
+
+#[derive(Debug)]
 pub enum UserCommand {
     Acquisition(AcquisitionCommand),
     Emulator(EmulatorCommand),
     Instrument(InstrumentCommand),
     Serial(SerialCommand),
     Series(SeriesCommand),
+    Controller(ControllerCommand),
 
-    AddControllerDiagnostic(NewControllerDiagnosticSeries),
-    AddController(NewController<ControlOutputTarget>),
-
-    ControllerParameters {
-        name: String,
-        response_sender: Sender<Result<Vec<ParameterDescriptor>, ControllerRequestError>>,
-    },
-
-    ControllerDiagnostics {
-        name: String,
-        response_sender: Sender<Result<Vec<ControllerDiagnostic>, ControllerRequestError>>,
-    },
-
-    ReadControllerParameter {
-        name: String,
-        key: String,
-        response_sender: Sender<Result<InstrumentValue, ControllerRequestError>>,
-    },
-
-    WriteControllerParameter {
-        name: String,
-        key: String,
-        value: InstrumentValue,
-        response_sender: Sender<Result<InstrumentValue, ControllerRequestError>>,
-    },
-
-    ConfigureController {
-        name: String,
-        updates: Vec<(String, InstrumentValue)>,
-        response_sender: Sender<Result<(), ControllerRequestError>>,
-    },
-
-    ControllerReferenceKind {
-        name: String,
-        response_sender: Sender<Result<Option<ReferenceKind>, ControllerRequestError>>,
-    },
-
-    ControllerReferenceParameters {
-        name: String,
-        response_sender: Sender<Result<Vec<ParameterDescriptor>, ControllerRequestError>>,
-    },
-
-    ReadControllerReferenceParameter {
-        name: String,
-        key: String,
-        response_sender: Sender<Result<InstrumentValue, ControllerRequestError>>,
-    },
-
-    WriteControllerReferenceParameter {
-        name: String,
-        key: String,
-        value: InstrumentValue,
-        response_sender: Sender<Result<InstrumentValue, ControllerRequestError>>,
-    },
-
-    ConfigureControllerReference {
-        name: String,
-        updates: Vec<(String, InstrumentValue)>,
-        response_sender: Sender<Result<(), ControllerRequestError>>,
-    },
-
-    SetControllerReference {
-        name: String,
-        source: ReferenceSource,
-        response_sender: Sender<Result<(), ControllerRequestError>>,
-    },
-
-    SetControllerInput {
-        name: String,
-        input_name: String,
-        response_sender: Sender<Result<(), SetControllerInputError>>,
-    },
-
-    ControllerState {
-        name: String,
-        response_sender: Sender<Result<ControlLoopState, ControllerRequestError>>,
-    },
-
-    PauseController {
-        name: String,
-        response_sender: Sender<Result<(), PauseControllerError>>,
-    },
-
-    ResumeController {
-        name: String,
-        response_sender: Sender<Result<(), ResumeControllerError>>,
-    },
-
-    ResetControllerIntegral {
-        name: String,
-        response_sender: Sender<Result<(), ControllerRequestError>>,
-    },
-
-    ResetController {
-        name: String,
-        response_sender: Sender<Result<(), ControllerRequestError>>,
-    },
-
-    Log {
-        message: String,
-    },
+    Log { message: String },
 }
 
 #[cfg(test)]
