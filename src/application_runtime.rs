@@ -944,9 +944,9 @@ mod tests {
             },
         },
         process_control::{
-            ControlEvent, ControlLoopDefinition, ControlOutputTarget, ControllerKind,
-            NewController, OnOffController, PidController, PidGains, PidOutputLimits,
-            ReferenceSource,
+            ControlEvent, ControlLoopDefinition, ControlLoopState, ControlOutputTarget,
+            ControllerKind, NewController, OnOffController, PidController, PidGains,
+            PidOutputLimits, ReferenceKind, ReferenceSource,
         },
         process_recorder::ProcessRecorder,
         signal_processing::SignalFilterDefinition,
@@ -1605,6 +1605,305 @@ mod tests {
         assert!(runtime.series().id_by_name("raw_original").is_some(),);
 
         assert!(runtime.series().id_by_name("filtered_original",).is_some(),);
+
+        drop(runtime);
+        drop(log_model);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn runs_controller_configuration_lifecycle_end_to_end() {
+        let directory = runtime_test_directory("controller_lifecycle");
+
+        let source = test_profile_source("temperature_raw", "temperature_filtered", "COM254");
+
+        let profile = write_test_profile(&directory, "startup.lua", &source);
+
+        let (mut runtime, log_model) = build_test_runtime(&profile);
+
+        wait_for_series(&mut runtime, "temperature_filtered");
+
+        let descriptor = VirtualParameterDescriptor::new(
+            VirtualParameterId::new(1),
+            "heater_power",
+            "Heater power",
+            ParameterAccess::ReadWrite,
+            ParameterValueType::Number,
+        )
+        .with_range(ParameterRange::Number {
+            minimum: 0.0,
+            maximum: 100.0,
+        });
+
+        let target = ControlOutputTarget::virtual_instrument(
+            ConnectionId::PRIMARY,
+            VirtualInstrumentId::new(1),
+            &descriptor,
+        )
+        .unwrap();
+
+        let controller = PidController::with_output_limits(
+            100.0,
+            PidGains::new(2.0, 0.1, 0.0).unwrap(),
+            PidOutputLimits::new(0.0, 100.0).unwrap(),
+        )
+        .unwrap();
+
+        let new_controller =
+            NewController::new("heater", "temperature_filtered", target, controller).unwrap();
+
+        runtime.execute(ControllerCommand::Add(new_controller).into());
+
+        /*
+         * Controller exists and starts Running.
+         */
+        let (response_sender, response_receiver) = crossbeam_channel::bounded(1);
+
+        runtime.execute(
+            ControllerCommand::State {
+                name: "heater".to_owned(),
+                response_sender,
+            }
+            .into(),
+        );
+
+        assert_eq!(
+            response_receiver
+                .recv_timeout(Duration::from_secs(1),)
+                .unwrap()
+                .unwrap(),
+            ControlLoopState::Running,
+        );
+
+        /*
+         * Change one PID parameter.
+         */
+        let (response_sender, response_receiver) = crossbeam_channel::bounded(1);
+
+        runtime.execute(
+            ControllerCommand::WriteParameter {
+                name: "heater".to_owned(),
+                key: "setpoint".to_owned(),
+                value: InstrumentValue::Number(175.0),
+                response_sender,
+            }
+            .into(),
+        );
+
+        assert_eq!(
+            response_receiver
+                .recv_timeout(Duration::from_secs(1),)
+                .unwrap()
+                .unwrap(),
+            InstrumentValue::Number(175.0),
+        );
+
+        /*
+         * Change several PID parameters atomically.
+         */
+        let (response_sender, response_receiver) = crossbeam_channel::bounded(1);
+
+        runtime.execute(
+            ControllerCommand::Configure {
+                name: "heater".to_owned(),
+                updates: vec![
+                    ("kp".to_owned(), InstrumentValue::Number(1.5)),
+                    ("ki".to_owned(), InstrumentValue::Number(0.25)),
+                    ("kd".to_owned(), InstrumentValue::Number(0.5)),
+                ],
+                response_sender,
+            }
+            .into(),
+        );
+
+        response_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+
+        /*
+         * Read a configured value back through the
+         * application command path.
+         */
+        let (response_sender, response_receiver) = crossbeam_channel::bounded(1);
+
+        runtime.execute(
+            ControllerCommand::ReadParameter {
+                name: "heater".to_owned(),
+                key: "kp".to_owned(),
+                response_sender,
+            }
+            .into(),
+        );
+
+        assert_eq!(
+            response_receiver
+                .recv_timeout(Duration::from_secs(1),)
+                .unwrap()
+                .unwrap(),
+            InstrumentValue::Number(1.5),
+        );
+
+        /*
+         * Install a dynamic reference.
+         */
+        let reference = ReferenceSource::ramp(175.0, 220.0, 2.0).unwrap();
+
+        let (response_sender, response_receiver) = crossbeam_channel::bounded(1);
+
+        runtime.execute(
+            ControllerCommand::SetReference {
+                name: "heater".to_owned(),
+                source: reference,
+                response_sender,
+            }
+            .into(),
+        );
+
+        response_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+
+        /*
+         * Verify reference type.
+         */
+        let (response_sender, response_receiver) = crossbeam_channel::bounded(1);
+
+        runtime.execute(
+            ControllerCommand::ReferenceKind {
+                name: "heater".to_owned(),
+                response_sender,
+            }
+            .into(),
+        );
+
+        assert_eq!(
+            response_receiver
+                .recv_timeout(Duration::from_secs(1),)
+                .unwrap()
+                .unwrap(),
+            Some(ReferenceKind::Ramp),
+        );
+
+        /*
+         * Change one reference parameter.
+         */
+        let (response_sender, response_receiver) = crossbeam_channel::bounded(1);
+
+        runtime.execute(
+            ControllerCommand::WriteReferenceParameter {
+                name: "heater".to_owned(),
+                key: "target".to_owned(),
+                value: InstrumentValue::Number(230.0),
+                response_sender,
+            }
+            .into(),
+        );
+
+        assert_eq!(
+            response_receiver
+                .recv_timeout(Duration::from_secs(1),)
+                .unwrap()
+                .unwrap(),
+            InstrumentValue::Number(230.0),
+        );
+
+        /*
+         * Read the reference value back.
+         */
+        let (response_sender, response_receiver) = crossbeam_channel::bounded(1);
+
+        runtime.execute(
+            ControllerCommand::ReadReferenceParameter {
+                name: "heater".to_owned(),
+                key: "target".to_owned(),
+                response_sender,
+            }
+            .into(),
+        );
+
+        assert_eq!(
+            response_receiver
+                .recv_timeout(Duration::from_secs(1),)
+                .unwrap()
+                .unwrap(),
+            InstrumentValue::Number(230.0),
+        );
+
+        /*
+         * Change controller input from filtered to raw.
+         */
+        let (response_sender, response_receiver) = crossbeam_channel::bounded(1);
+
+        runtime.execute(
+            ControllerCommand::SetInput {
+                name: "heater".to_owned(),
+                input_name: "temperature_raw".to_owned(),
+                response_sender,
+            }
+            .into(),
+        );
+
+        response_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+
+        /*
+         * Controller maintenance operations.
+         */
+        let (response_sender, response_receiver) = crossbeam_channel::bounded(1);
+
+        runtime.execute(
+            ControllerCommand::ResetIntegral {
+                name: "heater".to_owned(),
+                response_sender,
+            }
+            .into(),
+        );
+
+        response_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+
+        let (response_sender, response_receiver) = crossbeam_channel::bounded(1);
+
+        runtime.execute(
+            ControllerCommand::Reset {
+                name: "heater".to_owned(),
+                response_sender,
+            }
+            .into(),
+        );
+
+        response_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+
+        /*
+         * Reset must not change lifecycle state.
+         */
+        let (response_sender, response_receiver) = crossbeam_channel::bounded(1);
+
+        runtime.execute(
+            ControllerCommand::State {
+                name: "heater".to_owned(),
+                response_sender,
+            }
+            .into(),
+        );
+
+        assert_eq!(
+            response_receiver
+                .recv_timeout(Duration::from_secs(1),)
+                .unwrap()
+                .unwrap(),
+            ControlLoopState::Running,
+        );
 
         drop(runtime);
         drop(log_model);
