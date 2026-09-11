@@ -247,6 +247,26 @@ impl MyApp {
                         ));
                     }
                 }
+
+                LuaApplicationEvent::ControlEnabledChanged {
+                    script_id,
+                    panel_id,
+                    control_id,
+                    enabled,
+                    reason,
+                } => {
+                    if let Err(error) = self.control_panels.set_control_enabled(
+                        &script_id,
+                        &panel_id,
+                        &control_id,
+                        enabled,
+                        reason,
+                    ) {
+                        self.runtime.log_error(format!(
+                            "Failed to update control '{script_id}.{panel_id}.{control_id}': {error}",
+                        ));
+                    }
+                }
             }
         }
 

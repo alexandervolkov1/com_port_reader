@@ -1,4 +1,8 @@
-use std::collections::HashSet;
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use crossbeam_channel::Sender;
 use mlua::{Lua, Table, Value};
@@ -93,6 +97,14 @@ pub(crate) enum LuaApplicationEvent {
         control_id: String,
         value: LuaControlValue,
     },
+
+    ControlEnabledChanged {
+        script_id: String,
+        panel_id: String,
+        control_id: String,
+        enabled: bool,
+        reason: Option<String>,
+    },
 }
 
 pub(crate) fn invoke_control_callback(
@@ -135,20 +147,25 @@ pub(crate) fn install(
     event_sender: Sender<LuaApplicationEvent>,
 ) -> mlua::Result<()> {
     let registry = lua.create_table()?;
+    let metadata = Rc::new(RefCell::new(ScriptMetadataRegistry::default()));
 
     let set_control_event_sender = event_sender.clone();
+    let set_control_metadata = Rc::clone(&metadata);
 
     let set_control = lua.create_function(
-        move |lua, (script_id, panel_id, control_id, value): (String, String, String, Value)| {
+        move |_, (script_id, panel_id, control_id, value): (String, String, String, Value)| {
             validate_identifier("application script", &script_id)?;
 
             validate_identifier("control panel", &panel_id)?;
 
             validate_identifier("control", &control_id)?;
 
-            let kind = registered_control_kind(lua, &script_id, &panel_id, &control_id)?;
+            let kind =
+                set_control_metadata
+                    .borrow()
+                    .control_kind(&script_id, &panel_id, &control_id)?;
 
-            let value = parse_control_value(&kind, &control_id, value)?;
+            let value = parse_control_value(kind, &control_id, value)?;
 
             send_event(
                 &set_control_event_sender,
@@ -164,9 +181,51 @@ pub(crate) fn install(
 
     app.set("set_control", set_control)?;
 
+    let set_enabled_event_sender = event_sender.clone();
+    let set_enabled_metadata = Rc::clone(&metadata);
+
+    let set_control_enabled = lua.create_function(
+        move |_,
+              (script_id, panel_id, control_id, enabled, reason): (
+            String,
+            String,
+            String,
+            bool,
+            Option<String>,
+        )| {
+            validate_identifier("application script", &script_id)?;
+            validate_identifier("control panel", &panel_id)?;
+            validate_identifier("control", &control_id)?;
+
+            set_enabled_metadata
+                .borrow()
+                .control_kind(&script_id, &panel_id, &control_id)?;
+
+            let reason = if enabled {
+                None
+            } else {
+                reason.filter(|reason| !reason.trim().is_empty())
+            };
+
+            send_event(
+                &set_enabled_event_sender,
+                LuaApplicationEvent::ControlEnabledChanged {
+                    script_id,
+                    panel_id,
+                    control_id,
+                    enabled,
+                    reason,
+                },
+            )
+        },
+    )?;
+
+    app.set("set_control_enabled", set_control_enabled)?;
+
     lua.set_named_registry_value(SCRIPT_REGISTRY_KEY, registry)?;
 
     let register_event_sender = event_sender.clone();
+    let register_metadata = Rc::clone(&metadata);
 
     let register = lua.create_function(move |lua, script: Table| {
         let registration = parse_script_registration(&script)?;
@@ -174,6 +233,9 @@ pub(crate) fn install(
         let registry: Table = lua.named_registry_value(SCRIPT_REGISTRY_KEY)?;
 
         registry.set(registration.id.clone(), script)?;
+        register_metadata
+            .borrow_mut()
+            .register(&registration.id, &registration.panels);
 
         send_event(
             &register_event_sender,
@@ -186,12 +248,14 @@ pub(crate) fn install(
 
     app.set("register_script", register)?;
 
+    let unregister_metadata = Rc::clone(&metadata);
     let unregister = lua.create_function(move |lua, script_id: String| {
         validate_identifier("application script", &script_id)?;
 
         let registry: Table = lua.named_registry_value(SCRIPT_REGISTRY_KEY)?;
 
         registry.set(script_id.clone(), Value::Nil)?;
+        unregister_metadata.borrow_mut().unregister(&script_id);
 
         send_event(
             &event_sender,
@@ -207,6 +271,86 @@ pub(crate) fn install(
 struct ScriptRegistration {
     id: String,
     panels: Vec<ControlPanelDefinition>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RegisteredControlKind {
+    Readout,
+    Number,
+    Toggle,
+    Button,
+}
+
+impl RegisteredControlKind {
+    const fn key(self) -> &'static str {
+        match self {
+            Self::Readout => "readout",
+            Self::Number => "number",
+            Self::Toggle => "toggle",
+            Self::Button => "button",
+        }
+    }
+}
+
+#[derive(Default)]
+struct ScriptMetadataRegistry {
+    scripts: HashMap<String, HashMap<String, HashMap<String, RegisteredControlKind>>>,
+}
+
+impl ScriptMetadataRegistry {
+    fn register(&mut self, script_id: &str, panels: &[ControlPanelDefinition]) {
+        let panels = panels
+            .iter()
+            .map(|panel| {
+                let controls = panel
+                    .controls()
+                    .iter()
+                    .map(|control| {
+                        let kind = match control {
+                            ControlDefinition::Readout { .. } => RegisteredControlKind::Readout,
+                            ControlDefinition::Number { .. } => RegisteredControlKind::Number,
+                            ControlDefinition::Toggle { .. } => RegisteredControlKind::Toggle,
+                            ControlDefinition::Button { .. } => RegisteredControlKind::Button,
+                        };
+
+                        (control.id().to_owned(), kind)
+                    })
+                    .collect();
+
+                (panel.id().to_owned(), controls)
+            })
+            .collect();
+
+        self.scripts.insert(script_id.to_owned(), panels);
+    }
+
+    fn unregister(&mut self, script_id: &str) {
+        self.scripts.remove(script_id);
+    }
+
+    fn control_kind(
+        &self,
+        script_id: &str,
+        panel_id: &str,
+        control_id: &str,
+    ) -> mlua::Result<RegisteredControlKind> {
+        let panels = self.scripts.get(script_id).ok_or_else(|| {
+            runtime_error(format!(
+                "Application script '{script_id}' is not registered"
+            ))
+        })?;
+        let controls = panels.get(panel_id).ok_or_else(|| {
+            runtime_error(format!(
+                "Control panel '{panel_id}' was not found in application script '{script_id}'",
+            ))
+        })?;
+
+        controls.get(control_id).copied().ok_or_else(|| {
+            runtime_error(format!(
+                "Control '{control_id}' was not found in panel '{panel_id}' of application script '{script_id}'",
+            ))
+        })
+    }
 }
 
 fn parse_script_registration(script: &Table) -> mlua::Result<ScriptRegistration> {
@@ -439,75 +583,29 @@ fn parse_control(
     }
 }
 
-fn registered_control_kind(
-    lua: &Lua,
-    script_id: &str,
-    panel_id: &str,
-    control_id: &str,
-) -> mlua::Result<String> {
-    let registry: Table = lua.named_registry_value(SCRIPT_REGISTRY_KEY)?;
-
-    let script = registry.get::<Option<Table>>(script_id)?.ok_or_else(|| {
-        runtime_error(format!(
-            "Application script '{script_id}' \
-                 is not registered",
-        ))
-    })?;
-
-    let panels = script.get::<Option<Table>>("panels")?.ok_or_else(|| {
-        runtime_error(format!(
-            "Application script '{script_id}' \
-                 does not define control panels",
-        ))
-    })?;
-
-    for panel_index in 1..=panels.raw_len() {
-        let panel = panels.raw_get::<Table>(panel_index)?;
-
-        if panel.get::<String>("id")? != panel_id {
-            continue;
-        }
-
-        let controls = panel.get::<Table>("controls")?;
-
-        for control_index in 1..=controls.raw_len() {
-            let control = controls.raw_get::<Table>(control_index)?;
-
-            if control.get::<String>("id")? == control_id {
-                return control.get("kind");
-            }
-        }
-
-        return Err(runtime_error(format!(
-            "Control '{control_id}' was not found \
-             in panel '{panel_id}' of application \
-             script '{script_id}'",
-        )));
-    }
-
-    Err(runtime_error(format!(
-        "Control panel '{panel_id}' was not found \
-         in application script '{script_id}'",
-    )))
-}
-
 fn parse_control_value(
-    kind: &str,
+    kind: RegisteredControlKind,
     control_id: &str,
     value: Value,
 ) -> mlua::Result<LuaControlValue> {
     let actual_type = value.type_name();
 
     let value = match (kind, value) {
-        ("readout", Value::String(value)) => LuaControlValue::Text(value.to_str()?.to_string()),
+        (RegisteredControlKind::Readout, Value::String(value)) => {
+            LuaControlValue::Text(value.to_str()?.to_string())
+        }
 
-        ("number", Value::Integer(value)) => LuaControlValue::Number(value as f64),
+        (RegisteredControlKind::Number, Value::Integer(value)) => {
+            LuaControlValue::Number(value as f64)
+        }
 
-        ("number", Value::Number(value)) if value.is_finite() => LuaControlValue::Number(value),
+        (RegisteredControlKind::Number, Value::Number(value)) if value.is_finite() => {
+            LuaControlValue::Number(value)
+        }
 
-        ("toggle", Value::Boolean(value)) => LuaControlValue::Boolean(value),
+        (RegisteredControlKind::Toggle, Value::Boolean(value)) => LuaControlValue::Boolean(value),
 
-        ("button", _) => {
+        (RegisteredControlKind::Button, _) => {
             return Err(runtime_error(format!(
                 "Button control '{control_id}' \
                  cannot receive a value",
@@ -517,7 +615,8 @@ fn parse_control_value(
         _ => {
             return Err(runtime_error(format!(
                 "Cannot assign Lua {actual_type} \
-                 to {kind} control '{control_id}'",
+                 to {} control '{control_id}'",
+                kind.key(),
             )));
         }
     };
@@ -911,6 +1010,14 @@ mod tests {
                     "status",
                     "Running"
                 )
+
+                app.set_control_enabled(
+                    "demo",
+                    "controls",
+                    "status",
+                    false,
+                    "Waiting for acquisition"
+                )
             "#,
         )
         .exec()
@@ -925,6 +1032,63 @@ mod tests {
                 panel_id: "controls".to_owned(),
                 control_id: "status".to_owned(),
                 value: LuaControlValue::Text("Running".to_owned(),),
+            },
+        );
+
+        assert_eq!(
+            event_receiver.recv().unwrap(),
+            LuaApplicationEvent::ControlEnabledChanged {
+                script_id: "demo".to_owned(),
+                panel_id: "controls".to_owned(),
+                control_id: "status".to_owned(),
+                enabled: false,
+                reason: Some("Waiting for acquisition".to_owned()),
+            },
+        );
+    }
+
+    #[test]
+    fn control_updates_use_validated_registration_metadata() {
+        let lua = Lua::new();
+        let app = lua.create_table().unwrap();
+        let (event_sender, event_receiver) = unbounded();
+        install(&lua, &app, event_sender).unwrap();
+        lua.globals().set("app", app).unwrap();
+
+        lua.load(
+            r#"
+                local script = {
+                    id = "demo",
+                    panels = {{
+                        id = "controls",
+                        title = "Demo",
+                        controls = {{
+                            kind = "number",
+                            id = "value",
+                            label = "Value",
+                            on_change = "set_value",
+                        }},
+                    }},
+                }
+
+                function script.set_value(_) end
+
+                app.register_script(script)
+                script.panels[1].controls[1].kind = "button"
+                app.set_control("demo", "controls", "value", 42.0)
+            "#,
+        )
+        .exec()
+        .unwrap();
+
+        let _registration = event_receiver.recv().unwrap();
+        assert_eq!(
+            event_receiver.recv().unwrap(),
+            LuaApplicationEvent::ControlValueChanged {
+                script_id: "demo".to_owned(),
+                panel_id: "controls".to_owned(),
+                control_id: "value".to_owned(),
+                value: LuaControlValue::Number(42.0),
             },
         );
     }

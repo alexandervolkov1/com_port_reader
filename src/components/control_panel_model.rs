@@ -49,6 +49,18 @@ impl ControlPanelModel {
             .set_control_value(control_id, value)
     }
 
+    pub fn set_control_enabled(
+        &mut self,
+        script_id: &str,
+        panel_id: &str,
+        control_id: &str,
+        enabled: bool,
+        reason: Option<String>,
+    ) -> Result<(), ControlPanelStateError> {
+        self.panel_mut(script_id, panel_id)?
+            .set_control_enabled(control_id, enabled, reason)
+    }
+
     pub fn commit_control_edit(
         &mut self,
         script_id: &str,
@@ -139,6 +151,16 @@ impl ControlPanelState {
         self.control_mut(control_id)?.set_value(value)
     }
 
+    fn set_control_enabled(
+        &mut self,
+        control_id: &str,
+        enabled: bool,
+        reason: Option<String>,
+    ) -> Result<(), ControlPanelStateError> {
+        self.control_mut(control_id)?.set_enabled(enabled, reason);
+        Ok(())
+    }
+
     fn discard_control_edit(&mut self, control_id: &str) -> Result<(), ControlPanelStateError> {
         self.control_mut(control_id)?.discard_edit();
 
@@ -225,6 +247,11 @@ impl ControlState {
 
     pub(crate) fn kind_mut(&mut self) -> &mut ControlKindState {
         &mut self.kind
+    }
+
+    fn set_enabled(&mut self, enabled: bool, reason: Option<String>) {
+        self.enabled = enabled;
+        self.disabled_reason = if enabled { None } else { reason };
     }
 
     #[cfg(test)]
@@ -650,6 +677,33 @@ mod tests {
         assert_eq!(controls[1].value(), Some(ControlValueRef::Number(200.0,)),);
 
         assert_eq!(controls[2].value(), Some(ControlValueRef::Boolean(false,)),);
+    }
+
+    #[test]
+    fn changes_control_enabled_state_and_reason() {
+        let mut model = model();
+
+        model
+            .set_control_enabled(
+                "metakon_script",
+                "metakon",
+                "stop",
+                false,
+                Some("Already stopped".to_owned()),
+            )
+            .unwrap();
+
+        let control = &model.panels()[0].controls()[3];
+        assert!(!control.enabled());
+        assert_eq!(control.disabled_reason(), Some("Already stopped"));
+
+        model
+            .set_control_enabled("metakon_script", "metakon", "stop", true, None)
+            .unwrap();
+
+        let control = &model.panels()[0].controls()[3];
+        assert!(control.enabled());
+        assert_eq!(control.disabled_reason(), None);
     }
 
     #[test]
