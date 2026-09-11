@@ -398,6 +398,10 @@ impl CommandDispatcher {
                 .execute(command, action_context);
             }
 
+            UserCommand::Scenario(_) => {
+                unreachable!("scenario commands are handled by ApplicationRuntime")
+            }
+
             UserCommand::Log { message } => {
                 self.log.info(message);
             }

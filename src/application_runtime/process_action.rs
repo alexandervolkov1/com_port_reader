@@ -46,6 +46,8 @@ pub(super) fn resolve_action_series_id(action: &mut ProcessAction, series: &Seri
 
 pub(super) fn process_action_from_command(command: &UserCommand) -> Option<ProcessAction> {
     match command {
+        UserCommand::Scenario(_) => None,
+
         UserCommand::Acquisition(command) => Some(match command {
             AcquisitionCommand::Start => ProcessAction::StartAcquisition,
 

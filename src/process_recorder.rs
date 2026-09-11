@@ -439,6 +439,10 @@ impl ProcessRecorder {
         })
     }
 
+    pub(crate) fn application_events(&self) -> crate::application_event::ApplicationEventHub {
+        self.application_events.clone()
+    }
+
     pub(crate) fn subscribe_timeline(&self) -> Receiver<ProcessRecord> {
         let (sender, receiver) = unbounded();
 

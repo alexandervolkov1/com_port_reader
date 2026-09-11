@@ -21,6 +21,7 @@ use crate::{
     process_recorder::{
         ProcessAction, ProcessActionContext, ProcessActionOrigin, ProcessRecord, ProcessRecorder,
     },
+    scenario::ScenarioService,
     serial_connection::SerialConnectionRegistry,
     signal_processing::{ProcessingEvent, ProcessingService},
     user_command::{AcquisitionCommand, EmulatorCommand, UserCommand},
@@ -69,6 +70,7 @@ pub struct ApplicationRuntime {
     device_emulator: DeviceEmulatorService,
     lua_command_receiver: Receiver<UserCommand>,
     lua_application_event_receiver: Receiver<LuaApplicationEvent>,
+    scenario: ScenarioService,
 }
 
 impl ApplicationRuntime {
@@ -210,6 +212,12 @@ impl ApplicationRuntime {
             log.clone(),
         );
 
+        let scenario = ScenarioService::new(
+            process_recorder.application_events().subscribe(),
+            lua_worker.handle(),
+            log.clone(),
+        );
+
         process_recorder.record(ProcessRecord::ConfigurationLoaded {
             timestamp: SystemTime::now(),
             startup_path: paths.startup_script().to_path_buf(),
@@ -232,6 +240,7 @@ impl ApplicationRuntime {
             device_emulator,
             lua_command_receiver,
             lua_application_event_receiver,
+            scenario,
         );
 
         Ok((runtime, lua_event_receiver))
@@ -314,6 +323,7 @@ impl ApplicationRuntime {
         device_emulator: DeviceEmulatorService,
         lua_command_receiver: Receiver<UserCommand>,
         lua_application_event_receiver: Receiver<LuaApplicationEvent>,
+        scenario: ScenarioService,
     ) -> Self {
         Self {
             lua_worker,
@@ -331,6 +341,7 @@ impl ApplicationRuntime {
             device_emulator,
             lua_command_receiver,
             lua_application_event_receiver,
+            scenario,
         }
     }
 
@@ -350,6 +361,8 @@ impl ApplicationRuntime {
         for command in commands {
             self.execute_from(command, ProcessActionOrigin::Lua);
         }
+
+        self.scenario.poll();
     }
 
     pub fn execute(&mut self, command: UserCommand) {
@@ -357,6 +370,15 @@ impl ApplicationRuntime {
     }
 
     fn execute_from(&mut self, command: UserCommand, origin: ProcessActionOrigin) {
+        let command = match command {
+            UserCommand::Scenario(command) => {
+                self.scenario.execute(command);
+                return;
+            }
+
+            command => command,
+        };
+
         let action_context = process_action_from_command(&command).map(|mut action| {
             resolve_action_series_id(&mut action, &self.series);
 

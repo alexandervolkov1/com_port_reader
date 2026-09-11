@@ -141,6 +141,38 @@ pub(crate) fn invoke_control_callback(
     }
 }
 
+pub(crate) fn invoke_scenario_callback(lua: &Lua, callback_name: &str) -> mlua::Result<()> {
+    if let Value::Function(callback) = lua.globals().get::<Value>(callback_name)? {
+        return callback.call(());
+    }
+
+    let registry: Table = lua.named_registry_value(SCRIPT_REGISTRY_KEY)?;
+    let mut resolved = None;
+
+    for pair in registry.pairs::<String, Table>() {
+        let (script_id, script) = pair?;
+        let Value::Function(callback) = script.get::<Value>(callback_name)? else {
+            continue;
+        };
+
+        if let Some((previous_script, _)) = &resolved {
+            return Err(runtime_error(format!(
+                "Scenario callback '{callback_name}' is ambiguous: it is defined by application scripts '{previous_script}' and '{script_id}'",
+            )));
+        }
+
+        resolved = Some((script_id, callback));
+    }
+
+    let Some((_, callback)) = resolved else {
+        return Err(runtime_error(format!(
+            "Scenario callback '{callback_name}' was not found as a global function or in a registered application script",
+        )));
+    };
+
+    callback.call(())
+}
+
 pub(crate) fn install(
     lua: &Lua,
     app: &Table,
@@ -763,7 +795,7 @@ mod tests {
 
     use super::{
         LuaApplicationEvent, LuaControlArgument, LuaControlInvocation, LuaControlValue,
-        SCRIPT_REGISTRY_KEY, install, invoke_control_callback,
+        SCRIPT_REGISTRY_KEY, install, invoke_control_callback, invoke_scenario_callback,
     };
 
     #[test]
@@ -967,6 +999,31 @@ mod tests {
         let script: Table = registry.get("demo").unwrap();
 
         assert_eq!(script.get::<f64>("value").unwrap(), 42.0);
+    }
+
+    #[test]
+    fn invokes_scenario_callback_from_registered_script() {
+        let lua = Lua::new();
+        let app = lua.create_table().unwrap();
+        let (event_sender, _event_receiver) = unbounded();
+        install(&lua, &app, event_sender).unwrap();
+        lua.globals().set("app", app).unwrap();
+
+        lua.load(
+            r#"
+                local script = { id = "demo" }
+                function script.advance()
+                    scenario_value = 42
+                end
+                app.register_script(script)
+            "#,
+        )
+        .exec()
+        .unwrap();
+
+        invoke_scenario_callback(&lua, "advance").unwrap();
+
+        assert_eq!(lua.globals().get::<i64>("scenario_value").unwrap(), 42);
     }
 
     #[test]

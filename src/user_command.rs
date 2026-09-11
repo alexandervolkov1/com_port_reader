@@ -15,6 +15,7 @@ use crate::{
         ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewController, ReferenceKind,
         ReferenceSource,
     },
+    scenario::ScenarioCommand,
     signal_processing::{ControllerRequestError, SignalFilterDefinition},
 };
 
@@ -421,6 +422,12 @@ impl From<ControllerCommand> for UserCommand {
     }
 }
 
+impl From<ScenarioCommand> for UserCommand {
+    fn from(command: ScenarioCommand) -> Self {
+        Self::Scenario(command)
+    }
+}
+
 #[derive(Debug)]
 pub enum UserCommand {
     Acquisition(AcquisitionCommand),
@@ -429,6 +436,7 @@ pub enum UserCommand {
     Serial(SerialCommand),
     Series(SeriesCommand),
     Controller(ControllerCommand),
+    Scenario(ScenarioCommand),
 
     Log { message: String },
 }

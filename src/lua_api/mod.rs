@@ -2,6 +2,7 @@ mod controllers;
 mod conversion;
 mod filters;
 mod metakon;
+mod scenarios;
 mod series;
 mod virtual_instrument;
 
@@ -19,6 +20,7 @@ use self::{
 use self::{
     filters::{register_add_filter, register_set_filter},
     metakon::register_metakon_controller,
+    scenarios::register_scenario,
     series::{
         connection_id_from_options, register_add_serial, register_delete_series,
         register_rename_series, register_retry_series, register_set_series_color,
@@ -66,6 +68,8 @@ pub fn install(
     )?;
 
     register_log(lua, &app, command_sender.clone())?;
+
+    register_scenario(lua, &app, command_sender.clone())?;
 
     register_add_serial(
         lua,

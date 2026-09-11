@@ -1,0 +1,443 @@
+use std::{
+    collections::HashMap,
+    fmt,
+    time::{Duration, Instant},
+};
+
+use crossbeam_channel::{Receiver, Sender, unbounded};
+
+use crate::{
+    app_log::LogHandle,
+    application_event::ApplicationEvent,
+    lua_worker::{LuaWorkerHandle, LuaWorkerHandleError},
+};
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ScenarioId(String);
+
+impl ScenarioId {
+    pub(crate) fn new(value: impl Into<String>) -> Result<Self, ScenarioDefinitionError> {
+        let value = value.into();
+        let mut characters = value.chars();
+        let valid_first = characters
+            .next()
+            .is_some_and(|character| character.is_ascii_alphabetic() || character == '_');
+        let valid_remaining =
+            characters.all(|character| character.is_ascii_alphanumeric() || character == '_');
+
+        if !valid_first || !valid_remaining {
+            return Err(ScenarioDefinitionError(format!(
+                "Invalid scenario id '{value}': use an ASCII letter or underscore first, followed by letters, digits or underscores",
+            )));
+        }
+
+        Ok(Self(value))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ScenarioCommand {
+    Register {
+        id: ScenarioId,
+    },
+    After {
+        id: ScenarioId,
+        delay: Duration,
+        callback: String,
+    },
+    When {
+        id: ScenarioId,
+        condition: ScenarioCondition,
+        callback: String,
+    },
+    Cancel {
+        id: ScenarioId,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ThresholdDirection {
+    Above,
+    Below,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ScenarioCondition {
+    pub(crate) series: String,
+    pub(crate) direction: ThresholdDirection,
+    pub(crate) threshold: f64,
+    pub(crate) hold: Duration,
+    pub(crate) hysteresis: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ScenarioCallbackInvocation {
+    scenario_id: ScenarioId,
+    callback: String,
+}
+
+impl ScenarioCallbackInvocation {
+    pub(crate) fn new(scenario_id: ScenarioId, callback: String) -> Self {
+        Self {
+            scenario_id,
+            callback,
+        }
+    }
+
+    pub(crate) fn scenario_id(&self) -> &ScenarioId {
+        &self.scenario_id
+    }
+
+    pub(crate) fn callback(&self) -> &str {
+        &self.callback
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ScenarioCallbackResult {
+    pub(crate) invocation: ScenarioCallbackInvocation,
+    pub(crate) error: Option<String>,
+}
+
+struct ScenarioState {
+    timers: Vec<ScenarioTimer>,
+    conditions: Vec<ScenarioConditionState>,
+}
+
+impl ScenarioState {
+    fn new() -> Self {
+        Self {
+            timers: Vec::new(),
+            conditions: Vec::new(),
+        }
+    }
+}
+
+struct ScenarioTimer {
+    deadline: Instant,
+    callback: String,
+}
+
+struct ScenarioConditionState {
+    condition: ScenarioCondition,
+    callback: String,
+    matching_since: Option<Instant>,
+    armed: bool,
+}
+
+impl ScenarioConditionState {
+    fn new(condition: ScenarioCondition, callback: String) -> Self {
+        Self {
+            condition,
+            callback,
+            matching_since: None,
+            armed: true,
+        }
+    }
+
+    fn update(&mut self, value: f64, now: Instant) -> bool {
+        let matching = match self.condition.direction {
+            ThresholdDirection::Above => value > self.condition.threshold,
+            ThresholdDirection::Below => value < self.condition.threshold,
+        };
+        let rearmed = match self.condition.direction {
+            ThresholdDirection::Above => {
+                value <= self.condition.threshold - self.condition.hysteresis
+            }
+            ThresholdDirection::Below => {
+                value >= self.condition.threshold + self.condition.hysteresis
+            }
+        };
+
+        if rearmed {
+            self.armed = true;
+            self.matching_since = None;
+            return false;
+        }
+
+        if !self.armed {
+            return false;
+        }
+
+        if matching {
+            self.matching_since.get_or_insert(now);
+        }
+
+        let Some(matching_since) = self.matching_since else {
+            return false;
+        };
+
+        if now.duration_since(matching_since) >= self.condition.hold {
+            self.armed = false;
+            self.matching_since = None;
+            return true;
+        }
+
+        false
+    }
+}
+
+pub(crate) struct ScenarioService {
+    scenarios: HashMap<ScenarioId, ScenarioState>,
+    application_events: Receiver<ApplicationEvent>,
+    callback_results: Receiver<ScenarioCallbackResult>,
+    callback_result_sender: Sender<ScenarioCallbackResult>,
+    lua: LuaWorkerHandle,
+    log: LogHandle,
+}
+
+impl ScenarioService {
+    pub(crate) fn new(
+        application_events: Receiver<ApplicationEvent>,
+        lua: LuaWorkerHandle,
+        log: LogHandle,
+    ) -> Self {
+        let (callback_result_sender, callback_results) = unbounded();
+
+        Self {
+            scenarios: HashMap::new(),
+            application_events,
+            callback_results,
+            callback_result_sender,
+            lua,
+            log,
+        }
+    }
+
+    pub(crate) fn execute(&mut self, command: ScenarioCommand) {
+        match command {
+            ScenarioCommand::Register { id } => {
+                let replaced = self
+                    .scenarios
+                    .insert(id.clone(), ScenarioState::new())
+                    .is_some();
+                if replaced {
+                    self.log.info(format!(
+                        "Scenario '{}' restarted; previous tasks were cancelled.",
+                        id.as_str(),
+                    ));
+                } else {
+                    self.log
+                        .info(format!("Scenario '{}' started.", id.as_str()));
+                }
+            }
+
+            ScenarioCommand::After {
+                id,
+                delay,
+                callback,
+            } => {
+                let Some(scenario) = self.scenarios.get_mut(&id) else {
+                    self.unknown_scenario(&id);
+                    return;
+                };
+                scenario.timers.push(ScenarioTimer {
+                    deadline: Instant::now() + delay,
+                    callback,
+                });
+            }
+
+            ScenarioCommand::When {
+                id,
+                condition,
+                callback,
+            } => {
+                let Some(scenario) = self.scenarios.get_mut(&id) else {
+                    self.unknown_scenario(&id);
+                    return;
+                };
+                scenario
+                    .conditions
+                    .push(ScenarioConditionState::new(condition, callback));
+            }
+
+            ScenarioCommand::Cancel { id } => {
+                if self.scenarios.remove(&id).is_some() {
+                    self.log
+                        .info(format!("Scenario '{}' cancelled.", id.as_str()));
+                } else {
+                    self.unknown_scenario(&id);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn poll(&mut self) {
+        self.poll_callback_results();
+
+        let now = Instant::now();
+        let events = self.application_events.try_iter().collect::<Vec<_>>();
+        let mut callbacks = Vec::new();
+
+        for (id, scenario) in &mut self.scenarios {
+            scenario.timers.retain(|timer| {
+                if timer.deadline <= now {
+                    callbacks.push((id.clone(), timer.callback.clone()));
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+
+        for event in events {
+            let ApplicationEvent::Measurements(measurements) = event else {
+                continue;
+            };
+
+            for measurement in measurements {
+                for (id, scenario) in &mut self.scenarios {
+                    scenario.conditions.retain_mut(|condition| {
+                        if condition.condition.series != measurement.series_name {
+                            return true;
+                        }
+
+                        if condition.update(measurement.value, now) {
+                            callbacks.push((id.clone(), condition.callback.clone()));
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                }
+            }
+        }
+
+        for (id, callback) in callbacks {
+            self.invoke_callback(id, callback);
+        }
+    }
+
+    fn poll_callback_results(&mut self) {
+        for result in self.callback_results.try_iter() {
+            let id = result.invocation.scenario_id().clone();
+            let callback = result.invocation.callback();
+
+            if let Some(error) = result.error {
+                self.scenarios.remove(&id);
+                self.log.error(format!(
+                    "Scenario '{}' callback '{callback}' failed; scenario stopped: {error}",
+                    id.as_str(),
+                ));
+            } else {
+                self.log.info(format!(
+                    "Scenario '{}' callback '{callback}' completed.",
+                    id.as_str(),
+                ));
+            }
+        }
+    }
+
+    fn invoke_callback(&mut self, id: ScenarioId, callback: String) {
+        let invocation = ScenarioCallbackInvocation::new(id.clone(), callback.clone());
+
+        if let Err(error) = self
+            .lua
+            .invoke_scenario_callback(invocation, self.callback_result_sender.clone())
+        {
+            self.stop_after_dispatch_failure(&id, &callback, error);
+            return;
+        }
+
+        self.log.info(format!(
+            "Scenario '{}' triggered callback '{callback}'.",
+            id.as_str(),
+        ));
+    }
+
+    fn stop_after_dispatch_failure(
+        &mut self,
+        id: &ScenarioId,
+        callback: &str,
+        error: LuaWorkerHandleError,
+    ) {
+        self.scenarios.remove(id);
+        self.log.error(format!(
+            "Scenario '{}' could not invoke callback '{callback}'; scenario stopped: {error}",
+            id.as_str(),
+        ));
+    }
+
+    fn unknown_scenario(&self, id: &ScenarioId) {
+        self.log.error(format!(
+            "Scenario '{}' is not registered; call app.scenario() first.",
+            id.as_str(),
+        ));
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ScenarioDefinitionError(String);
+
+impl fmt::Display for ScenarioDefinitionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ScenarioDefinitionError {}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::{ScenarioCondition, ScenarioConditionState, ThresholdDirection};
+
+    #[test]
+    fn triggers_above_threshold_after_hold_time() {
+        let start = Instant::now();
+        let mut state = ScenarioConditionState::new(
+            ScenarioCondition {
+                series: "temperature".to_owned(),
+                direction: ThresholdDirection::Above,
+                threshold: 150.0,
+                hold: Duration::from_secs(5),
+                hysteresis: 2.0,
+            },
+            "hold".to_owned(),
+        );
+
+        assert!(!state.update(151.0, start));
+        assert!(!state.update(151.0, start + Duration::from_secs(4)));
+        assert!(state.update(151.0, start + Duration::from_secs(5)));
+        assert!(!state.update(151.0, start + Duration::from_secs(6)));
+    }
+
+    #[test]
+    fn hysteresis_rearms_threshold_condition() {
+        let start = Instant::now();
+        let mut state = ScenarioConditionState::new(
+            ScenarioCondition {
+                series: "temperature".to_owned(),
+                direction: ThresholdDirection::Above,
+                threshold: 150.0,
+                hold: Duration::from_secs(5),
+                hysteresis: 2.0,
+            },
+            "hold".to_owned(),
+        );
+
+        assert!(!state.update(151.0, start));
+        assert!(!state.update(149.0, start + Duration::from_secs(4)));
+        assert!(state.update(149.0, start + Duration::from_secs(5)));
+
+        let mut state = ScenarioConditionState::new(
+            ScenarioCondition {
+                series: "temperature".to_owned(),
+                direction: ThresholdDirection::Above,
+                threshold: 150.0,
+                hold: Duration::from_secs(5),
+                hysteresis: 2.0,
+            },
+            "hold".to_owned(),
+        );
+        assert!(!state.update(151.0, start));
+        assert!(!state.update(148.0, start + Duration::from_secs(4)));
+        assert!(!state.update(151.0, start + Duration::from_secs(5)));
+        assert!(state.update(151.0, start + Duration::from_secs(10)));
+    }
+}

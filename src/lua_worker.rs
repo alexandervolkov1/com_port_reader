@@ -10,6 +10,7 @@ use crate::{
     application_definition::ApplicationDefinition,
     lua_application_script::{LuaApplicationEvent, LuaControlInvocation},
     lua_runtime::LuaRuntime,
+    scenario::{ScenarioCallbackInvocation, ScenarioCallbackResult},
     user_command::UserCommand,
 };
 
@@ -18,6 +19,10 @@ const COMMAND_CHANNEL_CAPACITY: usize = 32;
 enum LuaCommand {
     Execute(String),
     InvokeControlCallback(LuaControlInvocation),
+    InvokeScenarioCallback {
+        invocation: ScenarioCallbackInvocation,
+        result_sender: Sender<ScenarioCallbackResult>,
+    },
     Shutdown,
 }
 
@@ -44,6 +49,17 @@ impl LuaWorkerHandle {
         invocation: LuaControlInvocation,
     ) -> Result<(), LuaWorkerHandleError> {
         self.send(LuaCommand::InvokeControlCallback(invocation))
+    }
+
+    pub(crate) fn invoke_scenario_callback(
+        &self,
+        invocation: ScenarioCallbackInvocation,
+        result_sender: Sender<ScenarioCallbackResult>,
+    ) -> Result<(), LuaWorkerHandleError> {
+        self.send(LuaCommand::InvokeScenarioCallback {
+            invocation,
+            result_sender,
+        })
     }
 
     fn shutdown(&self) -> Result<(), LuaWorkerHandleError> {
@@ -215,6 +231,18 @@ fn run_lua_worker(
                 }
             }
 
+            LuaCommand::InvokeScenarioCallback {
+                invocation,
+                result_sender,
+            } => {
+                let error = runtime
+                    .invoke_scenario_callback(invocation.callback())
+                    .err()
+                    .map(|error| error.to_string());
+
+                let _ = result_sender.send(ScenarioCallbackResult { invocation, error });
+            }
+
             LuaCommand::Shutdown => break,
         }
     }
@@ -247,6 +275,7 @@ mod tests {
     use super::{LuaEvent, LuaWorker, load_application_scripts};
     use crate::{
         application_definition::ApplicationDefinition,
+        scenario::{ScenarioCallbackInvocation, ScenarioId},
         user_command::{AcquisitionCommand, UserCommand},
     };
 
@@ -318,6 +347,36 @@ mod tests {
             receive_event(&event_receiver),
             LuaEvent::ExecutionSucceeded(vec!["42".to_owned(),]),
         );
+    }
+
+    #[test]
+    fn invokes_scenario_callback_on_worker_thread() {
+        let (event_sender, event_receiver) = unbounded();
+        let worker = spawn_worker(event_sender, &event_receiver);
+        let handle = worker.handle();
+
+        handle
+            .execute("function scenario_callback() scenario_value = 42 end")
+            .unwrap();
+        assert_eq!(
+            receive_event(&event_receiver),
+            LuaEvent::ExecutionSucceeded(Vec::new()),
+        );
+
+        let (result_sender, result_receiver) = unbounded();
+        handle
+            .invoke_scenario_callback(
+                ScenarioCallbackInvocation::new(
+                    ScenarioId::new("test").unwrap(),
+                    "scenario_callback".to_owned(),
+                ),
+                result_sender,
+            )
+            .unwrap();
+
+        let result = result_receiver.recv_timeout(TEST_TIMEOUT).unwrap();
+        assert_eq!(result.error, None);
+        assert_eq!(result.invocation.callback(), "scenario_callback");
     }
 
     #[test]

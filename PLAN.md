@@ -1,5 +1,36 @@
 Архитектура сейчас выглядит здоровой. Большой рефакторинг уже дал результат: сервисы разделены, команды проходят через единый runtime, Lua изолирован в своём потоке, а безопасность управления сосредоточена в `output_control` и `process_control`. Ещё один общий «рефакторинг ради чистоты» я бы не делал.
 
+## Статус выполнения на 2026-09-11
+
+Завершены и сохранены отдельными коммитами:
+
+1. `1f32b27 feat: add declarative plot pane layout` — стабильные `PlotPaneKey`, декларативный `plot_panes`, совместимый default layout.
+2. `2e79c3c feat: assign new series to plot panes` — общий `SeriesPresentation { color, visible, pane }` для serial/instrument series, filters и controller diagnostics; проверка неизвестного `pane`.
+3. `753e363 feat: move series between plot panes` — `app.set_series_pane`, единое хранение назначения в `SeriesStore`, сохранение при rename и очистка назначения при удалении панели.
+4. `3d29d1a refactor: separate control state properties` — общие поля `ControlState` отделены от `Readout/Number/Toggle/Button`, `pending` остаётся независимым.
+5. `c3d112f feat: control panel enabled state from Lua` — immutable registry валидированных control metadata и `app.set_control_enabled(..., reason)`.
+6. `254b88a feat: publish application runtime events` — отдельный `ApplicationEventHub` для измерений и lifecycle действий `Requested/Applied/Failed`, независимый от SQLite/timeline.
+
+Текущий реализованный шаг, который следует проверить и закоммитить:
+
+- `ScenarioService`, `app.scenario({ id = ... })`, `scenario:after(...)`, `scenario:when(...)` и `scenario:cancel()`;
+- относительные таймеры и выдержки используют `Instant`;
+- пороговые условия поддерживают `above`/`below`, `for_seconds`, `hysteresis`, `edge = "rising"`;
+- Rust вызывает только короткий Lua callback; callback может быть global function либо однозначно найден в зарегистрированном application script;
+- ошибка callback останавливает сценарий;
+- смена runtime/profile уничтожает сервис и отменяет его задания;
+- запуск, callback, остановка и ошибки пишутся через `LogHandle`, то есть попадают в process log;
+- добавлены unit tests для Lua API, порогов/выдержки/гистерезиса и выполнения callback в Lua worker.
+
+Что осталось после этого коммита:
+
+1. Обновить `lua_types/app.d.lua` для `plot_panes`, `visible`, `pane`, `app.set_series_pane`, `app.set_control_enabled` и Scenario API.
+2. Обновить встроенную справку (English/Russian и примеры) теми же возможностями.
+3. Добавить end-to-end runtime test сценария с реальным потоком `ApplicationEvent::Measurements`.
+4. Если сценариям понадобится строить цепочку строго по результатам команд, добавить correlation между callback и созданными им action IDs. Сам поток `Requested/Applied/Failed` уже есть, но текущая первая версия сценария ещё не предоставляет Lua API ожидания `Applied`/обработки `Failed`.
+5. Абсолютный wall-clock запуск пока не реализован; текущий Lua API содержит только относительный `after` и измерительные условия.
+6. После документации снова выполнить полный `fmt/test/clippy/diff --check`, затем при необходимости Windows release build и ручную smoke-проверку профиля.
+
 Главная будущая точка роста — отделить конфигурацию представления от GUI-кода. Сейчас графики живут непосредственно в [plot_model.rs](/D:/rust/com_port_reader/src/components/plot_model.rs:41), панели управления — в [control_panel_model.rs](/D:/rust/com_port_reader/src/components/control_panel_model.rs:6), а события Lua разбирает сам [app.rs](/D:/rust/com_port_reader/src/app.rs:173). Для следующих двух функций это естественный архитектурный шов.
 
 ## 1. Панели графиков из Lua
