@@ -458,6 +458,12 @@ function Controller:reset() end
 ---@field hysteresis? number Non-negative rearming hysteresis. Default: 0.
 ---@field edge? '"rising"' Only rising-edge triggering is currently supported.
 
+---@class ScenarioRaceAlternative
+---@field callback string Global or unambiguous application-script callback name.
+---@field after? number Relative delay in seconds. Exactly one of after, at or when is required.
+---@field at? number Absolute UTC Unix timestamp. Exactly one of after, at or when is required.
+---@field when? ScenarioCondition Measurement condition. Exactly one of after, at or when is required.
+
 ---@class ScenarioEvent
 ---@field scenario_id string Scenario that produced the callback.
 ---@field callback string Callback name selected by the scenario.
@@ -506,6 +512,12 @@ function Scenario:at(unix_timestamp, callback) end
 ---@param condition ScenarioCondition
 ---@param callback string Global or unambiguous application-script callback name receiving a ScenarioMeasurementEvent.
 function Scenario:when(condition, callback) end
+
+---Schedules an atomic group of alternative one-shot triggers.
+---The first ready alternative in declaration order wins and all other
+---alternatives in the group are cancelled before its callback is dispatched.
+---@param alternatives ScenarioRaceAlternative[] Non-empty array.
+function Scenario:race(alternatives) end
 
 ---Cancels the scenario and all of its pending tasks.
 function Scenario:cancel() end

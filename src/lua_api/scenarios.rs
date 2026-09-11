@@ -5,7 +5,10 @@ use mlua::{Lua, Table, UserData, UserDataMethods, Value};
 
 use super::send_application_command;
 use crate::{
-    scenario::{ScenarioCommand, ScenarioCondition, ScenarioId, ThresholdDirection},
+    scenario::{
+        ScenarioCommand, ScenarioCondition, ScenarioId, ScenarioRaceAlternative,
+        ScenarioRaceTrigger, ThresholdDirection,
+    },
     user_command::UserCommand,
 };
 
@@ -96,6 +99,19 @@ impl UserData for LuaScenarioHandle {
             },
         );
 
+        methods.add_method("race", |_, scenario, alternatives: Table| {
+            let alternatives = parse_race(&alternatives)?;
+
+            send_application_command(
+                &scenario.command_sender,
+                ScenarioCommand::Race {
+                    id: scenario.id.clone(),
+                    alternatives,
+                }
+                .into(),
+            )
+        });
+
         methods.add_method("cancel", |_, scenario, ()| {
             send_application_command(
                 &scenario.command_sender,
@@ -108,6 +124,98 @@ impl UserData for LuaScenarioHandle {
 
         methods.add_method("id", |_, scenario, ()| Ok(scenario.id.as_str().to_owned()));
     }
+}
+
+fn parse_race(options: &Table) -> mlua::Result<Vec<ScenarioRaceAlternative>> {
+    let mut indexed_alternatives = Vec::new();
+
+    for pair in options.clone().pairs::<Value, Value>() {
+        let (key, value) = pair?;
+        let Value::Integer(index) = key else {
+            return Err(mlua::Error::RuntimeError(
+                "Scenario race must be an array without named keys".to_owned(),
+            ));
+        };
+        if index <= 0 {
+            return Err(mlua::Error::RuntimeError(
+                "Scenario race array indices must start at 1".to_owned(),
+            ));
+        }
+        let Value::Table(alternative) = value else {
+            return Err(mlua::Error::RuntimeError(format!(
+                "Scenario race alternative #{index} must be a table",
+            )));
+        };
+
+        indexed_alternatives.push((index, alternative));
+    }
+
+    indexed_alternatives.sort_by_key(|(index, _)| *index);
+
+    if indexed_alternatives.is_empty() {
+        return Err(mlua::Error::RuntimeError(
+            "Scenario race must contain at least one alternative".to_owned(),
+        ));
+    }
+
+    for (offset, (index, _)) in indexed_alternatives.iter().enumerate() {
+        let expected = i64::try_from(offset + 1).expect("race alternative index must fit i64");
+        if *index != expected {
+            return Err(mlua::Error::RuntimeError(
+                "Scenario race alternatives must use consecutive array indices starting at 1"
+                    .to_owned(),
+            ));
+        }
+    }
+
+    indexed_alternatives
+        .into_iter()
+        .map(|(_, alternative)| parse_race_alternative(&alternative))
+        .collect()
+}
+
+fn parse_race_alternative(options: &Table) -> mlua::Result<ScenarioRaceAlternative> {
+    validate_keys(
+        options,
+        "scenario race alternative",
+        &["after", "at", "when", "callback"],
+    )?;
+
+    let after = options.get::<Option<f64>>("after")?;
+    let at = options.get::<Option<f64>>("at")?;
+    let when = options.get::<Option<Table>>("when")?;
+    let trigger_count =
+        usize::from(after.is_some()) + usize::from(at.is_some()) + usize::from(when.is_some());
+
+    if trigger_count != 1 {
+        return Err(mlua::Error::RuntimeError(
+            "Scenario race alternative must define exactly one of 'after', 'at' or 'when'"
+                .to_owned(),
+        ));
+    }
+
+    let trigger = if let Some(seconds) = after {
+        ScenarioRaceTrigger::After {
+            delay: parse_duration(seconds, "Scenario race delay")?,
+        }
+    } else if let Some(timestamp) = at {
+        ScenarioRaceTrigger::At {
+            deadline: parse_unix_timestamp(timestamp)?,
+        }
+    } else {
+        ScenarioRaceTrigger::When {
+            condition: parse_condition(&when.expect("race trigger count was validated"))?,
+        }
+    };
+
+    Ok(ScenarioRaceAlternative {
+        trigger,
+        callback: validate_callback(required_string(
+            options,
+            "callback",
+            "scenario race alternative",
+        )?)?,
+    })
 }
 
 fn parse_condition(options: &Table) -> mlua::Result<ScenarioCondition> {
@@ -231,7 +339,7 @@ mod tests {
 
     use super::register_scenario;
     use crate::{
-        scenario::{ScenarioCommand, ThresholdDirection},
+        scenario::{ScenarioCommand, ScenarioRaceTrigger, ThresholdDirection},
         user_command::UserCommand,
     };
 
@@ -255,6 +363,23 @@ mod tests {
                     hysteresis = 2.0,
                     edge = "rising",
                 }, "switch_to_hold")
+                scenario:race({
+                    {
+                        when = {
+                            series = "temperature",
+                            above = 180.0,
+                        },
+                        callback = "temperature_reached",
+                    },
+                    {
+                        after = 30.0,
+                        callback = "temperature_timeout",
+                    },
+                    {
+                        at = 1700000030.25,
+                        callback = "absolute_timeout",
+                    },
+                })
                 scenario:cancel()
             "#,
         )
@@ -297,6 +422,32 @@ mod tests {
         assert_eq!(condition.hold, Duration::from_secs(5));
         assert_eq!(condition.hysteresis, 2.0);
         assert_eq!(callback, "switch_to_hold");
+
+        let UserCommand::Scenario(ScenarioCommand::Race { id, alternatives }) =
+            receiver.try_recv().unwrap()
+        else {
+            panic!("expected scenario race command");
+        };
+        assert_eq!(id.as_str(), "heat_cycle");
+        assert_eq!(alternatives.len(), 3);
+        assert_eq!(alternatives[0].callback, "temperature_reached");
+        assert!(matches!(
+            &alternatives[0].trigger,
+            ScenarioRaceTrigger::When { condition }
+                if condition.series == "temperature"
+                    && condition.direction == ThresholdDirection::Above
+                    && condition.threshold == 180.0
+        ));
+        assert!(matches!(
+            alternatives[1].trigger,
+            ScenarioRaceTrigger::After { delay } if delay == Duration::from_secs(30)
+        ));
+        assert!(matches!(
+            alternatives[2].trigger,
+            ScenarioRaceTrigger::At { deadline }
+                if deadline == SystemTime::UNIX_EPOCH
+                    + Duration::from_millis(1_700_000_030_250)
+        ));
 
         assert!(matches!(
             receiver.try_recv().unwrap(),
@@ -357,5 +508,51 @@ mod tests {
                 .to_string()
                 .contains("must be finite and non-negative")
         );
+    }
+
+    #[test]
+    fn rejects_empty_scenario_race() {
+        let error = execute_invalid_race("scenario:race({})");
+
+        assert!(error.contains("must contain at least one alternative"));
+    }
+
+    #[test]
+    fn rejects_conflicting_scenario_race_triggers() {
+        let error = execute_invalid_race(
+            r#"
+                scenario:race({
+                    { after = 1.0, at = 1700000000.0, callback = "callback" },
+                })
+            "#,
+        );
+
+        assert!(error.contains("exactly one of 'after', 'at' or 'when'"));
+    }
+
+    #[test]
+    fn rejects_sparse_scenario_race() {
+        let error = execute_invalid_race(
+            r#"
+                scenario:race({
+                    [2] = { after = 1.0, callback = "callback" },
+                })
+            "#,
+        );
+
+        assert!(error.contains("consecutive array indices"));
+    }
+
+    fn execute_invalid_race(source: &str) -> String {
+        let lua = Lua::new();
+        let app = lua.create_table().unwrap();
+        let (sender, _receiver) = unbounded();
+        register_scenario(&lua, &app, sender).unwrap();
+        lua.globals().set("app", app).unwrap();
+        lua.load("scenario = app.scenario({ id = 'heat_cycle' })")
+            .exec()
+            .unwrap();
+
+        lua.load(source).exec().unwrap_err().to_string()
     }
 }

@@ -10,7 +10,7 @@ use crate::{
     app_log::LogHandle,
     application_event::ApplicationEvent,
     lua_worker::{LuaWorkerHandle, LuaWorkerHandleError},
-    process_recorder::ProcessActionId,
+    process_recorder::{ProcessActionId, ProcessMeasurement},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -60,9 +60,26 @@ pub(crate) enum ScenarioCommand {
         condition: ScenarioCondition,
         callback: String,
     },
+    Race {
+        id: ScenarioId,
+        alternatives: Vec<ScenarioRaceAlternative>,
+    },
     Cancel {
         id: ScenarioId,
     },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ScenarioRaceAlternative {
+    pub(crate) trigger: ScenarioRaceTrigger,
+    pub(crate) callback: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ScenarioRaceTrigger {
+    After { delay: Duration },
+    At { deadline: SystemTime },
+    When { condition: ScenarioCondition },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -111,6 +128,30 @@ impl ScenarioCallbackTrigger {
             Self::Timer { .. } => "timer",
             Self::AbsoluteTime { .. } => "absolute_time",
             Self::Measurement { .. } => "measurement",
+        }
+    }
+
+    fn reason(&self) -> String {
+        match self {
+            Self::Timer { delay } => {
+                format!("timer elapsed after {} seconds", delay.as_secs_f64())
+            }
+            Self::AbsoluteTime { scheduled_at } => {
+                let timestamp = scheduled_at
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map_or(0.0, |duration| duration.as_secs_f64());
+                format!("absolute timer reached Unix timestamp {timestamp}")
+            }
+            Self::Measurement {
+                series,
+                value,
+                condition,
+                ..
+            } => format!(
+                "measurement '{series}'={value} satisfied {} {}",
+                condition.direction.as_str(),
+                condition.threshold,
+            ),
         }
     }
 }
@@ -164,6 +205,7 @@ pub(crate) struct ScenarioCallbackResult {
 struct ScenarioState {
     timers: Vec<ScenarioTimer>,
     conditions: Vec<ScenarioConditionState>,
+    races: Vec<ScenarioRaceState>,
     callback_in_flight: bool,
     pending_actions: HashSet<ProcessActionId>,
     waiting_callback: Option<String>,
@@ -174,6 +216,7 @@ impl ScenarioState {
         Self {
             timers: Vec::new(),
             conditions: Vec::new(),
+            races: Vec::new(),
             callback_in_flight: false,
             pending_actions: HashSet::new(),
             waiting_callback: None,
@@ -183,6 +226,21 @@ impl ScenarioState {
     fn is_busy(&self) -> bool {
         self.callback_in_flight || !self.pending_actions.is_empty()
     }
+
+    fn poll_race(
+        &mut self,
+        now: Instant,
+        measurements: &[ProcessMeasurement],
+    ) -> Option<ScenarioRaceWinner> {
+        let (race_index, winner) = self
+            .races
+            .iter_mut()
+            .enumerate()
+            .find_map(|(index, race)| race.poll(now, measurements).map(|winner| (index, winner)))?;
+
+        self.races.remove(race_index);
+        Some(winner)
+    }
 }
 
 struct ScenarioTimer {
@@ -191,11 +249,129 @@ struct ScenarioTimer {
     trigger: ScenarioCallbackTrigger,
 }
 
+impl ScenarioTimer {
+    fn after(now: Instant, delay: Duration, callback: String) -> Option<Self> {
+        Some(Self {
+            deadline: now.checked_add(delay)?,
+            callback,
+            trigger: ScenarioCallbackTrigger::Timer { delay },
+        })
+    }
+
+    fn at(
+        now: Instant,
+        system_now: SystemTime,
+        scheduled_at: SystemTime,
+        callback: String,
+    ) -> Option<Self> {
+        let delay = scheduled_at
+            .duration_since(system_now)
+            .unwrap_or(Duration::ZERO);
+
+        Some(Self {
+            deadline: now.checked_add(delay)?,
+            callback,
+            trigger: ScenarioCallbackTrigger::AbsoluteTime { scheduled_at },
+        })
+    }
+}
+
 struct ScenarioConditionState {
     condition: ScenarioCondition,
     callback: String,
     matching_since: Option<Instant>,
     armed: bool,
+}
+
+struct ScenarioRaceState {
+    alternatives: Vec<ScenarioRaceAlternativeState>,
+}
+
+enum ScenarioRaceAlternativeState {
+    Timer(ScenarioTimer),
+    Condition(ScenarioConditionState),
+}
+
+struct ScenarioRaceWinner {
+    alternative_index: usize,
+    callback: String,
+    trigger: ScenarioCallbackTrigger,
+}
+
+impl ScenarioRaceState {
+    fn new(
+        alternatives: Vec<ScenarioRaceAlternative>,
+        now: Instant,
+        system_now: SystemTime,
+    ) -> Option<Self> {
+        if alternatives.is_empty() {
+            return None;
+        }
+
+        let alternatives = alternatives
+            .into_iter()
+            .map(|alternative| match alternative.trigger {
+                ScenarioRaceTrigger::After { delay } => {
+                    ScenarioTimer::after(now, delay, alternative.callback)
+                        .map(ScenarioRaceAlternativeState::Timer)
+                }
+                ScenarioRaceTrigger::At { deadline } => {
+                    ScenarioTimer::at(now, system_now, deadline, alternative.callback)
+                        .map(ScenarioRaceAlternativeState::Timer)
+                }
+                ScenarioRaceTrigger::When { condition } => {
+                    Some(ScenarioRaceAlternativeState::Condition(
+                        ScenarioConditionState::new(condition, alternative.callback),
+                    ))
+                }
+            })
+            .collect::<Option<Vec<_>>>()?;
+
+        Some(Self { alternatives })
+    }
+
+    fn poll(
+        &mut self,
+        now: Instant,
+        measurements: &[ProcessMeasurement],
+    ) -> Option<ScenarioRaceWinner> {
+        for (alternative_index, alternative) in self.alternatives.iter_mut().enumerate() {
+            let ready = match alternative {
+                ScenarioRaceAlternativeState::Timer(timer) => {
+                    (timer.deadline <= now).then(|| (timer.callback.clone(), timer.trigger.clone()))
+                }
+                ScenarioRaceAlternativeState::Condition(condition) => {
+                    let series = condition.condition.series.clone();
+                    measurements
+                        .iter()
+                        .filter(|measurement| series == measurement.series_name)
+                        .find_map(|measurement| {
+                            condition.update(measurement.value, now).then(|| {
+                                (
+                                    condition.callback.clone(),
+                                    ScenarioCallbackTrigger::Measurement {
+                                        series: measurement.series_name.clone(),
+                                        value: measurement.value,
+                                        timestamp: measurement.timestamp,
+                                        condition: condition.condition.clone(),
+                                    },
+                                )
+                            })
+                        })
+                }
+            };
+
+            if let Some((callback, trigger)) = ready {
+                return Some(ScenarioRaceWinner {
+                    alternative_index,
+                    callback,
+                    trigger,
+                });
+            }
+        }
+
+        None
+    }
 }
 
 impl ScenarioConditionState {
@@ -304,11 +480,14 @@ impl ScenarioService {
                     self.unknown_scenario(&id);
                     return;
                 };
-                scenario.timers.push(ScenarioTimer {
-                    deadline: Instant::now() + delay,
-                    callback,
-                    trigger: ScenarioCallbackTrigger::Timer { delay },
-                });
+                let Some(timer) = ScenarioTimer::after(Instant::now(), delay, callback) else {
+                    self.log.error(format!(
+                        "Scenario '{}' delay is outside the supported range.",
+                        id.as_str(),
+                    ));
+                    return;
+                };
+                scenario.timers.push(timer);
             }
 
             ScenarioCommand::At {
@@ -320,22 +499,16 @@ impl ScenarioService {
                     self.unknown_scenario(&id);
                     return;
                 };
-                let scheduled_at = deadline;
-                let delay = scheduled_at
-                    .duration_since(SystemTime::now())
-                    .unwrap_or(Duration::ZERO);
-                let Some(deadline) = Instant::now().checked_add(delay) else {
+                let Some(timer) =
+                    ScenarioTimer::at(Instant::now(), SystemTime::now(), deadline, callback)
+                else {
                     self.log.error(format!(
                         "Scenario '{}' absolute deadline is outside the supported range.",
                         id.as_str(),
                     ));
                     return;
                 };
-                scenario.timers.push(ScenarioTimer {
-                    deadline,
-                    callback,
-                    trigger: ScenarioCallbackTrigger::AbsoluteTime { scheduled_at },
-                });
+                scenario.timers.push(timer);
             }
 
             ScenarioCommand::When {
@@ -350,6 +523,23 @@ impl ScenarioService {
                 scenario
                     .conditions
                     .push(ScenarioConditionState::new(condition, callback));
+            }
+
+            ScenarioCommand::Race { id, alternatives } => {
+                let Some(scenario) = self.scenarios.get_mut(&id) else {
+                    self.unknown_scenario(&id);
+                    return;
+                };
+                let Some(race) =
+                    ScenarioRaceState::new(alternatives, Instant::now(), SystemTime::now())
+                else {
+                    self.log.error(format!(
+                        "Scenario '{}' race is empty or contains a deadline outside the supported range.",
+                        id.as_str(),
+                    ));
+                    return;
+                };
+                scenario.races.push(race);
             }
 
             ScenarioCommand::Cancel { id } => {
@@ -381,8 +571,16 @@ impl ScenarioService {
         let now = Instant::now();
         let fired_at = SystemTime::now();
         let events = self.application_events.try_iter().collect::<Vec<_>>();
+        let race_eligible = self
+            .scenarios
+            .iter()
+            .filter(|(_, scenario)| !scenario.is_busy())
+            .map(|(id, _)| id.clone())
+            .collect::<HashSet<_>>();
         let mut callbacks = Vec::new();
         let mut scheduled = HashSet::new();
+        let mut measurements = Vec::new();
+        let mut race_winners = Vec::new();
 
         for (id, scenario) in &mut self.scenarios {
             if scenario.is_busy() {
@@ -407,8 +605,8 @@ impl ScenarioService {
 
         for event in events {
             match event {
-                ApplicationEvent::Measurements(measurements) => {
-                    for measurement in measurements {
+                ApplicationEvent::Measurements(event_measurements) => {
+                    for measurement in &event_measurements {
                         for (id, scenario) in &mut self.scenarios {
                             if scenario.is_busy() || scheduled.contains(id) {
                                 continue;
@@ -439,6 +637,8 @@ impl ScenarioService {
                             });
                         }
                     }
+
+                    measurements.extend(event_measurements);
                 }
 
                 ApplicationEvent::ActionApplied { action_id, .. } => {
@@ -451,6 +651,39 @@ impl ScenarioService {
 
                 ApplicationEvent::ActionRequested { .. } => {}
             }
+        }
+
+        for (id, scenario) in &mut self.scenarios {
+            if !race_eligible.contains(id) || scenario.is_busy() || scheduled.contains(id) {
+                continue;
+            }
+
+            let Some(winner) = scenario.poll_race(now, &measurements) else {
+                continue;
+            };
+
+            race_winners.push((
+                id.clone(),
+                winner.alternative_index,
+                winner.callback.clone(),
+                winner.trigger.reason(),
+            ));
+            callbacks.push(ScenarioCallbackInvocation::new(
+                id.clone(),
+                winner.callback,
+                fired_at,
+                winner.trigger,
+            ));
+            scheduled.insert(id.clone());
+        }
+
+        for (id, alternative_index, callback, reason) in race_winners {
+            self.log.info(format!(
+                "Scenario '{}' race selected alternative #{} callback '{}': {reason}.",
+                id.as_str(),
+                alternative_index + 1,
+                callback,
+            ));
         }
 
         for invocation in callbacks {
@@ -578,9 +811,14 @@ impl std::error::Error for ScenarioDefinitionError {}
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime};
 
-    use super::{ScenarioCondition, ScenarioConditionState, ThresholdDirection};
+    use super::{
+        ScenarioCallbackTrigger, ScenarioCondition, ScenarioConditionState,
+        ScenarioRaceAlternative, ScenarioRaceState, ScenarioRaceTrigger, ScenarioState,
+        ThresholdDirection,
+    };
+    use crate::{connection::ConnectionId, data::SeriesId, process_recorder::ProcessMeasurement};
 
     #[test]
     fn triggers_above_threshold_after_hold_time() {
@@ -634,5 +872,68 @@ mod tests {
         assert!(!state.update(148.0, start + Duration::from_secs(4)));
         assert!(!state.update(151.0, start + Duration::from_secs(5)));
         assert!(state.update(151.0, start + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn race_uses_declaration_order_and_cancels_losers() {
+        let now = Instant::now();
+        let condition = ScenarioCondition {
+            series: "temperature".to_owned(),
+            direction: ThresholdDirection::Above,
+            threshold: 150.0,
+            hold: Duration::ZERO,
+            hysteresis: 0.0,
+        };
+        let mut scenario = ScenarioState::new();
+        scenario.races.push(
+            ScenarioRaceState::new(
+                vec![
+                    ScenarioRaceAlternative {
+                        trigger: ScenarioRaceTrigger::When { condition },
+                        callback: "measurement_won".to_owned(),
+                    },
+                    ScenarioRaceAlternative {
+                        trigger: ScenarioRaceTrigger::After {
+                            delay: Duration::ZERO,
+                        },
+                        callback: "timer_lost".to_owned(),
+                    },
+                ],
+                now,
+                SystemTime::now(),
+            )
+            .unwrap(),
+        );
+        let measurements = vec![ProcessMeasurement {
+            connection_id: ConnectionId::PRIMARY,
+            series_id: SeriesId::new(1),
+            series_name: "temperature".to_owned(),
+            timestamp: 10.0,
+            value: 151.0,
+        }];
+
+        let winner = scenario.poll_race(now, &measurements).unwrap();
+
+        assert_eq!(winner.alternative_index, 0);
+        assert_eq!(winner.callback, "measurement_won");
+        assert!(matches!(
+            winner.trigger,
+            ScenarioCallbackTrigger::Measurement { .. }
+        ));
+        assert!(scenario.races.is_empty());
+        assert!(
+            scenario
+                .poll_race(now + Duration::from_secs(1), &[])
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn race_reports_winning_trigger_reason() {
+        let trigger = ScenarioCallbackTrigger::Timer {
+            delay: Duration::from_secs(30),
+        };
+
+        assert_eq!(trigger.reason(), "timer elapsed after 30 seconds");
     }
 }
