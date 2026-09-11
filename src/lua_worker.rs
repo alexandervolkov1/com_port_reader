@@ -236,7 +236,7 @@ fn run_lua_worker(
                 result_sender,
             } => {
                 let error = runtime
-                    .invoke_scenario_callback(invocation.callback())
+                    .invoke_scenario_callback(&invocation)
                     .err()
                     .map(|error| error.to_string());
 
@@ -377,6 +377,63 @@ mod tests {
         let result = result_receiver.recv_timeout(TEST_TIMEOUT).unwrap();
         assert_eq!(result.error, None);
         assert_eq!(result.invocation.callback(), "scenario_callback");
+    }
+
+    #[test]
+    fn tags_commands_created_by_scenario_callbacks() {
+        let (event_sender, event_receiver) = unbounded();
+        let (application_command_sender, application_command_receiver) = unbounded();
+        let (application_event_sender, _) = unbounded();
+        let worker = LuaWorker::spawn(
+            event_sender,
+            application_command_sender,
+            application_event_sender,
+            ApplicationDefinition::default(),
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        assert_initialized(&event_receiver);
+
+        let handle = worker.handle();
+        handle
+            .execute("function scenario_callback() app.start() end")
+            .unwrap();
+        assert_eq!(
+            receive_event(&event_receiver),
+            LuaEvent::ExecutionSucceeded(Vec::new()),
+        );
+
+        let (result_sender, result_receiver) = unbounded();
+        handle
+            .invoke_scenario_callback(
+                ScenarioCallbackInvocation::new(
+                    ScenarioId::new("heat_cycle").unwrap(),
+                    "scenario_callback".to_owned(),
+                ),
+                result_sender,
+            )
+            .unwrap();
+        assert_eq!(
+            result_receiver.recv_timeout(TEST_TIMEOUT).unwrap().error,
+            None,
+        );
+
+        let command = application_command_receiver
+            .recv_timeout(TEST_TIMEOUT)
+            .unwrap();
+        let UserCommand::ScenarioStep {
+            scenario_id,
+            command,
+        } = command
+        else {
+            panic!("scenario callback command was not tagged");
+        };
+        assert_eq!(scenario_id.as_str(), "heat_cycle");
+        assert!(matches!(
+            *command,
+            UserCommand::Acquisition(AcquisitionCommand::Start)
+        ));
     }
 
     #[test]

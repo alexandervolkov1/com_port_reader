@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt,
     time::{Duration, Instant},
 };
@@ -10,6 +10,7 @@ use crate::{
     app_log::LogHandle,
     application_event::ApplicationEvent,
     lua_worker::{LuaWorkerHandle, LuaWorkerHandleError},
+    process_recorder::ProcessActionId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -106,6 +107,9 @@ pub(crate) struct ScenarioCallbackResult {
 struct ScenarioState {
     timers: Vec<ScenarioTimer>,
     conditions: Vec<ScenarioConditionState>,
+    callback_in_flight: bool,
+    pending_actions: HashSet<ProcessActionId>,
+    waiting_callback: Option<String>,
 }
 
 impl ScenarioState {
@@ -113,7 +117,14 @@ impl ScenarioState {
         Self {
             timers: Vec::new(),
             conditions: Vec::new(),
+            callback_in_flight: false,
+            pending_actions: HashSet::new(),
+            waiting_callback: None,
         }
+    }
+
+    fn is_busy(&self) -> bool {
+        self.callback_in_flight || !self.pending_actions.is_empty()
     }
 }
 
@@ -266,17 +277,35 @@ impl ScenarioService {
         }
     }
 
+    pub(crate) fn track_action(&mut self, id: &ScenarioId, action_id: ProcessActionId) {
+        if let Some(scenario) = self.scenarios.get_mut(id) {
+            scenario.pending_actions.insert(action_id);
+        } else {
+            self.log.error(format!(
+                "Scenario '{}' produced action {} after it stopped.",
+                id.as_str(),
+                action_id.value(),
+            ));
+        }
+    }
+
     pub(crate) fn poll(&mut self) {
         self.poll_callback_results();
 
         let now = Instant::now();
         let events = self.application_events.try_iter().collect::<Vec<_>>();
         let mut callbacks = Vec::new();
+        let mut scheduled = HashSet::new();
 
         for (id, scenario) in &mut self.scenarios {
+            if scenario.is_busy() {
+                continue;
+            }
+
             scenario.timers.retain(|timer| {
-                if timer.deadline <= now {
+                if timer.deadline <= now && !scheduled.contains(id) {
                     callbacks.push((id.clone(), timer.callback.clone()));
+                    scheduled.insert(id.clone());
                     false
                 } else {
                     true
@@ -285,25 +314,40 @@ impl ScenarioService {
         }
 
         for event in events {
-            let ApplicationEvent::Measurements(measurements) = event else {
-                continue;
-            };
+            match event {
+                ApplicationEvent::Measurements(measurements) => {
+                    for measurement in measurements {
+                        for (id, scenario) in &mut self.scenarios {
+                            if scenario.is_busy() || scheduled.contains(id) {
+                                continue;
+                            }
 
-            for measurement in measurements {
-                for (id, scenario) in &mut self.scenarios {
-                    scenario.conditions.retain_mut(|condition| {
-                        if condition.condition.series != measurement.series_name {
-                            return true;
-                        }
+                            scenario.conditions.retain_mut(|condition| {
+                                if condition.condition.series != measurement.series_name {
+                                    return true;
+                                }
 
-                        if condition.update(measurement.value, now) {
-                            callbacks.push((id.clone(), condition.callback.clone()));
-                            false
-                        } else {
-                            true
+                                if condition.update(measurement.value, now) {
+                                    callbacks.push((id.clone(), condition.callback.clone()));
+                                    scheduled.insert(id.clone());
+                                    false
+                                } else {
+                                    true
+                                }
+                            });
                         }
-                    });
+                    }
                 }
+
+                ApplicationEvent::ActionApplied { action_id, .. } => {
+                    self.action_applied(action_id);
+                }
+
+                ApplicationEvent::ActionFailed { action_id, error } => {
+                    self.action_failed(action_id, error);
+                }
+
+                ApplicationEvent::ActionRequested { .. } => {}
             }
         }
 
@@ -315,7 +359,7 @@ impl ScenarioService {
     fn poll_callback_results(&mut self) {
         for result in self.callback_results.try_iter() {
             let id = result.invocation.scenario_id().clone();
-            let callback = result.invocation.callback();
+            let callback = result.invocation.callback().to_owned();
 
             if let Some(error) = result.error {
                 self.scenarios.remove(&id);
@@ -323,16 +367,64 @@ impl ScenarioService {
                     "Scenario '{}' callback '{callback}' failed; scenario stopped: {error}",
                     id.as_str(),
                 ));
-            } else {
+            } else if let Some(scenario) = self.scenarios.get_mut(&id) {
+                scenario.callback_in_flight = false;
+                if scenario.pending_actions.is_empty() {
+                    self.log.info(format!(
+                        "Scenario '{}' callback '{callback}' completed.",
+                        id.as_str(),
+                    ));
+                } else {
+                    scenario.waiting_callback = Some(callback);
+                }
+            }
+        }
+    }
+
+    fn action_applied(&mut self, action_id: ProcessActionId) {
+        for (id, scenario) in &mut self.scenarios {
+            if !scenario.pending_actions.remove(&action_id) {
+                continue;
+            }
+
+            if scenario.pending_actions.is_empty()
+                && !scenario.callback_in_flight
+                && let Some(callback) = scenario.waiting_callback.take()
+            {
                 self.log.info(format!(
                     "Scenario '{}' callback '{callback}' completed.",
                     id.as_str(),
                 ));
             }
+
+            return;
+        }
+    }
+
+    fn action_failed(&mut self, action_id: ProcessActionId, error: String) {
+        let failed_scenario = self.scenarios.iter().find_map(|(id, scenario)| {
+            scenario
+                .pending_actions
+                .contains(&action_id)
+                .then(|| id.clone())
+        });
+
+        if let Some(id) = failed_scenario {
+            self.scenarios.remove(&id);
+            self.log.error(format!(
+                "Scenario '{}' action {} failed; scenario stopped: {error}",
+                id.as_str(),
+                action_id.value(),
+            ));
         }
     }
 
     fn invoke_callback(&mut self, id: ScenarioId, callback: String) {
+        let Some(scenario) = self.scenarios.get_mut(&id) else {
+            return;
+        };
+        scenario.callback_in_flight = true;
+
         let invocation = ScenarioCallbackInvocation::new(id.clone(), callback.clone());
 
         if let Err(error) = self

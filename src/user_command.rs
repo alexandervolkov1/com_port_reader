@@ -437,8 +437,14 @@ pub enum UserCommand {
     Series(SeriesCommand),
     Controller(ControllerCommand),
     Scenario(ScenarioCommand),
+    ScenarioStep {
+        scenario_id: crate::scenario::ScenarioId,
+        command: Box<UserCommand>,
+    },
 
-    Log { message: String },
+    Log {
+        message: String,
+    },
 }
 
 #[cfg(test)]

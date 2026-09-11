@@ -6,6 +6,8 @@ mod scenarios;
 mod series;
 mod virtual_instrument;
 
+use std::cell::RefCell;
+
 use crossbeam_channel::Sender;
 use mlua::{Lua, Table, Value};
 
@@ -32,10 +34,34 @@ use crate::{
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
     lua_application_script::LuaApplicationEvent,
+    scenario::ScenarioId,
     user_command::{
         AcquisitionCommand, EmulatorCommand, SerialCommand, SeriesCommand, UserCommand,
     },
 };
+
+thread_local! {
+    static SCENARIO_COMMAND_CONTEXT: RefCell<Option<ScenarioId>> = const { RefCell::new(None) };
+}
+
+struct ScenarioCommandContextGuard(Option<ScenarioId>);
+
+impl Drop for ScenarioCommandContextGuard {
+    fn drop(&mut self) {
+        SCENARIO_COMMAND_CONTEXT.with(|context| {
+            context.replace(self.0.take());
+        });
+    }
+}
+
+pub(crate) fn with_scenario_command_context<T>(
+    scenario_id: ScenarioId,
+    callback: impl FnOnce() -> T,
+) -> T {
+    let previous = SCENARIO_COMMAND_CONTEXT.with(|context| context.replace(Some(scenario_id)));
+    let _guard = ScenarioCommandContextGuard(previous);
+    callback()
+}
 
 pub fn install(
     lua: &Lua,
@@ -192,6 +218,15 @@ pub(super) fn send_application_command(
     command_sender: &Sender<UserCommand>,
     command: UserCommand,
 ) -> mlua::Result<()> {
+    let scenario_id = SCENARIO_COMMAND_CONTEXT.with(|context| context.borrow().clone());
+    let command = match scenario_id {
+        Some(scenario_id) => UserCommand::ScenarioStep {
+            scenario_id,
+            command: Box::new(command),
+        },
+        None => command,
+    };
+
     command_sender.send(command).map_err(|_| {
         mlua::Error::RuntimeError("application command channel is disconnected".to_owned())
     })

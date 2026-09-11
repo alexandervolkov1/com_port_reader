@@ -376,13 +376,47 @@ impl ApplicationRuntime {
                 return;
             }
 
+            UserCommand::ScenarioStep {
+                scenario_id,
+                command,
+            } => {
+                self.execute_scenario_step(scenario_id, *command);
+                return;
+            }
+
             command => command,
         };
 
+        self.dispatch_command(command, origin, None);
+    }
+
+    fn execute_scenario_step(
+        &mut self,
+        scenario_id: crate::scenario::ScenarioId,
+        command: UserCommand,
+    ) {
+        if let UserCommand::Scenario(command) = command {
+            self.scenario.execute(command);
+            return;
+        }
+
+        self.dispatch_command(command, ProcessActionOrigin::Lua, Some(scenario_id));
+    }
+
+    fn dispatch_command(
+        &mut self,
+        command: UserCommand,
+        origin: ProcessActionOrigin,
+        scenario_id: Option<crate::scenario::ScenarioId>,
+    ) {
         let action_context = process_action_from_command(&command).map(|mut action| {
             resolve_action_series_id(&mut action, &self.series);
 
             let action_id = self.process_recorder.record_action(origin, action);
+
+            if let Some(scenario_id) = &scenario_id {
+                self.scenario.track_action(scenario_id, action_id);
+            }
 
             ProcessActionContext::new(action_id)
         });

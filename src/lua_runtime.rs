@@ -77,8 +77,15 @@ impl LuaRuntime {
         run_with_limit(&self.lua, || invoke_control_callback(&self.lua, invocation))
     }
 
-    pub(crate) fn invoke_scenario_callback(&self, callback: &str) -> mlua::Result<()> {
-        run_with_limit(&self.lua, || invoke_scenario_callback(&self.lua, callback))
+    pub(crate) fn invoke_scenario_callback(
+        &self,
+        invocation: &crate::scenario::ScenarioCallbackInvocation,
+    ) -> mlua::Result<()> {
+        crate::lua_api::with_scenario_command_context(invocation.scenario_id().clone(), || {
+            run_with_limit(&self.lua, || {
+                invoke_scenario_callback(&self.lua, invocation.callback())
+            })
+        })
     }
 
     pub(crate) fn execute_startup(&self, source: &str) -> mlua::Result<()> {

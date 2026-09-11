@@ -398,7 +398,7 @@ impl CommandDispatcher {
                 .execute(command, action_context);
             }
 
-            UserCommand::Scenario(_) => {
+            UserCommand::Scenario(_) | UserCommand::ScenarioStep { .. } => {
                 unreachable!("scenario commands are handled by ApplicationRuntime")
             }
 
