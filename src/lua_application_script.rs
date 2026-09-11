@@ -10,7 +10,10 @@ use mlua::{Lua, Table, Value};
 
 use crate::{
     control_panel::{ControlDefinition, ControlPanelDefinition},
-    scenario::{ScenarioCallbackInvocation, ScenarioCallbackTrigger},
+    scenario::{
+        ScenarioCallbackInvocation, ScenarioCallbackTrigger, ScenarioCondition,
+        ScenarioConditionKind,
+    },
 };
 
 const SCRIPT_REGISTRY_KEY: &str = "com_port_reader.application_scripts";
@@ -209,18 +212,65 @@ fn scenario_callback_event(
         }
 
         ScenarioCallbackTrigger::Measurement {
-            series,
-            value,
-            timestamp,
+            measurement,
             condition,
         } => {
-            event.set("series", series.as_str())?;
-            event.set("value", *value)?;
-            event.set("timestamp", *timestamp)?;
-            event.set("condition", condition.direction.as_str())?;
-            event.set("threshold", condition.threshold)?;
+            if let Some(measurement) = measurement {
+                event.set("series", measurement.series.as_str())?;
+                event.set("value", measurement.value)?;
+                event.set("timestamp", measurement.timestamp)?;
+            } else if let Some(series) = condition.primary_series() {
+                event.set("series", series)?;
+            }
+            event.set("condition", condition.kind_name())?;
             event.set("for_seconds", condition.hold.as_secs_f64())?;
-            event.set("hysteresis", condition.hysteresis)?;
+            event.set("definition", scenario_condition_definition(lua, condition)?)?;
+
+            match &condition.kind {
+                ScenarioConditionKind::Threshold {
+                    threshold,
+                    hysteresis,
+                    ..
+                }
+                | ScenarioConditionKind::Rate {
+                    threshold,
+                    hysteresis,
+                    ..
+                } => {
+                    event.set("threshold", *threshold)?;
+                    event.set("hysteresis", *hysteresis)?;
+                }
+                ScenarioConditionKind::Inside {
+                    minimum,
+                    maximum,
+                    hysteresis,
+                    ..
+                }
+                | ScenarioConditionKind::Outside {
+                    minimum,
+                    maximum,
+                    hysteresis,
+                    ..
+                } => {
+                    event.set("min", *minimum)?;
+                    event.set("max", *maximum)?;
+                    event.set("hysteresis", *hysteresis)?;
+                }
+                ScenarioConditionKind::Stable {
+                    target,
+                    tolerance,
+                    hysteresis,
+                    ..
+                } => {
+                    event.set("target", *target)?;
+                    event.set("tolerance", *tolerance)?;
+                    event.set("hysteresis", *hysteresis)?;
+                }
+                ScenarioConditionKind::Stale { duration, .. } => {
+                    event.set("stale_for_seconds", duration.as_secs_f64())?;
+                }
+                ScenarioConditionKind::All(_) | ScenarioConditionKind::Any(_) => {}
+            }
         }
 
         ScenarioCallbackTrigger::Stage {
@@ -240,6 +290,78 @@ fn scenario_callback_event(
     }
 
     Ok(event)
+}
+
+fn scenario_condition_definition(lua: &Lua, condition: &ScenarioCondition) -> mlua::Result<Table> {
+    let definition = lua.create_table()?;
+    definition.set("kind", condition.kind_name())?;
+    definition.set("for_seconds", condition.hold.as_secs_f64())?;
+
+    match &condition.kind {
+        ScenarioConditionKind::Threshold {
+            series,
+            threshold,
+            hysteresis,
+            ..
+        } => {
+            definition.set("series", series.as_str())?;
+            definition.set("threshold", *threshold)?;
+            definition.set("hysteresis", *hysteresis)?;
+        }
+        ScenarioConditionKind::Inside {
+            series,
+            minimum,
+            maximum,
+            hysteresis,
+        }
+        | ScenarioConditionKind::Outside {
+            series,
+            minimum,
+            maximum,
+            hysteresis,
+        } => {
+            definition.set("series", series.as_str())?;
+            definition.set("min", *minimum)?;
+            definition.set("max", *maximum)?;
+            definition.set("hysteresis", *hysteresis)?;
+        }
+        ScenarioConditionKind::Stable {
+            series,
+            target,
+            tolerance,
+            hysteresis,
+        } => {
+            definition.set("series", series.as_str())?;
+            definition.set("target", *target)?;
+            definition.set("tolerance", *tolerance)?;
+            definition.set("hysteresis", *hysteresis)?;
+        }
+        ScenarioConditionKind::Rate {
+            series,
+            threshold,
+            window,
+            hysteresis,
+            ..
+        } => {
+            definition.set("series", series.as_str())?;
+            definition.set("threshold", *threshold)?;
+            definition.set("window_seconds", window.as_secs_f64())?;
+            definition.set("hysteresis", *hysteresis)?;
+        }
+        ScenarioConditionKind::Stale { series, duration } => {
+            definition.set("series", series.as_str())?;
+            definition.set("stale_for_seconds", duration.as_secs_f64())?;
+        }
+        ScenarioConditionKind::All(children) | ScenarioConditionKind::Any(children) => {
+            let definitions = lua.create_table()?;
+            for (index, child) in children.iter().enumerate() {
+                definitions.set(index + 1, scenario_condition_definition(lua, child)?)?;
+            }
+            definition.set("conditions", definitions)?;
+        }
+    }
+
+    Ok(definition)
 }
 
 fn unix_timestamp(time: SystemTime, field: &str) -> mlua::Result<f64> {
@@ -879,8 +1001,9 @@ mod tests {
         SCRIPT_REGISTRY_KEY, install, invoke_control_callback, invoke_scenario_callback,
     };
     use crate::scenario::{
-        ScenarioCallbackInvocation, ScenarioCallbackTrigger, ScenarioCondition, ScenarioId,
-        ScenarioStageName, ThresholdDirection,
+        ScenarioCallbackInvocation, ScenarioCallbackTrigger, ScenarioCondition,
+        ScenarioConditionKind, ScenarioId, ScenarioMeasurementContext, ScenarioStageName,
+        ThresholdDirection,
     };
 
     #[test]
@@ -1166,15 +1289,19 @@ mod tests {
             "capture".to_owned(),
             SystemTime::UNIX_EPOCH + Duration::from_secs_f64(50.0),
             ScenarioCallbackTrigger::Measurement {
-                series: "temperature".to_owned(),
-                value: 151.25,
-                timestamp: 49.5,
-                condition: ScenarioCondition {
+                measurement: Some(ScenarioMeasurementContext {
                     series: "temperature".to_owned(),
-                    direction: ThresholdDirection::Above,
-                    threshold: 150.0,
+                    value: 151.25,
+                    timestamp: 49.5,
+                }),
+                condition: ScenarioCondition {
+                    kind: ScenarioConditionKind::Threshold {
+                        series: "temperature".to_owned(),
+                        direction: ThresholdDirection::Above,
+                        threshold: 150.0,
+                        hysteresis: 2.0,
+                    },
                     hold: Duration::from_secs(5),
-                    hysteresis: 2.0,
                 },
             },
         );
@@ -1225,6 +1352,39 @@ mod tests {
             event.get::<String>("transition_trigger").unwrap(),
             "measurement"
         );
+    }
+
+    #[test]
+    fn passes_stale_condition_context_without_synthetic_measurement() {
+        let lua = Lua::new();
+        lua.load("function capture(event) scenario_event = event end")
+            .exec()
+            .unwrap();
+        let invocation = ScenarioCallbackInvocation::new(
+            ScenarioId::new("monitor").unwrap(),
+            "capture".to_owned(),
+            SystemTime::UNIX_EPOCH + Duration::from_secs(60),
+            ScenarioCallbackTrigger::Measurement {
+                measurement: None,
+                condition: ScenarioCondition {
+                    kind: ScenarioConditionKind::Stale {
+                        series: "temperature".to_owned(),
+                        duration: Duration::from_secs(5),
+                    },
+                    hold: Duration::ZERO,
+                },
+            },
+        );
+
+        invoke_scenario_callback(&lua, &invocation).unwrap();
+
+        let event = lua.globals().get::<Table>("scenario_event").unwrap();
+        assert_eq!(event.get::<String>("trigger").unwrap(), "measurement");
+        assert_eq!(event.get::<String>("condition").unwrap(), "stale");
+        assert_eq!(event.get::<String>("series").unwrap(), "temperature");
+        assert_eq!(event.get::<f64>("stale_for_seconds").unwrap(), 5.0);
+        assert!(event.get::<Option<f64>>("value").unwrap().is_none());
+        assert!(event.get::<Option<f64>>("timestamp").unwrap().is_none());
     }
 
     #[test]

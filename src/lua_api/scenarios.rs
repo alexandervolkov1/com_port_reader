@@ -9,9 +9,9 @@ use mlua::{Lua, Table, UserData, UserDataMethods, Value};
 use super::send_application_command;
 use crate::{
     scenario::{
-        ScenarioCommand, ScenarioCondition, ScenarioId, ScenarioRaceAlternative,
-        ScenarioRaceTrigger, ScenarioStageDefinition, ScenarioStageName, ScenarioStageTransition,
-        ThresholdDirection,
+        ScenarioCommand, ScenarioCondition, ScenarioConditionKind, ScenarioId,
+        ScenarioRaceAlternative, ScenarioRaceTrigger, ScenarioStageDefinition, ScenarioStageName,
+        ScenarioStageTransition, ThresholdDirection,
     },
     user_command::UserCommand,
 };
@@ -372,6 +372,10 @@ fn parse_table_array(options: &Table, context: &str) -> mlua::Result<Vec<Table>>
 }
 
 fn parse_condition(options: &Table) -> mlua::Result<ScenarioCondition> {
+    parse_condition_at_depth(options, 0)
+}
+
+fn parse_condition_at_depth(options: &Table, depth: usize) -> mlua::Result<ScenarioCondition> {
     validate_keys(
         options,
         "scenario condition",
@@ -379,29 +383,50 @@ fn parse_condition(options: &Table) -> mlua::Result<ScenarioCondition> {
             "series",
             "above",
             "below",
+            "inside",
+            "outside",
+            "stable",
+            "rate_above",
+            "rate_below",
+            "window_seconds",
+            "stale_for_seconds",
+            "all",
+            "any",
             "for_seconds",
             "hysteresis",
             "edge",
         ],
     )?;
 
-    let series = required_string(options, "series", "scenario condition")?;
     let above = options.get::<Option<f64>>("above")?;
     let below = options.get::<Option<f64>>("below")?;
+    let inside = options.get::<Option<Table>>("inside")?;
+    let outside = options.get::<Option<Table>>("outside")?;
+    let stable = options.get::<Option<Table>>("stable")?;
+    let rate_above = options.get::<Option<f64>>("rate_above")?;
+    let rate_below = options.get::<Option<f64>>("rate_below")?;
+    let stale = options.get::<Option<f64>>("stale_for_seconds")?;
+    let all = options.get::<Option<Table>>("all")?;
+    let any = options.get::<Option<Table>>("any")?;
+    let operator_count = [
+        above.is_some(),
+        below.is_some(),
+        inside.is_some(),
+        outside.is_some(),
+        stable.is_some(),
+        rate_above.is_some(),
+        rate_below.is_some(),
+        stale.is_some(),
+        all.is_some(),
+        any.is_some(),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count();
 
-    let (direction, threshold) = match (above, below) {
-        (Some(threshold), None) => (ThresholdDirection::Above, threshold),
-        (None, Some(threshold)) => (ThresholdDirection::Below, threshold),
-        _ => {
-            return Err(mlua::Error::RuntimeError(
-                "Scenario condition must define exactly one of 'above' or 'below'".to_owned(),
-            ));
-        }
-    };
-
-    if !threshold.is_finite() {
+    if operator_count != 1 {
         return Err(mlua::Error::RuntimeError(
-            "Scenario threshold must be finite".to_owned(),
+            "Scenario condition must define exactly one condition operator".to_owned(),
         ));
     }
 
@@ -409,13 +434,9 @@ fn parse_condition(options: &Table) -> mlua::Result<ScenarioCondition> {
         options.get::<Option<f64>>("for_seconds")?.unwrap_or(0.0),
         "Scenario condition for_seconds",
     )?;
-    let hysteresis = options.get::<Option<f64>>("hysteresis")?.unwrap_or(0.0);
-
-    if !hysteresis.is_finite() || hysteresis < 0.0 {
-        return Err(mlua::Error::RuntimeError(
-            "Scenario condition hysteresis must be finite and non-negative".to_owned(),
-        ));
-    }
+    let hysteresis_option = options.get::<Option<f64>>("hysteresis")?;
+    let hysteresis = hysteresis_option.unwrap_or(0.0);
+    validate_non_negative_finite(hysteresis, "Scenario condition hysteresis")?;
 
     let edge = options
         .get::<Option<String>>("edge")?
@@ -427,13 +448,200 @@ fn parse_condition(options: &Table) -> mlua::Result<ScenarioCondition> {
         )));
     }
 
-    Ok(ScenarioCondition {
-        series,
-        direction,
-        threshold,
-        hold,
-        hysteresis,
-    })
+    let composite = all.or(any);
+    if let Some(children) = composite {
+        if depth >= 3 {
+            return Err(mlua::Error::RuntimeError(
+                "Scenario condition composition cannot exceed 4 levels".to_owned(),
+            ));
+        }
+        if options.contains_key("series")?
+            || options.contains_key("window_seconds")?
+            || hysteresis_option.is_some()
+        {
+            return Err(mlua::Error::RuntimeError(
+                "Composite scenario conditions cannot define 'series', 'window_seconds' or 'hysteresis'"
+                    .to_owned(),
+            ));
+        }
+        let children = parse_table_array(&children, "Scenario condition children")?;
+        if children.is_empty() || children.len() > 16 {
+            return Err(mlua::Error::RuntimeError(
+                "Scenario condition composition must contain between 1 and 16 children".to_owned(),
+            ));
+        }
+        let children = children
+            .into_iter()
+            .map(|child| parse_condition_at_depth(&child, depth + 1))
+            .collect::<mlua::Result<Vec<_>>>()?;
+        let kind = if options.contains_key("all")? {
+            ScenarioConditionKind::All(children)
+        } else {
+            ScenarioConditionKind::Any(children)
+        };
+
+        return Ok(ScenarioCondition { kind, hold });
+    }
+
+    let series = required_string(options, "series", "scenario condition")?;
+    let window = options.get::<Option<f64>>("window_seconds")?;
+
+    let kind = if let Some(threshold) = above {
+        reject_window(window)?;
+        ScenarioConditionKind::Threshold {
+            series,
+            direction: ThresholdDirection::Above,
+            threshold: finite_number(threshold, "Scenario threshold")?,
+            hysteresis,
+        }
+    } else if let Some(threshold) = below {
+        reject_window(window)?;
+        ScenarioConditionKind::Threshold {
+            series,
+            direction: ThresholdDirection::Below,
+            threshold: finite_number(threshold, "Scenario threshold")?,
+            hysteresis,
+        }
+    } else if let Some(range) = inside {
+        reject_window(window)?;
+        let (minimum, maximum) = parse_range(&range, "Scenario inside range")?;
+        ScenarioConditionKind::Inside {
+            series,
+            minimum,
+            maximum,
+            hysteresis,
+        }
+    } else if let Some(range) = outside {
+        reject_window(window)?;
+        let (minimum, maximum) = parse_range(&range, "Scenario outside range")?;
+        if hysteresis * 2.0 >= maximum - minimum && hysteresis > 0.0 {
+            return Err(mlua::Error::RuntimeError(
+                "Scenario outside hysteresis must be less than half the range width".to_owned(),
+            ));
+        }
+        ScenarioConditionKind::Outside {
+            series,
+            minimum,
+            maximum,
+            hysteresis,
+        }
+    } else if let Some(stable) = stable {
+        reject_window(window)?;
+        if hold.is_zero() {
+            return Err(mlua::Error::RuntimeError(
+                "Scenario stable condition requires positive 'for_seconds'".to_owned(),
+            ));
+        }
+        validate_keys(
+            &stable,
+            "scenario stable condition",
+            &["target", "tolerance"],
+        )?;
+        let target = required_finite_number(&stable, "target", "scenario stable condition")?;
+        let tolerance = required_finite_number(&stable, "tolerance", "scenario stable condition")?;
+        if tolerance <= 0.0 {
+            return Err(mlua::Error::RuntimeError(
+                "Scenario stable tolerance must be positive".to_owned(),
+            ));
+        }
+        ScenarioConditionKind::Stable {
+            series,
+            target,
+            tolerance,
+            hysteresis,
+        }
+    } else if let Some(threshold) = rate_above.or(rate_below) {
+        let Some(window) = window else {
+            return Err(mlua::Error::RuntimeError(
+                "Scenario rate condition requires positive 'window_seconds'".to_owned(),
+            ));
+        };
+        let window = parse_duration(window, "Scenario rate window_seconds")?;
+        if window.is_zero() {
+            return Err(mlua::Error::RuntimeError(
+                "Scenario rate condition requires positive 'window_seconds'".to_owned(),
+            ));
+        }
+        ScenarioConditionKind::Rate {
+            series,
+            direction: if rate_above.is_some() {
+                ThresholdDirection::Above
+            } else {
+                ThresholdDirection::Below
+            },
+            threshold: finite_number(threshold, "Scenario rate threshold")?,
+            window,
+            hysteresis,
+        }
+    } else {
+        if !hold.is_zero() || hysteresis_option.is_some() || window.is_some() {
+            return Err(mlua::Error::RuntimeError(
+                "Scenario stale condition cannot define 'for_seconds', 'hysteresis' or 'window_seconds'"
+                    .to_owned(),
+            ));
+        }
+        let duration = parse_duration(
+            stale.expect("condition operator count was validated"),
+            "Scenario stale_for_seconds",
+        )?;
+        if duration.is_zero() {
+            return Err(mlua::Error::RuntimeError(
+                "Scenario stale_for_seconds must be positive".to_owned(),
+            ));
+        }
+        ScenarioConditionKind::Stale { series, duration }
+    };
+
+    Ok(ScenarioCondition { kind, hold })
+}
+
+fn parse_range(options: &Table, context: &str) -> mlua::Result<(f64, f64)> {
+    validate_keys(options, context, &["min", "max"])?;
+    let minimum = required_finite_number(options, "min", context)?;
+    let maximum = required_finite_number(options, "max", context)?;
+    if minimum >= maximum {
+        return Err(mlua::Error::RuntimeError(format!(
+            "{context} min must be less than max",
+        )));
+    }
+    Ok((minimum, maximum))
+}
+
+fn required_finite_number(table: &Table, key: &str, context: &str) -> mlua::Result<f64> {
+    let value = table.get::<Option<f64>>(key)?.ok_or_else(|| {
+        mlua::Error::RuntimeError(format!("{context} must contain number '{key}'"))
+    })?;
+    finite_number(value, &format!("{context} {key}"))
+}
+
+fn finite_number(value: f64, context: &str) -> mlua::Result<f64> {
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(mlua::Error::RuntimeError(format!(
+            "{context} must be finite",
+        )))
+    }
+}
+
+fn validate_non_negative_finite(value: f64, context: &str) -> mlua::Result<()> {
+    if value.is_finite() && value >= 0.0 {
+        Ok(())
+    } else {
+        Err(mlua::Error::RuntimeError(format!(
+            "{context} must be finite and non-negative",
+        )))
+    }
+}
+
+fn reject_window(window: Option<f64>) -> mlua::Result<()> {
+    if window.is_some() {
+        Err(mlua::Error::RuntimeError(
+            "Scenario window_seconds is only valid with rate_above or rate_below".to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn parse_duration(seconds: f64, context: &str) -> mlua::Result<Duration> {
@@ -492,7 +700,9 @@ mod tests {
 
     use super::register_scenario;
     use crate::{
-        scenario::{ScenarioCommand, ScenarioRaceTrigger, ThresholdDirection},
+        scenario::{
+            ScenarioCommand, ScenarioConditionKind, ScenarioRaceTrigger, ThresholdDirection,
+        },
         user_command::UserCommand,
     };
 
@@ -589,11 +799,16 @@ mod tests {
             panic!("expected scenario condition command");
         };
         assert_eq!(id.as_str(), "heat_cycle");
-        assert_eq!(condition.series, "temperature");
-        assert_eq!(condition.direction, ThresholdDirection::Above);
-        assert_eq!(condition.threshold, 150.0);
         assert_eq!(condition.hold, Duration::from_secs(5));
-        assert_eq!(condition.hysteresis, 2.0);
+        assert!(matches!(
+            condition.kind,
+            ScenarioConditionKind::Threshold {
+                series,
+                direction: ThresholdDirection::Above,
+                threshold: 150.0,
+                hysteresis: 2.0,
+            } if series == "temperature"
+        ));
         assert_eq!(callback, "switch_to_hold");
 
         let UserCommand::Scenario(ScenarioCommand::Race { id, alternatives }) =
@@ -607,9 +822,15 @@ mod tests {
         assert!(matches!(
             &alternatives[0].trigger,
             ScenarioRaceTrigger::When { condition }
-                if condition.series == "temperature"
-                    && condition.direction == ThresholdDirection::Above
-                    && condition.threshold == 180.0
+                if matches!(
+                    &condition.kind,
+                    ScenarioConditionKind::Threshold {
+                        series,
+                        direction: ThresholdDirection::Above,
+                        threshold: 180.0,
+                        ..
+                    } if series == "temperature"
+                )
         ));
         assert!(matches!(
             alternatives[1].trigger,
@@ -692,11 +913,7 @@ mod tests {
             .exec()
             .unwrap_err();
 
-        assert!(
-            error
-                .to_string()
-                .contains("exactly one of 'above' or 'below'")
-        );
+        assert!(error.to_string().contains("exactly one condition operator"));
     }
 
     #[test]
@@ -722,6 +939,166 @@ mod tests {
                 .to_string()
                 .contains("must be finite and non-negative")
         );
+    }
+
+    #[test]
+    fn parses_extended_scenario_conditions() {
+        let lua = Lua::new();
+        let app = lua.create_table().unwrap();
+        let (sender, receiver) = unbounded();
+        register_scenario(&lua, &app, sender).unwrap();
+        lua.globals().set("app", app).unwrap();
+
+        lua.load(
+            r#"
+                local scenario = app.scenario({ id = "conditions" })
+                scenario:when({
+                    series = "temperature",
+                    inside = { min = 90.0, max = 110.0 },
+                    hysteresis = 1.0,
+                }, "inside")
+                scenario:when({
+                    series = "temperature",
+                    outside = { min = 0.0, max = 200.0 },
+                }, "outside")
+                scenario:when({
+                    series = "temperature",
+                    stable = { target = 100.0, tolerance = 0.5 },
+                    for_seconds = 10.0,
+                }, "stable")
+                scenario:when({
+                    series = "temperature",
+                    rate_above = 2.0,
+                    window_seconds = 15.0,
+                }, "rate")
+                scenario:when({
+                    series = "pressure",
+                    rate_below = -0.5,
+                    window_seconds = 3.0,
+                }, "rate_below")
+                scenario:when({
+                    series = "temperature",
+                    stale_for_seconds = 5.0,
+                }, "stale")
+                scenario:when({
+                    all = {
+                        { series = "temperature", above = 100.0 },
+                        { series = "pressure", below = 10.0 },
+                    },
+                }, "all")
+                scenario:when({
+                    any = {
+                        { series = "temperature", above = 200.0 },
+                        { series = "pressure", below = 1.0 },
+                    },
+                }, "any")
+            "#,
+        )
+        .exec()
+        .unwrap();
+
+        let _register = receiver.try_recv().unwrap();
+        let conditions = (0..8)
+            .map(|_| {
+                let UserCommand::Scenario(ScenarioCommand::When { condition, .. }) =
+                    receiver.try_recv().unwrap()
+                else {
+                    panic!("expected scenario condition command");
+                };
+                condition
+            })
+            .collect::<Vec<_>>();
+
+        assert!(matches!(
+            conditions[0].kind,
+            ScenarioConditionKind::Inside {
+                minimum: 90.0,
+                maximum: 110.0,
+                hysteresis: 1.0,
+                ..
+            }
+        ));
+        assert!(matches!(
+            conditions[1].kind,
+            ScenarioConditionKind::Outside {
+                minimum: 0.0,
+                maximum: 200.0,
+                ..
+            }
+        ));
+        assert!(matches!(
+            conditions[2].kind,
+            ScenarioConditionKind::Stable {
+                target: 100.0,
+                tolerance: 0.5,
+                ..
+            }
+        ));
+        assert_eq!(conditions[2].hold, Duration::from_secs(10));
+        assert!(matches!(
+            conditions[3].kind,
+            ScenarioConditionKind::Rate {
+                direction: ThresholdDirection::Above,
+                threshold: 2.0,
+                window,
+                ..
+            } if window == Duration::from_secs(15)
+        ));
+        assert!(matches!(
+            conditions[4].kind,
+            ScenarioConditionKind::Rate {
+                direction: ThresholdDirection::Below,
+                threshold: -0.5,
+                window,
+                ..
+            } if window == Duration::from_secs(3)
+        ));
+        assert!(matches!(
+            conditions[5].kind,
+            ScenarioConditionKind::Stale { duration, .. }
+                if duration == Duration::from_secs(5)
+        ));
+        assert!(matches!(
+            &conditions[6].kind,
+            ScenarioConditionKind::All(children) if children.len() == 2
+        ));
+        assert!(matches!(
+            &conditions[7].kind,
+            ScenarioConditionKind::Any(children) if children.len() == 2
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_extended_scenario_conditions() {
+        for (source, expected) in [
+            (
+                "scenario:when({ series='x', stable={target=1,tolerance=0.1} }, 'cb')",
+                "requires positive 'for_seconds'",
+            ),
+            (
+                "scenario:when({ series='x', rate_above=1 }, 'cb')",
+                "requires positive 'window_seconds'",
+            ),
+            (
+                "scenario:when({ series='x', stale_for_seconds=1, hysteresis=1 }, 'cb')",
+                "stale condition cannot define",
+            ),
+            (
+                "scenario:when({ all={} }, 'cb')",
+                "between 1 and 16 children",
+            ),
+            (
+                "scenario:when({ series='x', inside={min=2,max=1} }, 'cb')",
+                "min must be less than max",
+            ),
+            (
+                "scenario:when({ series='x', above=0/0 }, 'cb')",
+                "must be finite",
+            ),
+        ] {
+            let error = execute_invalid_stage(source);
+            assert!(error.contains(expected), "{error}");
+        }
     }
 
     #[test]

@@ -450,12 +450,29 @@ function Controller:reset() end
 ---@class ScenarioOptions
 ---@field id string Stable scenario identifier: ASCII letter or underscore, then letters, digits or underscores.
 
+---@class ScenarioRange
+---@field min number Inclusive lower bound.
+---@field max number Inclusive upper bound.
+
+---@class ScenarioStableRange
+---@field target number Target value.
+---@field tolerance number Positive absolute tolerance.
+
 ---@class ScenarioCondition
----@field series string Series name.
----@field above? number Trigger above this threshold. Exactly one of above or below is required.
----@field below? number Trigger below this threshold. Exactly one of above or below is required.
+---@field series? string Series name; required for leaf conditions and forbidden for all/any.
+---@field above? number Trigger above this threshold. Exactly one condition operator is required.
+---@field below? number Trigger below this threshold. Exactly one condition operator is required.
+---@field inside? ScenarioRange Trigger inside the inclusive range.
+---@field outside? ScenarioRange Trigger outside the range.
+---@field stable? ScenarioStableRange Stay inside target tolerance for positive for_seconds.
+---@field rate_above? number Trigger when the window rate is above this value per second.
+---@field rate_below? number Trigger when the window rate is below this value per second.
+---@field window_seconds? number Positive measurement-time window required for rate conditions.
+---@field stale_for_seconds? number Trigger when the series has no measurement newer than this duration.
+---@field all? ScenarioCondition[] Require every child condition; 1 to 16 children.
+---@field any? ScenarioCondition[] Require at least one child condition; 1 to 16 children.
 ---@field for_seconds? number Required continuous threshold duration. Default: 0.
----@field hysteresis? number Non-negative rearming hysteresis. Default: 0.
+---@field hysteresis? number Non-negative rearming hysteresis for value/rate conditions. Default: 0.
 ---@field edge? '"rising"' Only rising-edge triggering is currently supported.
 
 ---@class ScenarioRaceAlternative
@@ -491,13 +508,19 @@ function Controller:reset() end
 
 ---@class ScenarioMeasurementEvent: ScenarioEvent
 ---@field trigger '"measurement"'
----@field series string Series that satisfied the condition.
----@field value number Measurement value that fired the callback.
----@field timestamp number Measurement Unix timestamp.
----@field condition '"above"'|'"below"' Threshold comparison.
----@field threshold number Configured threshold.
+---@field series? string Series associated with a leaf condition.
+---@field value? number Measurement value that fired the callback; absent for stale timers.
+---@field timestamp? number Measurement Unix timestamp; absent for stale timers.
+---@field condition '"above"'|'"below"'|'"inside"'|'"outside"'|'"stable"'|'"rate_above"'|'"rate_below"'|'"stale"'|'"all"'|'"any"' Condition kind.
+---@field threshold? number Configured value or rate threshold.
+---@field min? number Configured lower range bound.
+---@field max? number Configured upper range bound.
+---@field target? number Configured stability target.
+---@field tolerance? number Configured stability tolerance.
+---@field stale_for_seconds? number Configured freshness limit.
 ---@field for_seconds number Configured continuous hold duration.
----@field hysteresis number Configured rearming hysteresis.
+---@field hysteresis? number Configured rearming hysteresis.
+---@field definition table Normalized recursive condition definition.
 
 ---@class ScenarioStageEvent: ScenarioEvent
 ---@field trigger '"stage"'

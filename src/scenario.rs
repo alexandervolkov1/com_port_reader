@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -12,6 +12,11 @@ use crate::{
     lua_worker::{LuaWorkerHandle, LuaWorkerHandleError},
     process_recorder::{ProcessActionId, ProcessMeasurement},
 };
+
+mod condition;
+
+use condition::ScenarioConditionState;
+pub(crate) use condition::{ScenarioCondition, ScenarioConditionKind, ThresholdDirection};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ScenarioId(String);
@@ -125,30 +130,6 @@ pub(crate) struct ScenarioStageTransition {
     pub(crate) reason: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum ThresholdDirection {
-    Above,
-    Below,
-}
-
-impl ThresholdDirection {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Above => "above",
-            Self::Below => "below",
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ScenarioCondition {
-    pub(crate) series: String,
-    pub(crate) direction: ThresholdDirection,
-    pub(crate) threshold: f64,
-    pub(crate) hold: Duration,
-    pub(crate) hysteresis: f64,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ScenarioCallbackTrigger {
     Timer {
@@ -158,9 +139,7 @@ pub(crate) enum ScenarioCallbackTrigger {
         scheduled_at: SystemTime,
     },
     Measurement {
-        series: String,
-        value: f64,
-        timestamp: f64,
+        measurement: Option<ScenarioMeasurementContext>,
         condition: ScenarioCondition,
     },
     Stage {
@@ -169,6 +148,13 @@ pub(crate) enum ScenarioCallbackTrigger {
         reason: String,
         transition_trigger: Option<String>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ScenarioMeasurementContext {
+    pub(crate) series: String,
+    pub(crate) value: f64,
+    pub(crate) timestamp: f64,
 }
 
 impl ScenarioCallbackTrigger {
@@ -193,14 +179,19 @@ impl ScenarioCallbackTrigger {
                 format!("absolute timer reached Unix timestamp {timestamp}")
             }
             Self::Measurement {
-                series,
-                value,
+                measurement,
                 condition,
                 ..
-            } => format!(
-                "measurement '{series}'={value} satisfied {} {}",
-                condition.direction.as_str(),
-                condition.threshold,
+            } => measurement.as_ref().map_or_else(
+                || format!("condition '{}' became true", condition.kind_name(),),
+                |measurement| {
+                    format!(
+                        "measurement '{}'={} satisfied condition '{}'",
+                        measurement.series,
+                        measurement.value,
+                        condition.kind_name(),
+                    )
+                },
             ),
             Self::Stage { stage, reason, .. } => {
                 format!("entered stage '{}': {reason}", stage.as_str())
@@ -291,13 +282,17 @@ impl ScenarioState {
     fn poll_race(
         &mut self,
         now: Instant,
+        unix_now: f64,
         measurements: &[ProcessMeasurement],
     ) -> Option<ScenarioRaceWinner> {
-        let (race_index, winner) = self
-            .races
-            .iter_mut()
-            .enumerate()
-            .find_map(|(index, race)| race.poll(now, measurements).map(|winner| (index, winner)))?;
+        let (race_index, winner) =
+            self.races
+                .iter_mut()
+                .enumerate()
+                .find_map(|(index, race)| {
+                    race.poll(now, unix_now, measurements)
+                        .map(|winner| (index, winner))
+                })?;
 
         self.races.remove(race_index);
         Some(winner)
@@ -403,13 +398,6 @@ impl ScenarioTimer {
     }
 }
 
-struct ScenarioConditionState {
-    condition: ScenarioCondition,
-    target: ScenarioTriggerTarget,
-    matching_since: Option<Instant>,
-    armed: bool,
-}
-
 struct ScenarioRaceState {
     alternatives: Vec<ScenarioRaceAlternativeState>,
 }
@@ -485,7 +473,7 @@ impl ScenarioRaceState {
                 }
                 ScenarioRaceTrigger::When { condition } => {
                     Some(ScenarioRaceAlternativeState::Condition(
-                        ScenarioConditionState::new(condition, target),
+                        ScenarioConditionState::new(condition, target, system_now),
                     ))
                 }
             })
@@ -497,6 +485,7 @@ impl ScenarioRaceState {
     fn poll(
         &mut self,
         now: Instant,
+        unix_now: f64,
         measurements: &[ProcessMeasurement],
     ) -> Option<ScenarioRaceWinner> {
         for (alternative_index, alternative) in self.alternatives.iter_mut().enumerate() {
@@ -505,23 +494,32 @@ impl ScenarioRaceState {
                     (timer.deadline <= now).then(|| (timer.target.clone(), timer.trigger.clone()))
                 }
                 ScenarioRaceAlternativeState::Condition(condition) => {
-                    let series = condition.condition.series.clone();
-                    measurements
+                    let measurement = measurements
                         .iter()
-                        .filter(|measurement| series == measurement.series_name)
-                        .find_map(|measurement| {
-                            condition.update(measurement.value, now).then(|| {
-                                (
-                                    condition.target.clone(),
-                                    ScenarioCallbackTrigger::Measurement {
-                                        series: measurement.series_name.clone(),
-                                        value: measurement.value,
-                                        timestamp: measurement.timestamp,
-                                        condition: condition.condition.clone(),
-                                    },
-                                )
-                            })
+                        .find(|measurement| condition.update(measurement, now, unix_now));
+                    if let Some(measurement) = measurement {
+                        Some((
+                            condition.target.clone(),
+                            ScenarioCallbackTrigger::Measurement {
+                                measurement: Some(ScenarioMeasurementContext {
+                                    series: measurement.series_name.clone(),
+                                    value: measurement.value,
+                                    timestamp: measurement.timestamp,
+                                }),
+                                condition: condition.condition.clone(),
+                            },
+                        ))
+                    } else {
+                        condition.tick(now, unix_now).then(|| {
+                            (
+                                condition.target.clone(),
+                                ScenarioCallbackTrigger::Measurement {
+                                    measurement: None,
+                                    condition: condition.condition.clone(),
+                                },
+                            )
                         })
+                    }
                 }
             };
 
@@ -535,58 +533,6 @@ impl ScenarioRaceState {
         }
 
         None
-    }
-}
-
-impl ScenarioConditionState {
-    fn new(condition: ScenarioCondition, target: ScenarioTriggerTarget) -> Self {
-        Self {
-            condition,
-            target,
-            matching_since: None,
-            armed: true,
-        }
-    }
-
-    fn update(&mut self, value: f64, now: Instant) -> bool {
-        let matching = match self.condition.direction {
-            ThresholdDirection::Above => value > self.condition.threshold,
-            ThresholdDirection::Below => value < self.condition.threshold,
-        };
-        let rearmed = match self.condition.direction {
-            ThresholdDirection::Above => {
-                value <= self.condition.threshold - self.condition.hysteresis
-            }
-            ThresholdDirection::Below => {
-                value >= self.condition.threshold + self.condition.hysteresis
-            }
-        };
-
-        if rearmed {
-            self.armed = true;
-            self.matching_since = None;
-            return false;
-        }
-
-        if !self.armed {
-            return false;
-        }
-
-        if matching {
-            self.matching_since.get_or_insert(now);
-        }
-
-        let Some(matching_since) = self.matching_since else {
-            return false;
-        };
-
-        if now.duration_since(matching_since) >= self.condition.hold {
-            self.armed = false;
-            self.matching_since = None;
-            return true;
-        }
-
-        false
     }
 }
 
@@ -694,6 +640,7 @@ impl ScenarioService {
                 scenario.conditions.push(ScenarioConditionState::new(
                     condition,
                     ScenarioTriggerTarget::Callback(callback),
+                    SystemTime::now(),
                 ));
             }
 
@@ -870,6 +817,9 @@ impl ScenarioService {
 
         let now = Instant::now();
         let fired_at = SystemTime::now();
+        let unix_now = fired_at
+            .duration_since(UNIX_EPOCH)
+            .map_or(0.0, |duration| duration.as_secs_f64());
         let events = self.application_events.try_iter().collect::<Vec<_>>();
         let race_eligible = self
             .scenarios
@@ -917,11 +867,10 @@ impl ScenarioService {
                             }
 
                             scenario.conditions.retain_mut(|condition| {
-                                if condition.condition.series != measurement.series_name {
+                                if scheduled.contains(id) {
                                     return true;
                                 }
-
-                                if condition.update(measurement.value, now) {
+                                if condition.update(measurement, now, unix_now) {
                                     let ScenarioTriggerTarget::Callback(callback) =
                                         &condition.target
                                     else {
@@ -934,9 +883,11 @@ impl ScenarioService {
                                         callback.clone(),
                                         fired_at,
                                         ScenarioCallbackTrigger::Measurement {
-                                            series: measurement.series_name.clone(),
-                                            value: measurement.value,
-                                            timestamp: measurement.timestamp,
+                                            measurement: Some(ScenarioMeasurementContext {
+                                                series: measurement.series_name.clone(),
+                                                value: measurement.value,
+                                                timestamp: measurement.timestamp,
+                                            }),
                                             condition: condition.condition.clone(),
                                         },
                                     ));
@@ -969,7 +920,33 @@ impl ScenarioService {
                 continue;
             }
 
-            let Some(winner) = scenario.poll_race(now, &measurements) else {
+            scenario.conditions.retain_mut(|condition| {
+                if !condition.tick(now, unix_now) || scheduled.contains(id) {
+                    return true;
+                }
+                let ScenarioTriggerTarget::Callback(callback) = &condition.target else {
+                    unreachable!("standalone scenario condition must target a callback");
+                };
+                callbacks.push(ScenarioCallbackInvocation::new(
+                    id.clone(),
+                    callback.clone(),
+                    fired_at,
+                    ScenarioCallbackTrigger::Measurement {
+                        measurement: None,
+                        condition: condition.condition.clone(),
+                    },
+                ));
+                scheduled.insert(id.clone());
+                false
+            });
+        }
+
+        for (id, scenario) in &mut self.scenarios {
+            if !race_eligible.contains(id) || scenario.is_busy() || scheduled.contains(id) {
+                continue;
+            }
+
+            let Some(winner) = scenario.poll_race(now, unix_now, &measurements) else {
                 continue;
             };
 
@@ -1166,76 +1143,23 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime};
 
     use super::{
-        ScenarioCallbackTrigger, ScenarioCondition, ScenarioConditionState,
-        ScenarioRaceAlternative, ScenarioRaceState, ScenarioRaceTrigger, ScenarioStageDefinition,
-        ScenarioStageName, ScenarioStageTransition, ScenarioState, ScenarioTriggerTarget,
-        ThresholdDirection,
+        ScenarioCallbackTrigger, ScenarioCondition, ScenarioConditionKind, ScenarioRaceAlternative,
+        ScenarioRaceState, ScenarioRaceTrigger, ScenarioStageDefinition, ScenarioStageName,
+        ScenarioStageTransition, ScenarioState, ScenarioTriggerTarget, ThresholdDirection,
     };
     use crate::{connection::ConnectionId, data::SeriesId, process_recorder::ProcessMeasurement};
-
-    #[test]
-    fn triggers_above_threshold_after_hold_time() {
-        let start = Instant::now();
-        let mut state = ScenarioConditionState::new(
-            ScenarioCondition {
-                series: "temperature".to_owned(),
-                direction: ThresholdDirection::Above,
-                threshold: 150.0,
-                hold: Duration::from_secs(5),
-                hysteresis: 2.0,
-            },
-            ScenarioTriggerTarget::Callback("hold".to_owned()),
-        );
-
-        assert!(!state.update(151.0, start));
-        assert!(!state.update(151.0, start + Duration::from_secs(4)));
-        assert!(state.update(151.0, start + Duration::from_secs(5)));
-        assert!(!state.update(151.0, start + Duration::from_secs(6)));
-    }
-
-    #[test]
-    fn hysteresis_rearms_threshold_condition() {
-        let start = Instant::now();
-        let mut state = ScenarioConditionState::new(
-            ScenarioCondition {
-                series: "temperature".to_owned(),
-                direction: ThresholdDirection::Above,
-                threshold: 150.0,
-                hold: Duration::from_secs(5),
-                hysteresis: 2.0,
-            },
-            ScenarioTriggerTarget::Callback("hold".to_owned()),
-        );
-
-        assert!(!state.update(151.0, start));
-        assert!(!state.update(149.0, start + Duration::from_secs(4)));
-        assert!(state.update(149.0, start + Duration::from_secs(5)));
-
-        let mut state = ScenarioConditionState::new(
-            ScenarioCondition {
-                series: "temperature".to_owned(),
-                direction: ThresholdDirection::Above,
-                threshold: 150.0,
-                hold: Duration::from_secs(5),
-                hysteresis: 2.0,
-            },
-            ScenarioTriggerTarget::Callback("hold".to_owned()),
-        );
-        assert!(!state.update(151.0, start));
-        assert!(!state.update(148.0, start + Duration::from_secs(4)));
-        assert!(!state.update(151.0, start + Duration::from_secs(5)));
-        assert!(state.update(151.0, start + Duration::from_secs(10)));
-    }
 
     #[test]
     fn race_uses_declaration_order_and_cancels_losers() {
         let now = Instant::now();
         let condition = ScenarioCondition {
-            series: "temperature".to_owned(),
-            direction: ThresholdDirection::Above,
-            threshold: 150.0,
+            kind: ScenarioConditionKind::Threshold {
+                series: "temperature".to_owned(),
+                direction: ThresholdDirection::Above,
+                threshold: 150.0,
+                hysteresis: 0.0,
+            },
             hold: Duration::ZERO,
-            hysteresis: 0.0,
         };
         let mut scenario = ScenarioState::new();
         scenario.races.push(
@@ -1265,7 +1189,7 @@ mod tests {
             value: 151.0,
         }];
 
-        let winner = scenario.poll_race(now, &measurements).unwrap();
+        let winner = scenario.poll_race(now, 10.0, &measurements).unwrap();
 
         assert_eq!(winner.alternative_index, 0);
         assert!(matches!(
@@ -1279,7 +1203,7 @@ mod tests {
         assert!(scenario.races.is_empty());
         assert!(
             scenario
-                .poll_race(now + Duration::from_secs(1), &[])
+                .poll_race(now + Duration::from_secs(1), 11.0, &[])
                 .is_none()
         );
     }
@@ -1316,7 +1240,7 @@ mod tests {
         scenario.pending_stage_activation = Some(heating.clone());
 
         assert!(scenario.races.is_empty());
-        assert!(scenario.poll_race(activation_time, &[]).is_none());
+        assert!(scenario.poll_race(activation_time, 0.0, &[]).is_none());
 
         assert_eq!(
             scenario
@@ -1326,12 +1250,12 @@ mod tests {
         );
         assert!(
             scenario
-                .poll_race(activation_time + Duration::from_secs(9), &[])
+                .poll_race(activation_time + Duration::from_secs(9), 9.0, &[])
                 .is_none()
         );
 
         let winner = scenario
-            .poll_race(activation_time + Duration::from_secs(10), &[])
+            .poll_race(activation_time + Duration::from_secs(10), 10.0, &[])
             .unwrap();
         assert!(matches!(
             winner.target,
