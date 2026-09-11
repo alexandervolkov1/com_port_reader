@@ -757,8 +757,8 @@ mod tests {
         application_paths::ApplicationPaths,
         connection::ConnectionId,
         data::{
-            NewSeries, SamplingInterval, SeriesColor, SeriesId, SeriesPollingState, SeriesSource,
-            SeriesStore,
+            NewSeries, Sample, SamplingInterval, SeriesColor, SeriesId, SeriesPollingState,
+            SeriesSample, SeriesSource, SeriesStore,
         },
         instrument::{
             InstrumentValue, ParameterAccess, ParameterRange, ParameterValueType,
@@ -1387,6 +1387,70 @@ mod tests {
         drop(runtime);
         drop(log_model);
 
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn measurement_event_triggers_lua_scenario_end_to_end() {
+        let directory = runtime_test_directory("measurement_scenario");
+        let source = r#"
+            local definition = {
+                connections = {
+                    primary = { port = "COM249" },
+                },
+            }
+
+            local scenario
+
+            function add_overheat_marker()
+                app.add_serial("marker", {
+                    name = "overheat_marker",
+                    interval = 1.0,
+                })
+            end
+
+            function definition.setup()
+                app.add_serial("temperature", {
+                    name = "temperature",
+                    interval = 1.0,
+                })
+
+                scenario = app.scenario({ id = "overheat" })
+                scenario:when({
+                    series = "temperature",
+                    above = 150.0,
+                }, "add_overheat_marker")
+            end
+
+            return definition
+        "#;
+        let profile = write_test_profile(&directory, "startup.lua", source);
+        let (mut runtime, mut log_model, _lua_events) = build_test_runtime(&profile);
+        wait_for_series(&mut runtime, "temperature");
+
+        let metadata = runtime.series().metadata();
+        let temperature = metadata
+            .iter()
+            .find(|series| series.name == "temperature")
+            .unwrap();
+        runtime.process_recorder.record_measurements(
+            temperature.connection_id,
+            &[SeriesSample::new(temperature.id, Sample::new(1.0, 151.0))],
+            &metadata,
+        );
+
+        wait_for_series(&mut runtime, "overheat_marker");
+        runtime.poll();
+        log_model.poll();
+
+        assert!(log_model.entries().iter().any(|entry| {
+            entry
+                .text()
+                .contains("Scenario 'overheat' callback 'add_overheat_marker' completed.")
+        }));
+
+        drop(runtime);
+        drop(log_model);
         fs::remove_dir_all(directory).unwrap();
     }
 
