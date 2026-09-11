@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crossbeam_channel::Sender;
 use mlua::{Lua, Table, UserData, UserDataMethods, Value};
@@ -53,6 +53,24 @@ impl UserData for LuaScenarioHandle {
                     ScenarioCommand::After {
                         id: scenario.id.clone(),
                         delay,
+                        callback,
+                    }
+                    .into(),
+                )
+            },
+        );
+
+        methods.add_method(
+            "at",
+            |_, scenario, (unix_timestamp, callback): (f64, String)| {
+                let deadline = parse_unix_timestamp(unix_timestamp)?;
+                let callback = validate_callback(callback)?;
+
+                send_application_command(
+                    &scenario.command_sender,
+                    ScenarioCommand::At {
+                        id: scenario.id.clone(),
+                        deadline,
                         callback,
                     }
                     .into(),
@@ -158,13 +176,18 @@ fn parse_condition(options: &Table) -> mlua::Result<ScenarioCondition> {
 }
 
 fn parse_duration(seconds: f64, context: &str) -> mlua::Result<Duration> {
-    if !seconds.is_finite() || seconds < 0.0 {
-        return Err(mlua::Error::RuntimeError(format!(
-            "{context} must be finite and non-negative",
-        )));
-    }
+    Duration::try_from_secs_f64(seconds).map_err(|_| {
+        mlua::Error::RuntimeError(format!("{context} must be finite and non-negative",))
+    })
+}
 
-    Ok(Duration::from_secs_f64(seconds))
+fn parse_unix_timestamp(seconds: f64) -> mlua::Result<SystemTime> {
+    let offset = parse_duration(seconds, "Scenario Unix timestamp")?;
+    SystemTime::UNIX_EPOCH.checked_add(offset).ok_or_else(|| {
+        mlua::Error::RuntimeError(
+            "Scenario Unix timestamp is outside the supported range".to_owned(),
+        )
+    })
 }
 
 fn validate_callback(callback: String) -> mlua::Result<String> {
@@ -201,7 +224,7 @@ fn required_string(table: &Table, key: &str, context: &str) -> mlua::Result<Stri
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime};
 
     use crossbeam_channel::unbounded;
     use mlua::Lua;
@@ -224,6 +247,7 @@ mod tests {
             r#"
                 local scenario = app.scenario({ id = "heat_cycle" })
                 scenario:after(1.5, "start_heating")
+                scenario:at(1700000000.25, "stop_heating")
                 scenario:when({
                     series = "temperature",
                     above = 150.0,
@@ -248,6 +272,14 @@ mod tests {
                 if id.as_str() == "heat_cycle"
                     && delay == Duration::from_millis(1_500)
                     && callback == "start_heating"
+        ));
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            UserCommand::Scenario(ScenarioCommand::At { id, deadline, callback })
+                if id.as_str() == "heat_cycle"
+                    && deadline == SystemTime::UNIX_EPOCH
+                        + Duration::from_millis(1_700_000_000_250)
+                    && callback == "stop_heating"
         ));
 
         let UserCommand::Scenario(ScenarioCommand::When {
@@ -299,6 +331,31 @@ mod tests {
             error
                 .to_string()
                 .contains("exactly one of 'above' or 'below'")
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_absolute_time() {
+        let lua = Lua::new();
+        let app = lua.create_table().unwrap();
+        let (sender, _receiver) = unbounded();
+        register_scenario(&lua, &app, sender).unwrap();
+        lua.globals().set("app", app).unwrap();
+
+        let error = lua
+            .load(
+                r#"
+                    local scenario = app.scenario({ id = "heat_cycle" })
+                    scenario:at(-1.0, "callback")
+                "#,
+            )
+            .exec()
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("must be finite and non-negative")
         );
     }
 }

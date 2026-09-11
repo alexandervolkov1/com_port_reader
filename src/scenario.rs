@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -48,6 +48,11 @@ pub(crate) enum ScenarioCommand {
     After {
         id: ScenarioId,
         delay: Duration,
+        callback: String,
+    },
+    At {
+        id: ScenarioId,
+        deadline: SystemTime,
         callback: String,
     },
     When {
@@ -250,6 +255,28 @@ impl ScenarioService {
                     deadline: Instant::now() + delay,
                     callback,
                 });
+            }
+
+            ScenarioCommand::At {
+                id,
+                deadline,
+                callback,
+            } => {
+                let Some(scenario) = self.scenarios.get_mut(&id) else {
+                    self.unknown_scenario(&id);
+                    return;
+                };
+                let delay = deadline
+                    .duration_since(SystemTime::now())
+                    .unwrap_or(Duration::ZERO);
+                let Some(deadline) = Instant::now().checked_add(delay) else {
+                    self.log.error(format!(
+                        "Scenario '{}' absolute deadline is outside the supported range.",
+                        id.as_str(),
+                    ));
+                    return;
+                };
+                scenario.timers.push(ScenarioTimer { deadline, callback });
             }
 
             ScenarioCommand::When {
