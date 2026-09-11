@@ -6,14 +6,28 @@ use crate::{
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
     data::{NewSeries, SamplingInterval, SeriesColor},
+    presentation::PlotPaneKey,
     user_command::{SeriesCommand, UserCommand},
 };
 
-#[derive(Default)]
 pub(super) struct LuaSeriesOptions {
     pub(super) name: Option<String>,
     pub(super) sampling_interval: Option<SamplingInterval>,
     pub(super) color: Option<SeriesColor>,
+    pub(super) visible: bool,
+    pub(super) pane: Option<PlotPaneKey>,
+}
+
+impl Default for LuaSeriesOptions {
+    fn default() -> Self {
+        Self {
+            name: None,
+            sampling_interval: None,
+            color: None,
+            visible: true,
+            pane: None,
+        }
+    }
 }
 
 pub(super) fn parse_series_options(value: Option<Value>) -> mlua::Result<LuaSeriesOptions> {
@@ -80,8 +94,10 @@ fn validate_series_option_keys(options: &Table, allow_connection: bool) -> mlua:
     for pair in options.pairs::<String, Value>() {
         let (key, _) = pair?;
 
-        let known_option = matches!(key.as_str(), "name" | "interval" | "color")
-            || (allow_connection && key == "connection");
+        let known_option = matches!(
+            key.as_str(),
+            "name" | "interval" | "color" | "visible" | "pane"
+        ) || (allow_connection && key == "connection");
 
         if !known_option {
             return Err(mlua::Error::RuntimeError(format!(
@@ -103,17 +119,33 @@ fn parse_series_option_values(options: &Table) -> mlua::Result<LuaSeriesOptions>
         .transpose()
         .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
 
-    let color = options
-        .get::<Option<String>>("color")?
-        .map(|value| value.parse::<SeriesColor>())
-        .transpose()
-        .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+    let (visible, color, pane) = parse_series_presentation(options)?;
 
     Ok(LuaSeriesOptions {
         name,
         sampling_interval,
         color,
+        visible,
+        pane,
     })
+}
+
+pub(super) fn parse_series_presentation(
+    options: &Table,
+) -> mlua::Result<(bool, Option<SeriesColor>, Option<PlotPaneKey>)> {
+    let visible = options.get::<Option<bool>>("visible")?.unwrap_or(true);
+    let color = options
+        .get::<Option<String>>("color")?
+        .map(|value| value.parse::<SeriesColor>())
+        .transpose()
+        .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+    let pane = options
+        .get::<Option<String>>("pane")?
+        .map(PlotPaneKey::new)
+        .transpose()
+        .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+    Ok((visible, color, pane))
 }
 
 pub(super) fn apply_series_options(
@@ -129,6 +161,12 @@ pub(super) fn apply_series_options(
 
     if let Some(color) = options.color {
         new_series = new_series.with_color(color);
+    }
+
+    new_series = new_series.with_visibility(options.visible);
+
+    if let Some(pane) = options.pane {
+        new_series = new_series.with_pane(pane);
     }
 
     new_series

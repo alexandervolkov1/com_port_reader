@@ -3,6 +3,7 @@ use crate::{
     data::{NewControllerDiagnosticSeries, NewSeries, SeriesId, SeriesStore},
     instrument::ConnectedParameterAddress,
     output_control::OutputHandle,
+    presentation::PlotLayoutDefinition,
     process_control::{ControlLoopDefinition, ControlOutputTarget, NewController},
     process_recorder::{ProcessActionContext, ProcessRecorder},
     signal_processing::ProcessingHandle,
@@ -90,6 +91,7 @@ pub(crate) struct ControllerCommandHandler<'a> {
     output_control: &'a OutputHandle,
     process_recorder: &'a ProcessRecorder,
     log: &'a LogHandle,
+    plot_layout: &'a PlotLayoutDefinition,
 }
 
 impl<'a> ControllerCommandHandler<'a> {
@@ -99,6 +101,7 @@ impl<'a> ControllerCommandHandler<'a> {
         output_control: &'a OutputHandle,
         process_recorder: &'a ProcessRecorder,
         log: &'a LogHandle,
+        plot_layout: &'a PlotLayoutDefinition,
     ) -> Self {
         Self {
             series,
@@ -106,6 +109,7 @@ impl<'a> ControllerCommandHandler<'a> {
             output_control,
             process_recorder,
             log,
+            plot_layout,
         }
     }
 
@@ -440,14 +444,27 @@ impl<'a> ControllerCommandHandler<'a> {
     }
 
     fn add_controller_diagnostic(&self, diagnostic_series: NewControllerDiagnosticSeries) {
-        let (controller, diagnostic, name, connection_id, color) = diagnostic_series.into_parts();
+        if let Some(pane) = diagnostic_series.pane()
+            && !self.plot_layout.contains(pane)
+        {
+            self.log.error(format!("Plot pane '{pane}' is not defined"));
+            return;
+        }
+
+        let (controller, diagnostic, name, connection_id, presentation) =
+            diagnostic_series.into_parts();
 
         let mut new_series =
             NewSeries::named_controller_diagnostic(controller.clone(), diagnostic, name.clone())
-                .with_connection(connection_id);
+                .with_connection(connection_id)
+                .with_visibility(presentation.visible);
 
-        if let Some(color) = color {
+        if let Some(color) = presentation.color {
             new_series = new_series.with_color(color);
+        }
+
+        if let Some(pane) = presentation.pane {
+            new_series = new_series.with_pane(pane);
         }
 
         let output_id = match self.series.add_series(new_series) {

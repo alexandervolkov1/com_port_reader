@@ -7,6 +7,7 @@ use crate::{
     connection::ConnectionId,
     data::{NewFilteredSeries, NewSeries, SeriesId, SeriesSource, SeriesStore},
     output_control::OutputHandle,
+    presentation::PlotLayoutDefinition,
     process_recorder::{ProcessActionContext, ProcessRecorder},
     signal_processing::{ProcessingHandle, SignalFilterDefinition},
     user_command::{PauseControllerError, SeriesCommand},
@@ -20,6 +21,7 @@ pub(crate) struct SeriesCommandHandler<'a> {
     output_control: &'a OutputHandle,
     process_recorder: &'a ProcessRecorder,
     log: &'a LogHandle,
+    plot_layout: &'a PlotLayoutDefinition,
 }
 
 impl<'a> SeriesCommandHandler<'a> {
@@ -30,6 +32,7 @@ impl<'a> SeriesCommandHandler<'a> {
         output_control: &'a OutputHandle,
         process_recorder: &'a ProcessRecorder,
         log: &'a LogHandle,
+        plot_layout: &'a PlotLayoutDefinition,
     ) -> Self {
         Self {
             connections,
@@ -38,6 +41,7 @@ impl<'a> SeriesCommandHandler<'a> {
             output_control,
             process_recorder,
             log,
+            plot_layout,
         }
     }
 
@@ -169,13 +173,17 @@ impl<'a> SeriesCommandHandler<'a> {
     }
 
     fn add_series(&self, new_series: NewSeries) -> Result<SeriesId, String> {
+        self.validate_pane(new_series.pane())?;
+
         self.series
             .add_series(new_series)
             .map_err(|error| format!("Failed to add series: {error}",))
     }
 
     fn add_filter(&self, filter: NewFilteredSeries) -> Result<SeriesId, String> {
-        let (input_name, output_name, definition, color) = filter.into_parts();
+        self.validate_pane(filter.pane())?;
+
+        let (input_name, output_name, definition, presentation) = filter.into_parts();
 
         let Some(input_id) = self.series.id_by_name(&input_name) else {
             return Err(format!(
@@ -186,10 +194,15 @@ impl<'a> SeriesCommandHandler<'a> {
             ));
         };
 
-        let mut new_series = NewSeries::named_filtered(input_id, definition, output_name.clone());
+        let mut new_series = NewSeries::named_filtered(input_id, definition, output_name.clone())
+            .with_visibility(presentation.visible);
 
-        if let Some(color) = color {
+        if let Some(color) = presentation.color {
             new_series = new_series.with_color(color);
+        }
+
+        if let Some(pane) = presentation.pane {
+            new_series = new_series.with_pane(pane);
         }
 
         let output_id = self.series.add_series(new_series).map_err(|error| {
@@ -211,6 +224,16 @@ impl<'a> SeriesCommandHandler<'a> {
         }
 
         Ok(output_id)
+    }
+
+    fn validate_pane(&self, pane: Option<&crate::presentation::PlotPaneKey>) -> Result<(), String> {
+        if let Some(pane) = pane
+            && !self.plot_layout.contains(pane)
+        {
+            return Err(format!("Plot pane '{pane}' is not defined"));
+        }
+
+        Ok(())
     }
 
     fn set_filter(

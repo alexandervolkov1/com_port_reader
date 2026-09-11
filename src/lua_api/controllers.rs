@@ -596,10 +596,15 @@ impl LuaControllerHandle {
             .unwrap_or_else(|| format!("{}_{}", self.name, diagnostic.key(),));
 
         let mut series = NewControllerDiagnosticSeries::new(self.name.clone(), diagnostic, name)
-            .with_connection(self.connection_id);
+            .with_connection(self.connection_id)
+            .with_visibility(options.visible);
 
         if let Some(color) = options.color {
             series = series.with_color(color);
+        }
+
+        if let Some(pane) = options.pane {
+            series = series.with_pane(pane);
         }
 
         send_application_command(

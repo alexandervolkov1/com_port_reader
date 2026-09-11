@@ -292,6 +292,8 @@ mod controller_handle_tests {
                         {
                             name = "heater_i",
                             color = "#112233",
+                            visible = false,
+                            pane = "control",
                         }
                     )
                 "##,
@@ -301,7 +303,7 @@ mod controller_handle_tests {
 
         let series = responder.join().unwrap();
 
-        let (controller, diagnostic, name, connection_id, color) = series.into_parts();
+        let (controller, diagnostic, name, connection_id, presentation) = series.into_parts();
 
         assert_eq!(controller, "heater");
 
@@ -311,7 +313,15 @@ mod controller_handle_tests {
 
         assert_eq!(connection_id, ConnectionId::new(2),);
 
-        assert_eq!(color, Some(SeriesColor::new(0x11, 0x22, 0x33,),),);
+        assert_eq!(
+            presentation.color,
+            Some(SeriesColor::new(0x11, 0x22, 0x33,),),
+        );
+        assert!(!presentation.visible);
+        assert_eq!(
+            presentation.pane.as_ref().map(|pane| pane.as_str()),
+            Some("control"),
+        );
     }
 
     #[test]
@@ -370,7 +380,7 @@ mod controller_handle_tests {
 
         let series = responder.join().unwrap();
 
-        let (controller, diagnostic, name, connection_id, color) = series.into_parts();
+        let (controller, diagnostic, name, connection_id, presentation) = series.into_parts();
 
         assert_eq!(controller, "heater");
 
@@ -380,7 +390,7 @@ mod controller_handle_tests {
 
         assert_eq!(connection_id, ConnectionId::PRIMARY,);
 
-        assert_eq!(color, None);
+        assert_eq!(presentation.color, None);
     }
 
     #[test]

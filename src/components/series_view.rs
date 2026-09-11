@@ -22,9 +22,9 @@ pub fn show(
             .collect::<Vec<_>>();
 
         for series in series {
-            let mut visible = series.visible;
+            let mut visible = series.presentation.visible;
 
-            let current_pane = plot.pane_for_series(series.id);
+            let current_pane = plot.pane_for_series(series.id, series.presentation.pane.as_ref());
 
             let mut selected_pane = current_pane;
 

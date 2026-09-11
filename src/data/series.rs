@@ -1,12 +1,29 @@
 use super::{Sample, SamplingInterval, SeriesColor};
 use crate::{
-    connection::ConnectionId, instrument::InstrumentReadRequest,
+    connection::ConnectionId, instrument::InstrumentReadRequest, presentation::PlotPaneKey,
     process_control::ControllerDiagnostic, signal_processing::SignalFilterDefinition,
 };
 
 pub const DEFAULT_METAKON_DEVICE: u8 = 1;
 pub const DEFAULT_METAKON_CHANNEL: u8 = 0;
 pub const DEFAULT_METAKON_SCALE: f64 = 1.0;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SeriesPresentation {
+    pub visible: bool,
+    pub color: Option<SeriesColor>,
+    pub pane: Option<PlotPaneKey>,
+}
+
+impl Default for SeriesPresentation {
+    fn default() -> Self {
+        Self {
+            visible: true,
+            color: None,
+            pane: None,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SeriesId(u64);
@@ -104,7 +121,7 @@ pub struct NewSeries {
     name: Option<String>,
     sampling_interval: Option<SamplingInterval>,
     connection_id: ConnectionId,
-    color: Option<SeriesColor>,
+    presentation: SeriesPresentation,
 }
 
 impl NewSeries {
@@ -116,7 +133,7 @@ impl NewSeries {
             name: None,
             sampling_interval: None,
             connection_id: ConnectionId::PRIMARY,
-            color: None,
+            presentation: SeriesPresentation::default(),
         }
     }
 
@@ -128,7 +145,7 @@ impl NewSeries {
             name: Some(name.into()),
             sampling_interval: None,
             connection_id: ConnectionId::PRIMARY,
-            color: None,
+            presentation: SeriesPresentation::default(),
         }
     }
 
@@ -138,7 +155,7 @@ impl NewSeries {
             name: None,
             sampling_interval: None,
             connection_id: ConnectionId::PRIMARY,
-            color: None,
+            presentation: SeriesPresentation::default(),
         }
     }
 
@@ -148,7 +165,7 @@ impl NewSeries {
             name: Some(name.into()),
             sampling_interval: None,
             connection_id: ConnectionId::PRIMARY,
-            color: None,
+            presentation: SeriesPresentation::default(),
         }
     }
 
@@ -162,7 +179,7 @@ impl NewSeries {
             name: Some(name.into()),
             sampling_interval: None,
             connection_id: ConnectionId::PRIMARY,
-            color: None,
+            presentation: SeriesPresentation::default(),
         }
     }
 
@@ -183,7 +200,7 @@ impl NewSeries {
 
             connection_id: ConnectionId::PRIMARY,
 
-            color: None,
+            presentation: SeriesPresentation::default(),
         }
     }
 
@@ -193,7 +210,17 @@ impl NewSeries {
     }
 
     pub fn with_color(mut self, color: SeriesColor) -> Self {
-        self.color = Some(color);
+        self.presentation.color = Some(color);
+        self
+    }
+
+    pub fn with_visibility(mut self, visible: bool) -> Self {
+        self.presentation.visible = visible;
+        self
+    }
+
+    pub fn with_pane(mut self, pane: PlotPaneKey) -> Self {
+        self.presentation.pane = Some(pane);
         self
     }
 
@@ -209,12 +236,28 @@ impl NewSeries {
         self.sampling_interval
     }
 
-    pub(crate) fn into_parts(self) -> (SeriesSource, Option<String>, Option<SamplingInterval>) {
-        (self.source, self.name, self.sampling_interval)
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        SeriesSource,
+        Option<String>,
+        Option<SamplingInterval>,
+        SeriesPresentation,
+    ) {
+        (
+            self.source,
+            self.name,
+            self.sampling_interval,
+            self.presentation,
+        )
     }
 
     pub(crate) const fn color(&self) -> Option<SeriesColor> {
-        self.color
+        self.presentation.color
+    }
+
+    pub(crate) fn pane(&self) -> Option<&PlotPaneKey> {
+        self.presentation.pane.as_ref()
     }
 
     pub fn with_connection(mut self, connection_id: ConnectionId) -> Self {
@@ -232,7 +275,7 @@ pub struct NewFilteredSeries {
     input_name: String,
     name: String,
     definition: SignalFilterDefinition,
-    color: Option<SeriesColor>,
+    presentation: SeriesPresentation,
 }
 
 impl NewFilteredSeries {
@@ -245,12 +288,22 @@ impl NewFilteredSeries {
             input_name: input_name.into(),
             name: name.into(),
             definition,
-            color: None,
+            presentation: SeriesPresentation::default(),
         }
     }
 
     pub fn with_color(mut self, color: SeriesColor) -> Self {
-        self.color = Some(color);
+        self.presentation.color = Some(color);
+        self
+    }
+
+    pub fn with_visibility(mut self, visible: bool) -> Self {
+        self.presentation.visible = visible;
+        self
+    }
+
+    pub fn with_pane(mut self, pane: PlotPaneKey) -> Self {
+        self.presentation.pane = Some(pane);
         self
     }
 
@@ -267,13 +320,20 @@ impl NewFilteredSeries {
     }
 
     pub(crate) const fn color(&self) -> Option<SeriesColor> {
-        self.color
+        self.presentation.color
     }
 
-    pub(crate) fn into_parts(
-        self,
-    ) -> (String, String, SignalFilterDefinition, Option<SeriesColor>) {
-        (self.input_name, self.name, self.definition, self.color)
+    pub(crate) fn pane(&self) -> Option<&PlotPaneKey> {
+        self.presentation.pane.as_ref()
+    }
+
+    pub(crate) fn into_parts(self) -> (String, String, SignalFilterDefinition, SeriesPresentation) {
+        (
+            self.input_name,
+            self.name,
+            self.definition,
+            self.presentation,
+        )
     }
 }
 
@@ -283,7 +343,7 @@ pub struct NewControllerDiagnosticSeries {
     diagnostic: ControllerDiagnostic,
     name: String,
     connection_id: ConnectionId,
-    color: Option<SeriesColor>,
+    presentation: SeriesPresentation,
 }
 
 impl NewControllerDiagnosticSeries {
@@ -297,7 +357,7 @@ impl NewControllerDiagnosticSeries {
             diagnostic,
             name: name.into(),
             connection_id: ConnectionId::PRIMARY,
-            color: None,
+            presentation: SeriesPresentation::default(),
         }
     }
 
@@ -307,8 +367,22 @@ impl NewControllerDiagnosticSeries {
     }
 
     pub fn with_color(mut self, color: SeriesColor) -> Self {
-        self.color = Some(color);
+        self.presentation.color = Some(color);
         self
+    }
+
+    pub fn with_visibility(mut self, visible: bool) -> Self {
+        self.presentation.visible = visible;
+        self
+    }
+
+    pub fn with_pane(mut self, pane: PlotPaneKey) -> Self {
+        self.presentation.pane = Some(pane);
+        self
+    }
+
+    pub(crate) fn pane(&self) -> Option<&PlotPaneKey> {
+        self.presentation.pane.as_ref()
     }
 
     pub fn into_parts(
@@ -318,14 +392,14 @@ impl NewControllerDiagnosticSeries {
         ControllerDiagnostic,
         String,
         ConnectionId,
-        Option<SeriesColor>,
+        SeriesPresentation,
     ) {
         (
             self.controller,
             self.diagnostic,
             self.name,
             self.connection_id,
-            self.color,
+            self.presentation,
         )
     }
 }
@@ -337,10 +411,9 @@ pub struct Series {
     pub name: String,
     pub source: SeriesSource,
     pub samples: Vec<Sample>,
-    pub visible: bool,
+    pub presentation: SeriesPresentation,
     pub sampling_interval: Option<SamplingInterval>,
     pub polling_state: SeriesPollingState,
-    pub color: Option<SeriesColor>,
 }
 
 impl Series {
@@ -350,7 +423,7 @@ impl Series {
         source: SeriesSource,
         sampling_interval: Option<SamplingInterval>,
         connection_id: ConnectionId,
-        color: Option<SeriesColor>,
+        presentation: SeriesPresentation,
     ) -> Self {
         Self {
             id,
@@ -358,10 +431,9 @@ impl Series {
             name,
             source,
             samples: Vec::new(),
-            visible: true,
+            presentation,
             sampling_interval,
             polling_state: SeriesPollingState::Enabled,
-            color,
         }
     }
 }
@@ -372,7 +444,7 @@ pub struct SeriesMetadata {
     pub connection_id: ConnectionId,
     pub name: String,
     pub source: SeriesSource,
-    pub visible: bool,
+    pub presentation: SeriesPresentation,
     pub sampling_interval: Option<SamplingInterval>,
     pub polling_state: SeriesPollingState,
 }
@@ -384,7 +456,7 @@ impl From<&Series> for SeriesMetadata {
             connection_id: series.connection_id,
             name: series.name.clone(),
             source: series.source.clone(),
-            visible: series.visible,
+            presentation: series.presentation.clone(),
             sampling_interval: series.sampling_interval,
             polling_state: series.polling_state,
         }

@@ -7,6 +7,7 @@ use crate::{
         plot_model::{PlotLine, PlotModel},
     },
     data::{Sample, SeriesColor, SeriesId, SeriesStore},
+    presentation::PlotPaneKey,
     utils::{current_time_f64, mark_for_timestamp},
 };
 
@@ -29,6 +30,7 @@ struct VisibleSeriesSnapshot {
     name: String,
     samples: Vec<Sample>,
     color: Option<SeriesColor>,
+    pane: Option<PlotPaneKey>,
 }
 
 pub fn show(
@@ -362,6 +364,11 @@ fn prepare_lines(
 
     let default_pane_id = plot.panes[0].id;
     let series_panes = &plot.series_panes;
+    let configured_panes = plot
+        .panes
+        .iter()
+        .map(|pane| (pane.key.clone(), pane.id))
+        .collect::<std::collections::HashMap<_, _>>();
 
     for pane in &mut plot.panes {
         pane.lines
@@ -373,6 +380,12 @@ fn prepare_lines(
             let assigned_pane = series_panes
                 .get(&series.id)
                 .copied()
+                .or_else(|| {
+                    series
+                        .pane
+                        .as_ref()
+                        .and_then(|key| configured_panes.get(key).copied())
+                })
                 .unwrap_or(default_pane_id);
 
             if assigned_pane != pane.id {
@@ -435,7 +448,7 @@ fn take_plot_snapshot(
 
         let visible_series = series
             .iter()
-            .filter(|series| series.visible)
+            .filter(|series| series.presentation.visible)
             .map(|series| {
                 let start_idx = series
                     .samples
@@ -449,7 +462,8 @@ fn take_plot_snapshot(
                     id: series.id,
                     name: series.name.clone(),
                     samples: series.samples[start_idx..end_idx].to_vec(),
-                    color: series.color,
+                    color: series.presentation.color,
+                    pane: series.presentation.pane.clone(),
                 }
             })
             .collect();

@@ -1,9 +1,9 @@
 use crossbeam_channel::Sender;
 use mlua::{Lua, Table, Value};
 
-use super::send_application_command;
+use super::{send_application_command, series::parse_series_presentation};
 use crate::{
-    data::{NewFilteredSeries, SeriesColor},
+    data::NewFilteredSeries,
     signal_processing::SignalFilterDefinition,
     user_command::{SeriesCommand, UserCommand},
 };
@@ -34,16 +34,17 @@ pub(super) fn register_add_filter(
 
         let definition = parse_filter_definition(&options, &kind)?;
 
-        let color = options
-            .get::<Option<String>>("color")?
-            .map(|value| value.parse::<SeriesColor>())
-            .transpose()
-            .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+        let (visible, color, pane) = parse_series_presentation(&options)?;
 
-        let mut filter = NewFilteredSeries::new(input_name, name, definition);
+        let mut filter =
+            NewFilteredSeries::new(input_name, name, definition).with_visibility(visible);
 
         if let Some(color) = color {
             filter = filter.with_color(color);
+        }
+
+        if let Some(pane) = pane {
+            filter = filter.with_pane(pane);
         }
 
         send_application_command(&command_sender, SeriesCommand::AddFilter(filter).into())
@@ -104,7 +105,7 @@ fn validate_filter_option_keys(
             }
         };
 
-        let series_option = matches!(key.as_str(), "name" | "color");
+        let series_option = matches!(key.as_str(), "name" | "color" | "visible" | "pane");
 
         if !(parameter_option || allow_series_options && series_option) {
             return Err(mlua::Error::RuntimeError(format!(

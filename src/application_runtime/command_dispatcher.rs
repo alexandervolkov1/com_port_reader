@@ -381,6 +381,7 @@ impl CommandDispatcher {
                     &self.output_control,
                     &self.process_recorder,
                     &self.log,
+                    self.application_definition.plot_layout(),
                 )
                 .execute(command, action_context);
             }
@@ -392,6 +393,7 @@ impl CommandDispatcher {
                     &self.output_control,
                     &self.process_recorder,
                     &self.log,
+                    self.application_definition.plot_layout(),
                 )
                 .execute(command, action_context);
             }

@@ -828,7 +828,7 @@ mod tests {
                 command: "read".to_owned(),
             },
             sampling_interval,
-            visible: true,
+            presentation: crate::data::series::SeriesPresentation::default(),
             polling_state: SeriesPollingState::Enabled,
         }
     }

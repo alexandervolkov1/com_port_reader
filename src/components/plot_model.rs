@@ -150,10 +150,22 @@ impl PlotModel {
         lower.height_weight = combined_weight - upper_weight;
     }
 
-    pub fn pane_for_series(&self, series_id: SeriesId) -> PlotPaneId {
+    pub fn pane_for_series(
+        &self,
+        series_id: SeriesId,
+        configured_pane: Option<&PlotPaneKey>,
+    ) -> PlotPaneId {
         self.series_panes
             .get(&series_id)
             .copied()
+            .or_else(|| {
+                configured_pane.and_then(|key| {
+                    self.panes
+                        .iter()
+                        .find(|pane| &pane.key == key)
+                        .map(|pane| pane.id)
+                })
+            })
             .unwrap_or(self.panes[0].id)
     }
 
@@ -182,6 +194,7 @@ impl Default for PlotModel {
 mod tests {
     use super::PlotModel;
     use crate::data::SeriesId;
+    use crate::presentation::{PlotLayoutDefinition, PlotPaneDefinition, PlotPaneKey};
 
     #[test]
     fn starts_with_one_plot_pane() {
@@ -228,7 +241,26 @@ mod tests {
 
         plot.assign_series(series_id, second_pane_id);
 
-        assert_eq!(plot.pane_for_series(series_id), second_pane_id,);
+        assert_eq!(plot.pane_for_series(series_id, None), second_pane_id,);
+    }
+
+    #[test]
+    fn resolves_configured_plot_pane_key() {
+        let layout = PlotLayoutDefinition::new([
+            PlotPaneDefinition::new(PlotPaneKey::new("temperature").unwrap(), "Temperature", 2.0)
+                .unwrap(),
+            PlotPaneDefinition::new(PlotPaneKey::new("control").unwrap(), "Control", 1.0).unwrap(),
+        ])
+        .unwrap();
+        let plot = PlotModel::from_definition(&layout);
+
+        assert_eq!(
+            plot.pane_for_series(
+                SeriesId::new(42),
+                Some(&PlotPaneKey::new("control").unwrap()),
+            ),
+            plot.panes[1].id,
+        );
     }
 
     #[test]
@@ -246,7 +278,7 @@ mod tests {
 
         plot.remove_last_pane();
 
-        assert_eq!(plot.pane_for_series(series_id), first_pane_id,);
+        assert_eq!(plot.pane_for_series(series_id, None), first_pane_id,);
     }
 
     #[test]

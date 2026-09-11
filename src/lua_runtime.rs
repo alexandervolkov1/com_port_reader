@@ -360,6 +360,8 @@ mod tests {
                             name = "sine",
                             interval = 2.5,
                             color = "#1A2B3C",
+                            visible = false,
+                            pane = "temperature",
                         }
                     )
 
@@ -384,7 +386,7 @@ mod tests {
 
         assert_eq!(new_series.color(), Some(SeriesColor::new(0x1A, 0x2B, 0x3C)),);
 
-        let (source, name, sampling_interval) = new_series.into_parts();
+        let (source, name, sampling_interval, presentation) = new_series.into_parts();
 
         assert_eq!(name.as_deref(), Some("sine"));
 
@@ -399,6 +401,11 @@ mod tests {
                 command: "read sine".to_owned(),
             },
         );
+        assert!(!presentation.visible);
+        assert_eq!(
+            presentation.pane.as_ref().map(|pane| pane.as_str()),
+            Some("temperature"),
+        );
 
         let UserCommand::Series(SeriesCommand::Add(new_series)) =
             command_receiver.try_recv().unwrap()
@@ -410,7 +417,7 @@ mod tests {
 
         assert_eq!(new_series.color(), None);
 
-        let (source, name, sampling_interval) = new_series.into_parts();
+        let (source, name, sampling_interval, _presentation) = new_series.into_parts();
 
         assert_eq!(name, None);
         assert_eq!(sampling_interval, None);
@@ -460,6 +467,8 @@ mod tests {
                             kind = "exponential",
                             time_constant = 5.0,
                             color = "#00AACC",
+                            visible = false,
+                            pane = "temperature",
                         }
                     )
                 "##,
@@ -482,6 +491,13 @@ mod tests {
         );
 
         assert_eq!(filter.color(), Some(SeriesColor::new(0x00, 0xAA, 0xCC,)),);
+
+        let (_, _, _, presentation) = filter.into_parts();
+        assert!(!presentation.visible);
+        assert_eq!(
+            presentation.pane.as_ref().map(|pane| pane.as_str()),
+            Some("temperature"),
+        );
 
         assert!(command_receiver.try_recv().is_err());
     }
@@ -867,7 +883,7 @@ mod tests {
 
             assert_eq!(new_series.connection_id(), ConnectionId::PRIMARY,);
 
-            let (source, name, sampling_interval) = new_series.into_parts();
+            let (source, name, sampling_interval, _presentation) = new_series.into_parts();
 
             assert_eq!(sampling_interval, None);
 

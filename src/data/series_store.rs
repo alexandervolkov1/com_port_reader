@@ -164,9 +164,7 @@ impl SeriesStore {
     pub fn add_series(&self, new_series: NewSeries) -> Result<SeriesId, AddSeriesError> {
         let requested_connection_id = new_series.connection_id();
 
-        let color = new_series.color();
-
-        let (source, requested_name, sampling_interval) = new_series.into_parts();
+        let (source, requested_name, sampling_interval, presentation) = new_series.into_parts();
 
         let source = normalize_series_source(source)?;
 
@@ -220,7 +218,7 @@ impl SeriesStore {
                 source,
                 sampling_interval,
                 connection_id,
-                color,
+                presentation,
             ));
 
             Ok(id)
@@ -444,7 +442,7 @@ impl SeriesStore {
                 return false;
             };
 
-            series.visible = visible;
+            series.presentation.visible = visible;
 
             true
         })
@@ -454,7 +452,7 @@ impl SeriesStore {
         self.with_mut(|series| {
             let series = series.iter_mut().find(|series| series.name == name)?;
 
-            series.color = color;
+            series.presentation.color = color;
 
             Some(series.id)
         })
@@ -608,7 +606,7 @@ mod tests {
 
         assert_eq!(metadata.len(), 1);
         assert_eq!(metadata[0].id, id);
-        assert!(!metadata[0].visible);
+        assert!(!metadata[0].presentation.visible);
     }
 
     #[test]
@@ -1244,7 +1242,7 @@ mod tests {
 
         store.with(|series| {
             assert_eq!(series.len(), 1);
-            assert_eq!(series[0].color, Some(color));
+            assert_eq!(series[0].presentation.color, Some(color));
         });
     }
 
@@ -1266,13 +1264,13 @@ mod tests {
         );
 
         store.with(|series| {
-            assert_eq!(series[0].color, Some(color));
+            assert_eq!(series[0].presentation.color, Some(color));
         });
 
         assert_eq!(store.set_color_by_name("temperature", None), Some(id),);
 
         store.with(|series| {
-            assert_eq!(series[0].color, None);
+            assert_eq!(series[0].presentation.color, None);
         });
 
         assert_eq!(store.set_color_by_name("missing", Some(color),), None,);

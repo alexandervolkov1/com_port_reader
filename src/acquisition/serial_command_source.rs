@@ -406,7 +406,7 @@ mod tests {
                 command: "read walue".to_owned(),
             },
             sampling_interval: None,
-            visible: true,
+            presentation: crate::data::series::SeriesPresentation::default(),
             polling_state: SeriesPollingState::Enabled,
         }];
 
@@ -444,7 +444,7 @@ mod tests {
                 0.1,
             )),
             sampling_interval: None,
-            visible: true,
+            presentation: crate::data::series::SeriesPresentation::default(),
             polling_state: SeriesPollingState::Enabled,
         }];
 
@@ -497,7 +497,7 @@ mod tests {
             name: "signal".to_owned(),
             source: SeriesSource::Instrument(request),
             sampling_interval: None,
-            visible: true,
+            presentation: crate::data::series::SeriesPresentation::default(),
             polling_state: SeriesPollingState::Enabled,
         }];
 
@@ -546,7 +546,7 @@ mod tests {
             source: SeriesSource::SerialCommand {
                 command: "read value".to_owned(),
             },
-            visible: true,
+            presentation: crate::data::series::SeriesPresentation::default(),
             sampling_interval: None,
             polling_state: SeriesPollingState::Enabled,
         };
