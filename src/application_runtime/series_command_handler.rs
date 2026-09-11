@@ -118,6 +118,24 @@ impl<'a> SeriesCommandHandler<'a> {
                 }
             }
 
+            SeriesCommand::SetPane { name, pane } => {
+                let result = self.validate_pane(Some(&pane)).and_then(|()| {
+                    self.series
+                        .set_pane_by_name(&name, pane)
+                        .ok_or_else(|| format!("Series '{name}' not found."))
+                });
+
+                match result {
+                    Ok(id) => self.record_applied(action_context, Some(id), Some(name)),
+                    Err(error) => {
+                        if action_context.is_none() {
+                            self.log.error(error.clone());
+                        }
+                        self.record_failed(action_context, error);
+                    }
+                }
+            }
+
             SeriesCommand::Retry { name } => {
                 self.retry_series(name);
             }

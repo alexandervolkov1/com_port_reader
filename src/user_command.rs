@@ -10,6 +10,7 @@ use crate::{
         InstrumentReadRequest, InstrumentValue, InstrumentWriteRequest, ParameterDescriptor,
     },
     output_control::{OutputRequestError, OutputWriteError},
+    presentation::PlotPaneKey,
     process_control::{
         ControlLoopState, ControlOutputTarget, ControllerDiagnostic, NewController, ReferenceKind,
         ReferenceSource,
@@ -286,6 +287,11 @@ pub(crate) enum SeriesCommand {
     SetColor {
         name: String,
         color: Option<SeriesColor>,
+    },
+
+    SetPane {
+        name: String,
+        pane: PlotPaneKey,
     },
 
     Retry {

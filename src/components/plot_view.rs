@@ -6,7 +6,7 @@ use crate::{
         plot_downsampling::downsample_min_max_into,
         plot_model::{PlotLine, PlotModel},
     },
-    data::{Sample, SeriesColor, SeriesId, SeriesStore},
+    data::{Sample, SeriesColor, SeriesStore},
     presentation::PlotPaneKey,
     utils::{current_time_f64, mark_for_timestamp},
 };
@@ -21,12 +21,10 @@ const X_LABEL_LEFT_MARGIN: f64 = 0.035;
 struct PlotSnapshot {
     min_x: f64,
     max_x: f64,
-    series_ids: Vec<SeriesId>,
     visible_series: Vec<VisibleSeriesSnapshot>,
 }
 
 struct VisibleSeriesSnapshot {
-    id: SeriesId,
     name: String,
     samples: Vec<Sample>,
     color: Option<SeriesColor>,
@@ -111,8 +109,9 @@ pub fn show(
         if ui
             .add_enabled(can_remove, egui::Button::new("Remove last plot"))
             .clicked()
+            && let Some(removed_pane) = plot.remove_last_pane()
         {
-            plot.remove_last_pane();
+            series_store.clear_pane_assignments(&removed_pane);
         }
     });
 }
@@ -359,11 +358,7 @@ fn prepare_lines(
         window_seconds,
     );
 
-    plot.series_panes
-        .retain(|series_id, _| snapshot.series_ids.contains(series_id));
-
     let default_pane_id = plot.panes[0].id;
-    let series_panes = &plot.series_panes;
     let configured_panes = plot
         .panes
         .iter()
@@ -377,15 +372,10 @@ fn prepare_lines(
         let mut prepared_count = 0;
 
         for series in &snapshot.visible_series {
-            let assigned_pane = series_panes
-                .get(&series.id)
-                .copied()
-                .or_else(|| {
-                    series
-                        .pane
-                        .as_ref()
-                        .and_then(|key| configured_panes.get(key).copied())
-                })
+            let assigned_pane = series
+                .pane
+                .as_ref()
+                .and_then(|key| configured_panes.get(key).copied())
                 .unwrap_or(default_pane_id);
 
             if assigned_pane != pane.id {
@@ -444,8 +434,6 @@ fn take_plot_snapshot(
             manual_x_bounds.unwrap_or(live_bounds)
         };
 
-        let series_ids = series.iter().map(|series| series.id).collect();
-
         let visible_series = series
             .iter()
             .filter(|series| series.presentation.visible)
@@ -459,7 +447,6 @@ fn take_plot_snapshot(
                     .partition_point(|sample| sample.timestamp <= max_x);
 
                 VisibleSeriesSnapshot {
-                    id: series.id,
                     name: series.name.clone(),
                     samples: series.samples[start_idx..end_idx].to_vec(),
                     color: series.presentation.color,
@@ -471,7 +458,6 @@ fn take_plot_snapshot(
         PlotSnapshot {
             min_x,
             max_x,
-            series_ids,
             visible_series,
         }
     })

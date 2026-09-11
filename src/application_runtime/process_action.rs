@@ -147,7 +147,9 @@ pub(super) fn process_action_from_command(command: &UserCommand) -> Option<Proce
 
             SeriesCommand::Clear => Some(ProcessAction::ClearSeries),
 
-            SeriesCommand::Retry { .. } | SeriesCommand::RetryAll => None,
+            SeriesCommand::SetPane { .. }
+            | SeriesCommand::Retry { .. }
+            | SeriesCommand::RetryAll => None,
         },
 
         UserCommand::Controller(command) => match command {

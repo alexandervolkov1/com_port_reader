@@ -646,6 +646,11 @@ mod tests {
                         nil
                     )
 
+                    app.set_series_pane(
+                        "reactor_pressure",
+                        "control"
+                    )
+
                     app.retry("temperature")
 
                     app.retry_all()
@@ -699,6 +704,15 @@ mod tests {
                 },
             )
                 if name == "reactor_pressure",
+        ));
+
+        assert!(matches!(
+            command_receiver.try_recv().unwrap(),
+            UserCommand::Series(
+                SeriesCommand::SetPane { name, pane },
+            )
+                if name == "reactor_pressure"
+                    && pane.as_str() == "control",
         ));
 
         assert!(matches!(

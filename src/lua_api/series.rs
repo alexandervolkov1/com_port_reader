@@ -265,6 +265,24 @@ pub(super) fn register_set_series_color(
     app.set("set_color", function)
 }
 
+pub(super) fn register_set_series_pane(
+    lua: &Lua,
+    app: &Table,
+    command_sender: Sender<UserCommand>,
+) -> mlua::Result<()> {
+    let function = lua.create_function(move |_, (name, pane): (String, String)| {
+        let pane =
+            PlotPaneKey::new(pane).map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+
+        send_application_command(
+            &command_sender,
+            SeriesCommand::SetPane { name, pane }.into(),
+        )
+    })?;
+
+    app.set("set_series_pane", function)
+}
+
 pub(super) fn register_retry_series(
     lua: &Lua,
     app: &Table,

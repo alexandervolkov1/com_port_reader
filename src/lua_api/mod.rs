@@ -22,6 +22,7 @@ use self::{
     series::{
         connection_id_from_options, register_add_serial, register_delete_series,
         register_rename_series, register_retry_series, register_set_series_color,
+        register_set_series_pane,
     },
     virtual_instrument::register_virtual_instrument_controller,
 };
@@ -96,6 +97,8 @@ pub fn install(
     register_rename_series(lua, &app, command_sender.clone())?;
 
     register_set_series_color(lua, &app, command_sender.clone())?;
+
+    register_set_series_pane(lua, &app, command_sender.clone())?;
 
     register_retry_series(lua, &app, command_sender.clone())?;
 

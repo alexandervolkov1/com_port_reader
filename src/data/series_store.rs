@@ -8,7 +8,7 @@ use super::{
     SeriesSample, SeriesSource, series_name::normalize_series_name,
 };
 use crate::{
-    connection::ConnectionId, instrument::InstrumentReadRequest,
+    connection::ConnectionId, instrument::InstrumentReadRequest, presentation::PlotPaneKey,
     signal_processing::SignalFilterDefinition,
 };
 
@@ -457,6 +457,36 @@ impl SeriesStore {
             Some(series.id)
         })
     }
+
+    pub fn set_pane(&self, id: SeriesId, pane: Option<PlotPaneKey>) -> bool {
+        self.with_mut(|series| {
+            let Some(series) = series.iter_mut().find(|series| series.id == id) else {
+                return false;
+            };
+
+            series.presentation.pane = pane;
+            true
+        })
+    }
+
+    pub fn set_pane_by_name(&self, name: &str, pane: PlotPaneKey) -> Option<SeriesId> {
+        self.with_mut(|series| {
+            let series = series.iter_mut().find(|series| series.name == name)?;
+
+            series.presentation.pane = Some(pane);
+            Some(series.id)
+        })
+    }
+
+    pub fn clear_pane_assignments(&self, pane: &PlotPaneKey) {
+        self.with_mut(|series| {
+            for series in series {
+                if series.presentation.pane.as_ref() == Some(pane) {
+                    series.presentation.pane = None;
+                }
+            }
+        });
+    }
 }
 
 impl Default for SeriesStore {
@@ -607,6 +637,22 @@ mod tests {
         assert_eq!(metadata.len(), 1);
         assert_eq!(metadata[0].id, id);
         assert!(!metadata[0].presentation.visible);
+    }
+
+    #[test]
+    fn changes_and_clears_plot_pane_assignment() {
+        let store = SeriesStore::new();
+        let id = add_named(&store, "temperature");
+        let pane = crate::presentation::PlotPaneKey::new("temperature").unwrap();
+
+        assert_eq!(
+            store.set_pane_by_name("temperature", pane.clone()),
+            Some(id),
+        );
+        assert_eq!(store.metadata()[0].presentation.pane, Some(pane.clone()));
+
+        store.clear_pane_assignments(&pane);
+        assert_eq!(store.metadata()[0].presentation.pane, None);
     }
 
     #[test]

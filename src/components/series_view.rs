@@ -18,20 +18,20 @@ pub fn show(
         let panes = plot
             .panes
             .iter()
-            .map(|pane| (pane.id, pane.title.clone()))
+            .map(|pane| (pane.id, pane.key.clone(), pane.title.clone()))
             .collect::<Vec<_>>();
 
         for series in series {
             let mut visible = series.presentation.visible;
 
-            let current_pane = plot.pane_for_series(series.id, series.presentation.pane.as_ref());
+            let current_pane = plot.pane_for_series(series.presentation.pane.as_ref());
 
             let mut selected_pane = current_pane;
 
             let selected_title = panes
                 .iter()
-                .find(|(pane_id, _)| *pane_id == selected_pane)
-                .map(|(_, title)| title.as_str())
+                .find(|(pane_id, _, _)| *pane_id == selected_pane)
+                .map(|(_, _, title)| title.as_str())
                 .unwrap_or("Plot");
 
             ui.group(|ui| {
@@ -62,7 +62,7 @@ pub fn show(
                     egui::ComboBox::from_id_salt(("series_plot_pane", series.id))
                         .selected_text(selected_title)
                         .show_ui(ui, |ui| {
-                            for (pane_id, title) in &panes {
+                            for (pane_id, _, title) in &panes {
                                 ui.selectable_value(&mut selected_pane, *pane_id, title);
                             }
                         });
@@ -70,7 +70,11 @@ pub fn show(
             });
 
             if selected_pane != current_pane {
-                plot.assign_series(series.id, selected_pane);
+                let pane = panes
+                    .iter()
+                    .find(|(pane_id, _, _)| *pane_id == selected_pane)
+                    .map(|(_, key, _)| key.clone());
+                series_store.set_pane(series.id, pane);
             }
         }
     });

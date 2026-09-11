@@ -1,8 +1,6 @@
-use std::collections::HashMap;
-
 use egui_plot::PlotPoint;
 
-use crate::data::{SeriesColor, SeriesId};
+use crate::data::SeriesColor;
 use crate::presentation::{PlotLayoutDefinition, PlotPaneKey};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -47,7 +45,6 @@ pub struct PlotModel {
     pub follow_latest: bool,
     pub manual_x_bounds: Option<(f64, f64)>,
     pub panes: Vec<PlotPane>,
-    pub(crate) series_panes: HashMap<SeriesId, PlotPaneId>,
     next_pane_id: u64,
 }
 
@@ -75,7 +72,6 @@ impl PlotModel {
             follow_latest: true,
             manual_x_bounds: None,
             panes,
-            series_panes: HashMap::new(),
             next_pane_id: definition.panes().len() as u64 + 1,
         }
     }
@@ -116,9 +112,9 @@ impl PlotModel {
         ));
     }
 
-    pub fn remove_last_pane(&mut self) {
+    pub fn remove_last_pane(&mut self) -> Option<PlotPaneKey> {
         if self.panes.len() <= 1 {
-            return;
+            return None;
         }
 
         let removed_pane = self.panes.pop().expect("more than one pane exists");
@@ -128,8 +124,7 @@ impl PlotModel {
             .expect("at least one pane remains")
             .height_weight += removed_pane.height_weight;
 
-        self.series_panes
-            .retain(|_, pane_id| *pane_id != removed_pane.id);
+        Some(removed_pane.key)
     }
 
     pub fn resize_adjacent_panes(&mut self, upper_index: usize, delta_weight: f32) {
@@ -150,37 +145,15 @@ impl PlotModel {
         lower.height_weight = combined_weight - upper_weight;
     }
 
-    pub fn pane_for_series(
-        &self,
-        series_id: SeriesId,
-        configured_pane: Option<&PlotPaneKey>,
-    ) -> PlotPaneId {
-        self.series_panes
-            .get(&series_id)
-            .copied()
-            .or_else(|| {
-                configured_pane.and_then(|key| {
-                    self.panes
-                        .iter()
-                        .find(|pane| &pane.key == key)
-                        .map(|pane| pane.id)
-                })
+    pub fn pane_for_series(&self, configured_pane: Option<&PlotPaneKey>) -> PlotPaneId {
+        configured_pane
+            .and_then(|key| {
+                self.panes
+                    .iter()
+                    .find(|pane| &pane.key == key)
+                    .map(|pane| pane.id)
             })
             .unwrap_or(self.panes[0].id)
-    }
-
-    pub fn assign_series(&mut self, series_id: SeriesId, pane_id: PlotPaneId) {
-        if !self.panes.iter().any(|pane| pane.id == pane_id) {
-            return;
-        }
-
-        let default_pane_id = self.panes[0].id;
-
-        if pane_id == default_pane_id {
-            self.series_panes.remove(&series_id);
-        } else {
-            self.series_panes.insert(series_id, pane_id);
-        }
     }
 }
 
@@ -193,7 +166,6 @@ impl Default for PlotModel {
 #[cfg(test)]
 mod tests {
     use super::PlotModel;
-    use crate::data::SeriesId;
     use crate::presentation::{PlotLayoutDefinition, PlotPaneDefinition, PlotPaneKey};
 
     #[test]
@@ -231,17 +203,15 @@ mod tests {
     }
 
     #[test]
-    fn assigns_series_to_plot_pane() {
+    fn resolves_added_plot_pane_key() {
         let mut plot = PlotModel::new();
-        let series_id = SeriesId::new(42);
 
         plot.add_pane();
 
         let second_pane_id = plot.panes[1].id;
+        let second_pane_key = plot.panes[1].key.clone();
 
-        plot.assign_series(series_id, second_pane_id);
-
-        assert_eq!(plot.pane_for_series(series_id, None), second_pane_id,);
+        assert_eq!(plot.pane_for_series(Some(&second_pane_key)), second_pane_id,);
     }
 
     #[test]
@@ -255,30 +225,22 @@ mod tests {
         let plot = PlotModel::from_definition(&layout);
 
         assert_eq!(
-            plot.pane_for_series(
-                SeriesId::new(42),
-                Some(&PlotPaneKey::new("control").unwrap()),
-            ),
+            plot.pane_for_series(Some(&PlotPaneKey::new("control").unwrap())),
             plot.panes[1].id,
         );
     }
 
     #[test]
-    fn returns_series_to_first_pane_when_removed() {
+    fn returns_removed_pane_key_and_falls_back_to_first_pane() {
         let mut plot = PlotModel::new();
-        let series_id = SeriesId::new(42);
 
         plot.add_pane();
 
         let first_pane_id = plot.panes[0].id;
+        let removed_key = plot.panes[1].key.clone();
 
-        let second_pane_id = plot.panes[1].id;
-
-        plot.assign_series(series_id, second_pane_id);
-
-        plot.remove_last_pane();
-
-        assert_eq!(plot.pane_for_series(series_id, None), first_pane_id,);
+        assert_eq!(plot.remove_last_pane(), Some(removed_key.clone()));
+        assert_eq!(plot.pane_for_series(Some(&removed_key)), first_pane_id,);
     }
 
     #[test]
