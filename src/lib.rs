@@ -2,6 +2,7 @@ mod acquisition;
 pub mod app;
 mod app_log;
 pub mod application_definition;
+pub mod application_event;
 pub mod application_paths;
 mod application_runtime;
 mod components;

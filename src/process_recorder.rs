@@ -423,14 +423,19 @@ pub struct ProcessRecorder {
     sink: Arc<dyn ProcessRecordSink>,
     next_action_id: Arc<AtomicU64>,
     timeline_senders: Arc<Mutex<Vec<Sender<ProcessRecord>>>>,
+    application_events: crate::application_event::ApplicationEventHub,
 }
 
 impl ProcessRecorder {
-    pub fn spawn(writer: impl ProcessRecordWriter + 'static) -> io::Result<Self> {
+    pub fn spawn_with_events(
+        writer: impl ProcessRecordWriter + 'static,
+        application_events: crate::application_event::ApplicationEventHub,
+    ) -> io::Result<Self> {
         Ok(Self {
             sink: Arc::new(AsyncProcessRecordSink::spawn(writer)?),
             next_action_id: Arc::new(AtomicU64::new(1)),
             timeline_senders: Arc::new(Mutex::new(Vec::new())),
+            application_events,
         })
     }
 
@@ -446,6 +451,12 @@ impl ProcessRecorder {
     }
 
     pub fn record(&self, record: ProcessRecord) {
+        if let Some(event) =
+            crate::application_event::ApplicationEvent::from_process_record(&record)
+        {
+            self.application_events.publish(event);
+        }
+
         if record.is_timeline_event() {
             let mut senders = self
                 .timeline_senders
@@ -562,6 +573,7 @@ impl Default for ProcessRecorder {
             sink: Arc::new(DisabledProcessRecordSink),
             next_action_id: Arc::new(AtomicU64::new(1)),
             timeline_senders: Arc::new(Mutex::new(Vec::new())),
+            application_events: crate::application_event::ApplicationEventHub::new(),
         }
     }
 }
@@ -613,7 +625,7 @@ mod tests {
         ProcessAction, ProcessActionOrigin, ProcessActionResult, ProcessLogLevel, ProcessRecord,
         ProcessRecordWriter, ProcessRecorder, ProcessRecorderError,
     };
-    use crate::connection::ConnectionId;
+    use crate::{application_event::ApplicationEvent, connection::ConnectionId, data::SeriesId};
 
     struct CollectingWriter {
         records: Arc<Mutex<Vec<ProcessRecord>>>,
@@ -631,9 +643,12 @@ mod tests {
     fn writes_records_on_background_thread() {
         let records = Arc::new(Mutex::new(Vec::new()));
 
-        let recorder = ProcessRecorder::spawn(CollectingWriter {
-            records: Arc::clone(&records),
-        })
+        let recorder = ProcessRecorder::spawn_with_events(
+            CollectingWriter {
+                records: Arc::clone(&records),
+            },
+            crate::application_event::ApplicationEventHub::new(),
+        )
         .unwrap();
 
         recorder.record(ProcessRecord::Log {
@@ -715,5 +730,60 @@ mod tests {
                 ..
             } if response == "42"
         ));
+    }
+
+    #[test]
+    fn publishes_action_lifecycle_to_application_events() {
+        let events = crate::application_event::ApplicationEventHub::new();
+        let receiver = events.subscribe();
+        let recorder =
+            ProcessRecorder::spawn_with_events(super::NullProcessRecordWriter, events).unwrap();
+        let action = ProcessAction::SendSerial {
+            connection_id: ConnectionId::PRIMARY,
+            command: "get".to_owned(),
+        };
+
+        let action_id = recorder.record_action(ProcessActionOrigin::Lua, action.clone());
+        recorder.record_action_failed(action_id, "disconnected");
+
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            ApplicationEvent::ActionRequested {
+                action_id,
+                origin: ProcessActionOrigin::Lua,
+                action,
+            },
+        );
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            ApplicationEvent::ActionFailed {
+                action_id,
+                error: "disconnected".to_owned(),
+            },
+        );
+    }
+
+    #[test]
+    fn publishes_measurements_to_application_events() {
+        let events = crate::application_event::ApplicationEventHub::new();
+        let receiver = events.subscribe();
+        let recorder =
+            ProcessRecorder::spawn_with_events(super::NullProcessRecordWriter, events).unwrap();
+        let measurement = super::ProcessMeasurement {
+            connection_id: ConnectionId::PRIMARY,
+            series_id: SeriesId::new(3),
+            series_name: "temperature".to_owned(),
+            timestamp: 12.5,
+            value: 123.0,
+        };
+
+        recorder.record(ProcessRecord::Measurements {
+            measurements: vec![measurement.clone()],
+        });
+
+        assert_eq!(
+            receiver.try_recv().unwrap(),
+            ApplicationEvent::Measurements(vec![measurement]),
+        );
     }
 }

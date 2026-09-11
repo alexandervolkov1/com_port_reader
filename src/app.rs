@@ -6,6 +6,7 @@ use egui_extras::{Size, StripBuilder};
 use crate::{
     app_log::LogModel,
     application_definition::ApplicationDefinition,
+    application_event::ApplicationEventHub,
     application_paths::ApplicationPaths,
     application_runtime::ApplicationRuntime,
     components::{
@@ -58,18 +59,19 @@ impl MyApp {
 
         let requested_database_path =
             new_process_database_path(application_paths.resolve_data("processes"));
+        let application_events = ApplicationEventHub::new();
 
         let (process_recorder, active_database_path, process_recorder_warning) =
             match SqliteProcessRecordWriter::create(&requested_database_path) {
                 Ok(writer) => (
-                    ProcessRecorder::spawn(writer)
+                    ProcessRecorder::spawn_with_events(writer, application_events.clone())
                         .expect("failed to spawn process recorder thread"),
                     Some(requested_database_path),
                     None,
                 ),
 
                 Err(error) => (
-                    ProcessRecorder::spawn(NullProcessRecordWriter)
+                    ProcessRecorder::spawn_with_events(NullProcessRecordWriter, application_events)
                         .expect("failed to spawn fallback process recorder thread"),
                     None,
                     Some(format!("SQLite process recording is disabled: {error}",)),
