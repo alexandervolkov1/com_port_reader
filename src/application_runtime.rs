@@ -1402,7 +1402,19 @@ mod tests {
 
             local scenario
 
-            function add_overheat_marker()
+            function add_overheat_marker(event)
+                assert(event.scenario_id == "overheat")
+                assert(event.callback == "add_overheat_marker")
+                assert(event.trigger == "measurement")
+                assert(event.fired_at > 0.0)
+                assert(event.series == "temperature")
+                assert(event.value == 151.0)
+                assert(event.timestamp == 1.0)
+                assert(event.condition == "above")
+                assert(event.threshold == 150.0)
+                assert(event.for_seconds == 0.0)
+                assert(event.hysteresis == 0.0)
+
                 app.add_serial("marker", {
                     name = "overheat_marker",
                     interval = 1.0,

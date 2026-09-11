@@ -83,7 +83,7 @@ impl LuaRuntime {
     ) -> mlua::Result<()> {
         crate::lua_api::with_scenario_command_context(invocation.scenario_id().clone(), || {
             run_with_limit(&self.lua, || {
-                invoke_scenario_callback(&self.lua, invocation.callback())
+                invoke_scenario_callback(&self.lua, invocation)
             })
         })
     }

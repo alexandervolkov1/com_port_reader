@@ -71,6 +71,15 @@ pub(crate) enum ThresholdDirection {
     Below,
 }
 
+impl ThresholdDirection {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Above => "above",
+            Self::Below => "below",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ScenarioCondition {
     pub(crate) series: String,
@@ -80,17 +89,52 @@ pub(crate) struct ScenarioCondition {
     pub(crate) hysteresis: f64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ScenarioCallbackTrigger {
+    Timer {
+        delay: Duration,
+    },
+    AbsoluteTime {
+        scheduled_at: SystemTime,
+    },
+    Measurement {
+        series: String,
+        value: f64,
+        timestamp: f64,
+        condition: ScenarioCondition,
+    },
+}
+
+impl ScenarioCallbackTrigger {
+    pub(crate) const fn name(&self) -> &'static str {
+        match self {
+            Self::Timer { .. } => "timer",
+            Self::AbsoluteTime { .. } => "absolute_time",
+            Self::Measurement { .. } => "measurement",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ScenarioCallbackInvocation {
     scenario_id: ScenarioId,
     callback: String,
+    fired_at: SystemTime,
+    trigger: ScenarioCallbackTrigger,
 }
 
 impl ScenarioCallbackInvocation {
-    pub(crate) fn new(scenario_id: ScenarioId, callback: String) -> Self {
+    pub(crate) fn new(
+        scenario_id: ScenarioId,
+        callback: String,
+        fired_at: SystemTime,
+        trigger: ScenarioCallbackTrigger,
+    ) -> Self {
         Self {
             scenario_id,
             callback,
+            fired_at,
+            trigger,
         }
     }
 
@@ -101,9 +145,17 @@ impl ScenarioCallbackInvocation {
     pub(crate) fn callback(&self) -> &str {
         &self.callback
     }
+
+    pub(crate) const fn fired_at(&self) -> SystemTime {
+        self.fired_at
+    }
+
+    pub(crate) const fn trigger(&self) -> &ScenarioCallbackTrigger {
+        &self.trigger
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ScenarioCallbackResult {
     pub(crate) invocation: ScenarioCallbackInvocation,
     pub(crate) error: Option<String>,
@@ -136,6 +188,7 @@ impl ScenarioState {
 struct ScenarioTimer {
     deadline: Instant,
     callback: String,
+    trigger: ScenarioCallbackTrigger,
 }
 
 struct ScenarioConditionState {
@@ -254,6 +307,7 @@ impl ScenarioService {
                 scenario.timers.push(ScenarioTimer {
                     deadline: Instant::now() + delay,
                     callback,
+                    trigger: ScenarioCallbackTrigger::Timer { delay },
                 });
             }
 
@@ -266,7 +320,8 @@ impl ScenarioService {
                     self.unknown_scenario(&id);
                     return;
                 };
-                let delay = deadline
+                let scheduled_at = deadline;
+                let delay = scheduled_at
                     .duration_since(SystemTime::now())
                     .unwrap_or(Duration::ZERO);
                 let Some(deadline) = Instant::now().checked_add(delay) else {
@@ -276,7 +331,11 @@ impl ScenarioService {
                     ));
                     return;
                 };
-                scenario.timers.push(ScenarioTimer { deadline, callback });
+                scenario.timers.push(ScenarioTimer {
+                    deadline,
+                    callback,
+                    trigger: ScenarioCallbackTrigger::AbsoluteTime { scheduled_at },
+                });
             }
 
             ScenarioCommand::When {
@@ -320,6 +379,7 @@ impl ScenarioService {
         self.poll_callback_results();
 
         let now = Instant::now();
+        let fired_at = SystemTime::now();
         let events = self.application_events.try_iter().collect::<Vec<_>>();
         let mut callbacks = Vec::new();
         let mut scheduled = HashSet::new();
@@ -331,7 +391,12 @@ impl ScenarioService {
 
             scenario.timers.retain(|timer| {
                 if timer.deadline <= now && !scheduled.contains(id) {
-                    callbacks.push((id.clone(), timer.callback.clone()));
+                    callbacks.push(ScenarioCallbackInvocation::new(
+                        id.clone(),
+                        timer.callback.clone(),
+                        fired_at,
+                        timer.trigger.clone(),
+                    ));
                     scheduled.insert(id.clone());
                     false
                 } else {
@@ -355,7 +420,17 @@ impl ScenarioService {
                                 }
 
                                 if condition.update(measurement.value, now) {
-                                    callbacks.push((id.clone(), condition.callback.clone()));
+                                    callbacks.push(ScenarioCallbackInvocation::new(
+                                        id.clone(),
+                                        condition.callback.clone(),
+                                        fired_at,
+                                        ScenarioCallbackTrigger::Measurement {
+                                            series: measurement.series_name.clone(),
+                                            value: measurement.value,
+                                            timestamp: measurement.timestamp,
+                                            condition: condition.condition.clone(),
+                                        },
+                                    ));
                                     scheduled.insert(id.clone());
                                     false
                                 } else {
@@ -378,8 +453,8 @@ impl ScenarioService {
             }
         }
 
-        for (id, callback) in callbacks {
-            self.invoke_callback(id, callback);
+        for invocation in callbacks {
+            self.invoke_callback(invocation);
         }
     }
 
@@ -446,13 +521,14 @@ impl ScenarioService {
         }
     }
 
-    fn invoke_callback(&mut self, id: ScenarioId, callback: String) {
+    fn invoke_callback(&mut self, invocation: ScenarioCallbackInvocation) {
+        let id = invocation.scenario_id().clone();
+        let callback = invocation.callback().to_owned();
+
         let Some(scenario) = self.scenarios.get_mut(&id) else {
             return;
         };
         scenario.callback_in_flight = true;
-
-        let invocation = ScenarioCallbackInvocation::new(id.clone(), callback.clone());
 
         if let Err(error) = self
             .lua

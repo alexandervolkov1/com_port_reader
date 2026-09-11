@@ -458,22 +458,53 @@ function Controller:reset() end
 ---@field hysteresis? number Non-negative rearming hysteresis. Default: 0.
 ---@field edge? '"rising"' Only rising-edge triggering is currently supported.
 
+---@class ScenarioEvent
+---@field scenario_id string Scenario that produced the callback.
+---@field callback string Callback name selected by the scenario.
+---@field trigger '"timer"'|'"absolute_time"'|'"measurement"' Trigger kind.
+---@field fired_at number UTC Unix timestamp when the trigger was dispatched.
+
+---@class ScenarioTimerEvent: ScenarioEvent
+---@field trigger '"timer"'
+---@field delay_seconds number Requested monotonic relative delay.
+
+---@class ScenarioAbsoluteTimeEvent: ScenarioEvent
+---@field trigger '"absolute_time"'
+---@field scheduled_at number Requested UTC Unix timestamp.
+
+---@class ScenarioMeasurementEvent: ScenarioEvent
+---@field trigger '"measurement"'
+---@field series string Series that satisfied the condition.
+---@field value number Measurement value that fired the callback.
+---@field timestamp number Measurement Unix timestamp.
+---@field condition '"above"'|'"below"' Threshold comparison.
+---@field threshold number Configured threshold.
+---@field for_seconds number Configured continuous hold duration.
+---@field hysteresis number Configured rearming hysteresis.
+
+---@alias ScenarioCallbackEvent
+---| ScenarioTimerEvent
+---| ScenarioAbsoluteTimeEvent
+---| ScenarioMeasurementEvent
+
+---@alias ScenarioCallback fun(event: ScenarioCallbackEvent)
+
 ---@class Scenario
 local Scenario = {}
 
 ---Schedules a one-shot callback after a monotonic relative delay.
 ---@param seconds number Finite non-negative delay.
----@param callback string Global or unambiguous application-script callback name.
+---@param callback string Global or unambiguous application-script callback name receiving a ScenarioTimerEvent.
 function Scenario:after(seconds, callback) end
 
 ---Schedules a one-shot callback at an absolute UTC Unix timestamp.
 ---@param unix_timestamp number Seconds since 1970-01-01 00:00:00 UTC.
----@param callback string Global or unambiguous application-script callback name.
+---@param callback string Global or unambiguous application-script callback name receiving a ScenarioAbsoluteTimeEvent.
 function Scenario:at(unix_timestamp, callback) end
 
 ---Schedules a one-shot measurement condition evaluated by Rust.
 ---@param condition ScenarioCondition
----@param callback string Global or unambiguous application-script callback name.
+---@param callback string Global or unambiguous application-script callback name receiving a ScenarioMeasurementEvent.
 function Scenario:when(condition, callback) end
 
 ---Cancels the scenario and all of its pending tasks.

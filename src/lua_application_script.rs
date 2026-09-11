@@ -2,12 +2,16 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     rc::Rc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use crossbeam_channel::Sender;
 use mlua::{Lua, Table, Value};
 
-use crate::control_panel::{ControlDefinition, ControlPanelDefinition};
+use crate::{
+    control_panel::{ControlDefinition, ControlPanelDefinition},
+    scenario::{ScenarioCallbackInvocation, ScenarioCallbackTrigger},
+};
 
 const SCRIPT_REGISTRY_KEY: &str = "com_port_reader.application_scripts";
 
@@ -141,9 +145,15 @@ pub(crate) fn invoke_control_callback(
     }
 }
 
-pub(crate) fn invoke_scenario_callback(lua: &Lua, callback_name: &str) -> mlua::Result<()> {
+pub(crate) fn invoke_scenario_callback(
+    lua: &Lua,
+    invocation: &ScenarioCallbackInvocation,
+) -> mlua::Result<()> {
+    let callback_name = invocation.callback();
+    let event = scenario_callback_event(lua, invocation)?;
+
     if let Value::Function(callback) = lua.globals().get::<Value>(callback_name)? {
-        return callback.call(());
+        return callback.call(event);
     }
 
     let registry: Table = lua.named_registry_value(SCRIPT_REGISTRY_KEY)?;
@@ -170,7 +180,61 @@ pub(crate) fn invoke_scenario_callback(lua: &Lua, callback_name: &str) -> mlua::
         )));
     };
 
-    callback.call(())
+    callback.call(event)
+}
+
+fn scenario_callback_event(
+    lua: &Lua,
+    invocation: &ScenarioCallbackInvocation,
+) -> mlua::Result<Table> {
+    let event = lua.create_table()?;
+    event.set("scenario_id", invocation.scenario_id().as_str())?;
+    event.set("callback", invocation.callback())?;
+    event.set("trigger", invocation.trigger().name())?;
+    event.set(
+        "fired_at",
+        unix_timestamp(invocation.fired_at(), "fired_at")?,
+    )?;
+
+    match invocation.trigger() {
+        ScenarioCallbackTrigger::Timer { delay } => {
+            event.set("delay_seconds", delay.as_secs_f64())?;
+        }
+
+        ScenarioCallbackTrigger::AbsoluteTime { scheduled_at } => {
+            event.set(
+                "scheduled_at",
+                unix_timestamp(*scheduled_at, "scheduled_at")?,
+            )?;
+        }
+
+        ScenarioCallbackTrigger::Measurement {
+            series,
+            value,
+            timestamp,
+            condition,
+        } => {
+            event.set("series", series.as_str())?;
+            event.set("value", *value)?;
+            event.set("timestamp", *timestamp)?;
+            event.set("condition", condition.direction.as_str())?;
+            event.set("threshold", condition.threshold)?;
+            event.set("for_seconds", condition.hold.as_secs_f64())?;
+            event.set("hysteresis", condition.hysteresis)?;
+        }
+    }
+
+    Ok(event)
+}
+
+fn unix_timestamp(time: SystemTime, field: &str) -> mlua::Result<f64> {
+    time.duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .map_err(|_| {
+            runtime_error(format!(
+                "Scenario callback event field '{field}' is before the Unix epoch",
+            ))
+        })
 }
 
 pub(crate) fn install(
@@ -790,12 +854,18 @@ fn runtime_error(message: impl Into<String>) -> mlua::Error {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, SystemTime};
+
     use crossbeam_channel::unbounded;
     use mlua::{Lua, Table, Value};
 
     use super::{
         LuaApplicationEvent, LuaControlArgument, LuaControlInvocation, LuaControlValue,
         SCRIPT_REGISTRY_KEY, install, invoke_control_callback, invoke_scenario_callback,
+    };
+    use crate::scenario::{
+        ScenarioCallbackInvocation, ScenarioCallbackTrigger, ScenarioCondition, ScenarioId,
+        ThresholdDirection,
     };
 
     #[test]
@@ -1012,8 +1082,8 @@ mod tests {
         lua.load(
             r#"
                 local script = { id = "demo" }
-                function script.advance()
-                    scenario_value = 42
+                function script.advance(event)
+                    scenario_event = event
                 end
                 app.register_script(script)
             "#,
@@ -1021,9 +1091,108 @@ mod tests {
         .exec()
         .unwrap();
 
-        invoke_scenario_callback(&lua, "advance").unwrap();
+        let invocation = ScenarioCallbackInvocation::new(
+            ScenarioId::new("heat_cycle").unwrap(),
+            "advance".to_owned(),
+            SystemTime::UNIX_EPOCH + Duration::from_secs_f64(20.25),
+            ScenarioCallbackTrigger::Timer {
+                delay: Duration::from_secs_f64(5.5),
+            },
+        );
 
-        assert_eq!(lua.globals().get::<i64>("scenario_value").unwrap(), 42);
+        invoke_scenario_callback(&lua, &invocation).unwrap();
+
+        let event = lua.globals().get::<Table>("scenario_event").unwrap();
+        assert_eq!(event.get::<String>("scenario_id").unwrap(), "heat_cycle");
+        assert_eq!(event.get::<String>("callback").unwrap(), "advance");
+        assert_eq!(event.get::<String>("trigger").unwrap(), "timer");
+        assert_eq!(event.get::<f64>("fired_at").unwrap(), 20.25);
+        assert_eq!(event.get::<f64>("delay_seconds").unwrap(), 5.5);
+    }
+
+    #[test]
+    fn passes_absolute_time_context_to_global_scenario_callback() {
+        let lua = Lua::new();
+        lua.load("function capture(event) scenario_event = event end")
+            .exec()
+            .unwrap();
+
+        let invocation = ScenarioCallbackInvocation::new(
+            ScenarioId::new("scheduled_cycle").unwrap(),
+            "capture".to_owned(),
+            SystemTime::UNIX_EPOCH + Duration::from_secs_f64(30.5),
+            ScenarioCallbackTrigger::AbsoluteTime {
+                scheduled_at: SystemTime::UNIX_EPOCH + Duration::from_secs_f64(25.75),
+            },
+        );
+
+        invoke_scenario_callback(&lua, &invocation).unwrap();
+
+        let event = lua.globals().get::<Table>("scenario_event").unwrap();
+        assert_eq!(
+            event.get::<String>("scenario_id").unwrap(),
+            "scheduled_cycle"
+        );
+        assert_eq!(event.get::<String>("callback").unwrap(), "capture");
+        assert_eq!(event.get::<String>("trigger").unwrap(), "absolute_time");
+        assert_eq!(event.get::<f64>("fired_at").unwrap(), 30.5);
+        assert_eq!(event.get::<f64>("scheduled_at").unwrap(), 25.75);
+    }
+
+    #[test]
+    fn passes_measurement_context_to_global_scenario_callback() {
+        let lua = Lua::new();
+        lua.load("function capture(event) scenario_event = event end")
+            .exec()
+            .unwrap();
+
+        let invocation = ScenarioCallbackInvocation::new(
+            ScenarioId::new("heat_cycle").unwrap(),
+            "capture".to_owned(),
+            SystemTime::UNIX_EPOCH + Duration::from_secs_f64(50.0),
+            ScenarioCallbackTrigger::Measurement {
+                series: "temperature".to_owned(),
+                value: 151.25,
+                timestamp: 49.5,
+                condition: ScenarioCondition {
+                    series: "temperature".to_owned(),
+                    direction: ThresholdDirection::Above,
+                    threshold: 150.0,
+                    hold: Duration::from_secs(5),
+                    hysteresis: 2.0,
+                },
+            },
+        );
+
+        invoke_scenario_callback(&lua, &invocation).unwrap();
+
+        let event = lua.globals().get::<Table>("scenario_event").unwrap();
+        assert_eq!(event.get::<String>("trigger").unwrap(), "measurement");
+        assert_eq!(event.get::<String>("series").unwrap(), "temperature");
+        assert_eq!(event.get::<f64>("value").unwrap(), 151.25);
+        assert_eq!(event.get::<f64>("timestamp").unwrap(), 49.5);
+        assert_eq!(event.get::<String>("condition").unwrap(), "above");
+        assert_eq!(event.get::<f64>("threshold").unwrap(), 150.0);
+        assert_eq!(event.get::<f64>("for_seconds").unwrap(), 5.0);
+        assert_eq!(event.get::<f64>("hysteresis").unwrap(), 2.0);
+    }
+
+    #[test]
+    fn rejects_scenario_context_timestamp_before_unix_epoch() {
+        let lua = Lua::new();
+        lua.load("function capture(_) end").exec().unwrap();
+
+        let invocation = ScenarioCallbackInvocation::new(
+            ScenarioId::new("heat_cycle").unwrap(),
+            "capture".to_owned(),
+            SystemTime::UNIX_EPOCH - Duration::from_secs(1),
+            ScenarioCallbackTrigger::Timer {
+                delay: Duration::ZERO,
+            },
+        );
+
+        let error = invoke_scenario_callback(&lua, &invocation).unwrap_err();
+        assert!(error.to_string().contains("fired_at"));
     }
 
     #[test]

@@ -268,14 +268,14 @@ fn load_application_scripts(paths: Vec<PathBuf>) -> Result<Vec<ApplicationScript
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime};
 
     use crossbeam_channel::{Receiver, Sender, unbounded};
 
     use super::{LuaEvent, LuaWorker, load_application_scripts};
     use crate::{
         application_definition::ApplicationDefinition,
-        scenario::{ScenarioCallbackInvocation, ScenarioId},
+        scenario::{ScenarioCallbackInvocation, ScenarioCallbackTrigger, ScenarioId},
         user_command::{AcquisitionCommand, UserCommand},
     };
 
@@ -369,6 +369,10 @@ mod tests {
                 ScenarioCallbackInvocation::new(
                     ScenarioId::new("test").unwrap(),
                     "scenario_callback".to_owned(),
+                    SystemTime::UNIX_EPOCH + Duration::from_secs(1),
+                    ScenarioCallbackTrigger::Timer {
+                        delay: Duration::ZERO,
+                    },
                 ),
                 result_sender,
             )
@@ -410,6 +414,10 @@ mod tests {
                 ScenarioCallbackInvocation::new(
                     ScenarioId::new("heat_cycle").unwrap(),
                     "scenario_callback".to_owned(),
+                    SystemTime::UNIX_EPOCH + Duration::from_secs(1),
+                    ScenarioCallbackTrigger::Timer {
+                        delay: Duration::ZERO,
+                    },
                 ),
                 result_sender,
             )
