@@ -15,7 +15,11 @@ pub fn show(
     ScrollArea::vertical().show(ui, |ui| {
         let series = series_store.metadata();
 
-        let pane_ids = plot.panes.iter().map(|pane| pane.id).collect::<Vec<_>>();
+        let panes = plot
+            .panes
+            .iter()
+            .map(|pane| (pane.id, pane.title.clone()))
+            .collect::<Vec<_>>();
 
         for series in series {
             let mut visible = series.visible;
@@ -24,10 +28,11 @@ pub fn show(
 
             let mut selected_pane = current_pane;
 
-            let selected_number = pane_ids
+            let selected_title = panes
                 .iter()
-                .position(|pane_id| *pane_id == selected_pane)
-                .map_or(1, |index| index + 1);
+                .find(|(pane_id, _)| *pane_id == selected_pane)
+                .map(|(_, title)| title.as_str())
+                .unwrap_or("Plot");
 
             ui.group(|ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -55,14 +60,10 @@ pub fn show(
                     ui.label("Plot:");
 
                     egui::ComboBox::from_id_salt(("series_plot_pane", series.id))
-                        .selected_text(format!("Plot {selected_number}",))
+                        .selected_text(selected_title)
                         .show_ui(ui, |ui| {
-                            for (index, pane_id) in pane_ids.iter().copied().enumerate() {
-                                ui.selectable_value(
-                                    &mut selected_pane,
-                                    pane_id,
-                                    format!("Plot {}", index + 1,),
-                                );
+                            for (pane_id, title) in &panes {
+                                ui.selectable_value(&mut selected_pane, *pane_id, title);
                             }
                         });
                 });

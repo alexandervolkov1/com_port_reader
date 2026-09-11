@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use egui_plot::PlotPoint;
 
 use crate::data::{SeriesColor, SeriesId};
+use crate::presentation::{PlotLayoutDefinition, PlotPaneKey};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PlotPaneId(u64);
@@ -22,15 +23,19 @@ pub struct PlotLine {
 
 pub struct PlotPane {
     pub id: PlotPaneId,
+    pub key: PlotPaneKey,
+    pub title: String,
     pub lines: Vec<PlotLine>,
     pub auto_y: bool,
     pub height_weight: f32,
 }
 
 impl PlotPane {
-    fn new(id: PlotPaneId, height_weight: f32) -> Self {
+    fn new(id: PlotPaneId, key: PlotPaneKey, title: String, height_weight: f32) -> Self {
         Self {
             id,
+            key,
+            title,
             lines: Vec::new(),
             auto_y: true,
             height_weight,
@@ -48,12 +53,30 @@ pub struct PlotModel {
 
 impl PlotModel {
     pub fn new() -> Self {
+        Self::from_definition(&PlotLayoutDefinition::default())
+    }
+
+    pub fn from_definition(definition: &PlotLayoutDefinition) -> Self {
+        let panes = definition
+            .panes()
+            .iter()
+            .enumerate()
+            .map(|(index, pane)| {
+                PlotPane::new(
+                    PlotPaneId::new(index as u64 + 1),
+                    pane.key().clone(),
+                    pane.title().to_owned(),
+                    pane.weight(),
+                )
+            })
+            .collect();
+
         Self {
             follow_latest: true,
             manual_x_bounds: None,
-            panes: vec![PlotPane::new(PlotPaneId::new(1), 1.0)],
+            panes,
             series_panes: HashMap::new(),
-            next_pane_id: 2,
+            next_pane_id: definition.panes().len() as u64 + 1,
         }
     }
 
@@ -75,7 +98,22 @@ impl PlotModel {
             new_weight
         };
 
-        self.panes.push(PlotPane::new(id, new_weight));
+        let mut suffix = self.next_pane_id - 1;
+        let key = loop {
+            let candidate = PlotPaneKey::new(format!("plot_{suffix}"))
+                .expect("generated plot pane key is valid");
+            if !self.panes.iter().any(|pane| pane.key == candidate) {
+                break candidate;
+            }
+            suffix += 1;
+        };
+
+        self.panes.push(PlotPane::new(
+            id,
+            key,
+            format!("Plot {}", self.panes.len() + 1),
+            new_weight,
+        ));
     }
 
     pub fn remove_last_pane(&mut self) {

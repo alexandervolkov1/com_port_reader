@@ -9,6 +9,7 @@ use crate::{
         SerialConnectionDefinition,
     },
     connection::ConnectionId,
+    presentation::{PlotLayoutDefinition, PlotPaneDefinition, PlotPaneKey},
     serial_connection::SerialPortConfig,
 };
 
@@ -121,6 +122,10 @@ pub fn apply_lua_definition(
             .map_err(|error| LuaApplicationDefinitionError::new(error.to_string()))?;
     }
 
+    if let Some(plot_panes) = root.get::<Option<Table>>("plot_panes")? {
+        definition.set_plot_layout(parse_plot_layout(&plot_panes)?);
+    }
+
     Ok(definition)
 }
 
@@ -144,7 +149,7 @@ fn validate_root_keys(root: &Table) -> Result<(), LuaApplicationDefinitionError>
 
         if !matches!(
             key.as_str(),
-            "application" | "connections" | "emulator" | "scripts" | "setup"
+            "application" | "connections" | "emulator" | "scripts" | "plot_panes" | "setup"
         ) {
             return Err(LuaApplicationDefinitionError::new(format!(
                 "Unknown application definition section '{key}'",
@@ -153,6 +158,69 @@ fn validate_root_keys(root: &Table) -> Result<(), LuaApplicationDefinitionError>
     }
 
     Ok(())
+}
+
+fn parse_plot_layout(
+    plot_panes: &Table,
+) -> Result<PlotLayoutDefinition, LuaApplicationDefinitionError> {
+    let length = plot_panes.raw_len();
+    let mut panes = Vec::with_capacity(length);
+
+    for pair in plot_panes.clone().pairs::<Value, Value>() {
+        let (key, _) = pair.map_err(LuaApplicationDefinitionError::from)?;
+        let Value::Integer(index) = key else {
+            return Err(LuaApplicationDefinitionError::new(
+                "Application definition section 'plot_panes' must be an array",
+            ));
+        };
+        let valid = usize::try_from(index)
+            .ok()
+            .is_some_and(|index| index >= 1 && index <= length);
+        if !valid {
+            return Err(LuaApplicationDefinitionError::new(
+                "Application definition section 'plot_panes' must be a continuous array",
+            ));
+        }
+    }
+
+    for index in 1..=length {
+        let pane = plot_panes
+            .raw_get::<Table>(index)
+            .map_err(LuaApplicationDefinitionError::from)?;
+
+        for pair in pane.clone().pairs::<String, Value>() {
+            let (key, _) = pair.map_err(LuaApplicationDefinitionError::from)?;
+            if !matches!(key.as_str(), "id" | "title" | "weight") {
+                return Err(LuaApplicationDefinitionError::new(format!(
+                    "Unknown plot pane option '{key}'",
+                )));
+            }
+        }
+
+        let id = pane
+            .get::<Option<String>>("id")
+            .map_err(LuaApplicationDefinitionError::from)?
+            .ok_or_else(|| {
+                LuaApplicationDefinitionError::new(format!("Plot pane #{index} must contain 'id'",))
+            })?;
+        let title = pane
+            .get::<Option<String>>("title")
+            .map_err(LuaApplicationDefinitionError::from)?
+            .unwrap_or_else(|| id.clone());
+        let weight = pane
+            .get::<Option<f32>>("weight")
+            .map_err(LuaApplicationDefinitionError::from)?
+            .unwrap_or(1.0);
+        let key = PlotPaneKey::new(id)
+            .map_err(|error| LuaApplicationDefinitionError::new(error.to_string()))?;
+        let definition = PlotPaneDefinition::new(key, title, weight)
+            .map_err(|error| LuaApplicationDefinitionError::new(error.to_string()))?;
+
+        panes.push(definition);
+    }
+
+    PlotLayoutDefinition::new(panes)
+        .map_err(|error| LuaApplicationDefinitionError::new(error.to_string()))
 }
 
 fn parse_application_scripts(
@@ -1221,6 +1289,43 @@ mod tests {
             error.to_string(),
             "Application definition section \
              'scripts' must be an array",
+        );
+    }
+
+    #[test]
+    fn parses_plot_panes() {
+        let definition = apply_lua_definition(
+            r#"
+                return {
+                    plot_panes = {
+                        { id = "temperature", title = "Temperature", weight = 2.0 },
+                        { id = "power", title = "Power" },
+                    },
+                }
+            "#,
+            &base_definition(),
+        )
+        .unwrap();
+
+        let panes = definition.plot_layout().panes();
+
+        assert_eq!(panes.len(), 2);
+        assert_eq!(panes[0].key().as_str(), "temperature");
+        assert_eq!(panes[0].title(), "Temperature");
+        assert_eq!(panes[0].weight(), 2.0);
+        assert_eq!(panes[1].key().as_str(), "power");
+        assert_eq!(panes[1].title(), "Power");
+        assert_eq!(panes[1].weight(), 1.0);
+    }
+
+    #[test]
+    fn rejects_empty_plot_layout() {
+        let error =
+            apply_lua_definition("return { plot_panes = {} }", &base_definition()).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Plot layout must contain at least one pane"
         );
     }
 }

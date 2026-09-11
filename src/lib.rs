@@ -18,6 +18,7 @@ pub mod lua_runtime;
 mod lua_virtual_instrument_model;
 mod lua_worker;
 mod output_control;
+pub mod presentation;
 pub mod process_control;
 mod process_recorder;
 pub mod protocol;

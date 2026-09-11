@@ -5,7 +5,10 @@ use std::{
     time::Duration,
 };
 
-use crate::{connection::ConnectionId, serial_connection::SerialPortConfig};
+use crate::{
+    connection::ConnectionId, presentation::PlotLayoutDefinition,
+    serial_connection::SerialPortConfig,
+};
 
 const MIN_FPS: u32 = 1;
 const MAX_FPS: u32 = 240;
@@ -20,6 +23,7 @@ pub struct ApplicationDefinition {
     serial_connections: Vec<SerialConnectionDefinition>,
     emulator: Option<EmulatorDefinition>,
     scripts: Vec<ApplicationScriptDefinition>,
+    plot_layout: PlotLayoutDefinition,
 }
 
 impl ApplicationDefinition {
@@ -29,6 +33,7 @@ impl ApplicationDefinition {
             serial_connections: Vec::new(),
             emulator: None,
             scripts: Vec::new(),
+            plot_layout: PlotLayoutDefinition::default(),
         }
     }
 
@@ -77,6 +82,14 @@ impl ApplicationDefinition {
 
     pub fn scripts(&self) -> &[ApplicationScriptDefinition] {
         &self.scripts
+    }
+
+    pub const fn plot_layout(&self) -> &PlotLayoutDefinition {
+        &self.plot_layout
+    }
+
+    pub fn set_plot_layout(&mut self, plot_layout: PlotLayoutDefinition) {
+        self.plot_layout = plot_layout;
     }
 
     pub fn replace_scripts(

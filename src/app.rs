@@ -81,6 +81,8 @@ impl MyApp {
             process_recorder.clone(),
         );
 
+        let plot = PlotModel::from_definition(definition.plot_layout());
+
         if let Some(path) = active_database_path {
             log_handle.info(format!("Process database: {}", path.display(),));
         }
@@ -122,7 +124,7 @@ impl MyApp {
 
         Self {
             runtime,
-            plot: PlotModel::new(),
+            plot,
             series_panel_open: false,
             log,
             help: HelpModel::default(),
@@ -263,11 +265,11 @@ impl MyApp {
         self.lua_console
             .replace_worker(runtime.lua_handle(), lua_event_receiver, script_directory);
 
+        self.plot = PlotModel::from_definition(runtime.definition().plot_layout());
         self.runtime = runtime;
 
         self.control_panels.clear();
         self.control_panel_open = false;
-        self.plot = PlotModel::new();
     }
 }
 
