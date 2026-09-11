@@ -1,4 +1,45 @@
-Архитектура сейчас выглядит здоровой. Большой рефакторинг уже дал результат: сервисы разделены, команды проходят через единый runtime, Lua изолирован в своём потоке, а безопасность управления сосредоточена в `output_control` и `process_control`. Ещё один общий «рефакторинг ради чистоты» я бы не делал.
+# Постоянный контекст и правила работы
+
+`com_port_reader` — desktop-приложение на Rust 2024 для лабораторной автоматизации и длительной регистрации процессов под Windows 10. Основной стек: `eframe/egui`, `egui_plot`, `crossbeam-channel`, `serialport`, `mlua` Lua 5.4 и `rusqlite`.
+
+Работать небольшими шагами: **один логический шаг — один git commit**. После каждого законченного шага выполнять:
+
+```powershell
+cargo fmt
+cargo test
+cargo clippy --all-targets -- -D warnings
+git diff --check
+```
+
+Перед изменениями изучать существующий код, не дублировать механизмы и сохранять public/Lua API contracts без конкретной причины их менять. Не делать крупных рефакторингов и не строить framework ради framework: архитектурный недостаток, обнаруженный новой функцией, исправлять отдельным локальным refactor-коммитом. Сохранять сложившийся Rust enum/static dispatch; Lua писать компактно и идиоматично.
+
+Критичная цепочка управления:
+
+```text
+Series
+  ↓
+Signal processing / filters
+  ↓
+ControlLoop
+  ↓
+Controller enum (PID / OnOff / Furnace)
+  ↓
+OutputControl / arbiter
+  ↓
+Instrument output
+```
+
+Safety-инварианты нельзя обходить:
+
+- обычная manual-запись в контролируемый параметр переводит output в `Manual`;
+- `controller:pause()` применяет `safe_output`, переводит output в `Manual`, затем ставит processing controller в `Paused`;
+- `controller:resume()` проходит через `AutomaticPending`, переводит output в `Automatic` только после успешной записи и выполняет rollback при ошибке;
+- отключение GUI-контрола — только UX-защита; критичные ограничения по-прежнему проверяются в `process_control`/`output_control`;
+- при изменениях presentation, control panels и scenarios не менять без необходимости semantics acquisition, recording, references и output arbitration.
+
+Дальняя цель проекта — работа с реальными лабораторными приборами, в перспективе Modbus RTU, около 10 сигналов с polling порядка 1 Hz, процессы до двух недель, Lua procedures и воспроизводимый протокол эксперимента. Параметры furnace model (`linear_loss`, `radiation_loss_1000c`, `heater_lag`) предполагается определять по manual runs; `max_power` желательно брать из измеренной электрической мощности.
+
+Архитектура сейчас выглядит здоровой. Большой рефакторинг уже дал результат: сервисы разделены, команды проходят через единый runtime, Lua изолирован в своём потоке, а безопасность управления сосредоточена в `output_control` и `process_control`. Ещё один общий «рефакторинг ради чистоты» делать не следует.
 
 ## Статус выполнения на 2026-09-11
 
@@ -10,8 +51,9 @@
 4. `3d29d1a refactor: separate control state properties` — общие поля `ControlState` отделены от `Readout/Number/Toggle/Button`, `pending` остаётся независимым.
 5. `c3d112f feat: control panel enabled state from Lua` — immutable registry валидированных control metadata и `app.set_control_enabled(..., reason)`.
 6. `254b88a feat: publish application runtime events` — отдельный `ApplicationEventHub` для измерений и lifecycle действий `Requested/Applied/Failed`, независимый от SQLite/timeline.
+7. `f89a33c feat: add event-driven Lua scenarios` — `ScenarioService`, относительные таймеры, пороговые условия и короткие Lua callbacks.
 
-Текущий реализованный шаг, который следует проверить и закоммитить:
+В сценарном коммите реализовано:
 
 - `ScenarioService`, `app.scenario({ id = ... })`, `scenario:after(...)`, `scenario:when(...)` и `scenario:cancel()`;
 - относительные таймеры и выдержки используют `Instant`;
