@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::control_panel_model::{ControlPanelModel, ControlState};
+use super::control_panel_model::{ControlKindState, ControlPanelModel, ControlState};
 use crate::lua_application_script::{LuaControlArgument, LuaControlInvocation};
 
 const VIEWPORT_ID: &str = "application_control_panel";
@@ -106,16 +106,19 @@ fn show_control(
     control: &mut ControlState,
     invocations: &mut Vec<LuaControlInvocation>,
 ) {
-    match control {
-        ControlState::Readout { label, text, .. } => {
-            ui.label(label.as_str());
+    let id = control.id().to_owned();
+    let label = control.label().to_owned();
+    let enabled = control.enabled();
+    let disabled_reason = control.disabled_reason().map(str::to_owned);
+
+    match control.kind_mut() {
+        ControlKindState::Readout { text } => {
+            ui.label(label);
             ui.strong(text.as_str());
             ui.end_row();
         }
 
-        ControlState::Number {
-            id,
-            label,
+        ControlKindState::Number {
             value,
             draft_value,
             pending,
@@ -124,7 +127,7 @@ fn show_control(
             step,
             on_change,
         } => {
-            ui.label(label.as_str());
+            ui.label(label);
 
             let mut editor = egui::DragValue::new(draft_value)
                 .speed(*step)
@@ -140,7 +143,11 @@ fn show_control(
                 (None, None) => editor,
             };
 
-            let response = ui.add_enabled(!*pending, editor);
+            let response = with_disabled_reason(
+                ui.add_enabled(enabled && !*pending, editor),
+                enabled,
+                disabled_reason.as_deref(),
+            );
 
             let value_changed = *draft_value != *value;
 
@@ -161,20 +168,24 @@ fn show_control(
             ui.end_row();
         }
 
-        ControlState::Toggle {
-            id,
-            label,
+        ControlKindState::Toggle {
             draft_value,
             pending,
             on_change,
             ..
         } => {
-            ui.label(label.as_str());
+            ui.label(label);
 
-            if ui
-                .add_enabled(!*pending, egui::Checkbox::without_text(draft_value))
-                .changed()
-            {
+            let response = with_disabled_reason(
+                ui.add_enabled(
+                    enabled && !*pending,
+                    egui::Checkbox::without_text(draft_value),
+                ),
+                enabled,
+                disabled_reason.as_deref(),
+            );
+
+            if response.changed() {
                 *pending = true;
                 invocations.push(LuaControlInvocation::new(
                     script_id,
@@ -188,18 +199,16 @@ fn show_control(
             ui.end_row();
         }
 
-        ControlState::Button {
-            id,
-            label,
-            pending,
-            on_click,
-        } => {
+        ControlKindState::Button { pending, on_click } => {
             ui.label("");
 
-            if ui
-                .add_enabled(!*pending, egui::Button::new(label.as_str()))
-                .clicked()
-            {
+            let response = with_disabled_reason(
+                ui.add_enabled(enabled && !*pending, egui::Button::new(label)),
+                enabled,
+                disabled_reason.as_deref(),
+            );
+
+            if response.clicked() {
                 *pending = true;
 
                 invocations.push(LuaControlInvocation::new(
@@ -214,4 +223,16 @@ fn show_control(
             ui.end_row();
         }
     }
+}
+
+fn with_disabled_reason(
+    response: egui::Response,
+    enabled: bool,
+    disabled_reason: Option<&str>,
+) -> egui::Response {
+    if !enabled && let Some(reason) = disabled_reason {
+        return response.on_disabled_hover_text(reason);
+    }
+
+    response
 }

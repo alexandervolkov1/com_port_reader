@@ -169,16 +169,21 @@ impl ControlPanelState {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum ControlState {
+pub struct ControlState {
+    id: String,
+    label: String,
+    enabled: bool,
+    disabled_reason: Option<String>,
+    kind: ControlKindState,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ControlKindState {
     Readout {
-        id: String,
-        label: String,
         text: String,
     },
 
     Number {
-        id: String,
-        label: String,
         value: f64,
         draft_value: f64,
         pending: bool,
@@ -189,8 +194,6 @@ pub enum ControlState {
     },
 
     Toggle {
-        id: String,
-        label: String,
         value: bool,
         draft_value: bool,
         pending: bool,
@@ -198,8 +201,6 @@ pub enum ControlState {
     },
 
     Button {
-        id: String,
-        label: String,
         pending: bool,
         on_click: String,
     },
@@ -207,40 +208,54 @@ pub enum ControlState {
 
 impl ControlState {
     pub fn id(&self) -> &str {
-        match self {
-            Self::Readout { id, .. }
-            | Self::Number { id, .. }
-            | Self::Toggle { id, .. }
-            | Self::Button { id, .. } => id,
-        }
+        &self.id
+    }
+
+    pub(crate) fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub(crate) const fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub(crate) fn disabled_reason(&self) -> Option<&str> {
+        self.disabled_reason.as_deref()
+    }
+
+    pub(crate) fn kind_mut(&mut self) -> &mut ControlKindState {
+        &mut self.kind
     }
 
     #[cfg(test)]
     pub fn value(&self) -> Option<ControlValueRef<'_>> {
-        match self {
-            Self::Readout { text, .. } => Some(ControlValueRef::Text(text)),
+        match &self.kind {
+            ControlKindState::Readout { text } => Some(ControlValueRef::Text(text)),
 
-            Self::Number { draft_value, .. } => Some(ControlValueRef::Number(*draft_value)),
+            ControlKindState::Number { draft_value, .. } => {
+                Some(ControlValueRef::Number(*draft_value))
+            }
 
-            Self::Toggle { draft_value, .. } => Some(ControlValueRef::Boolean(*draft_value)),
+            ControlKindState::Toggle { draft_value, .. } => {
+                Some(ControlValueRef::Boolean(*draft_value))
+            }
 
-            Self::Button { .. } => None,
+            ControlKindState::Button { .. } => None,
         }
     }
 
     fn set_value(&mut self, value: ControlValue) -> Result<(), ControlPanelStateError> {
         let actual_type = value.type_name();
 
-        match (self, value) {
-            (Self::Readout { text, .. }, ControlValue::Text(value)) => {
+        match (&mut self.kind, value) {
+            (ControlKindState::Readout { text }, ControlValue::Text(value)) => {
                 *text = value;
 
                 Ok(())
             }
 
             (
-                Self::Number {
-                    id,
+                ControlKindState::Number {
                     value,
                     draft_value,
                     minimum,
@@ -249,7 +264,7 @@ impl ControlState {
                 },
                 ControlValue::Number(new_value),
             ) => {
-                validate_number_value(id, new_value, *minimum, *maximum)?;
+                validate_number_value(&self.id, new_value, *minimum, *maximum)?;
 
                 *value = new_value;
                 *draft_value = new_value;
@@ -258,7 +273,7 @@ impl ControlState {
             }
 
             (
-                Self::Toggle {
+                ControlKindState::Toggle {
                     value, draft_value, ..
                 },
                 ControlValue::Boolean(new_value),
@@ -272,11 +287,73 @@ impl ControlState {
             (control, _) => Err(ControlPanelStateError::new(format!(
                 "Cannot assign {actual_type} to {} control '{}'",
                 control.value_type_name(),
-                control.id(),
+                self.id,
             ))),
         }
     }
 
+    fn commit_edit(&mut self) {
+        match &mut self.kind {
+            ControlKindState::Number {
+                value,
+                draft_value,
+                pending,
+                ..
+            } => {
+                *value = *draft_value;
+                *pending = false;
+            }
+
+            ControlKindState::Toggle {
+                value,
+                draft_value,
+                pending,
+                ..
+            } => {
+                *value = *draft_value;
+                *pending = false;
+            }
+
+            ControlKindState::Button { pending, .. } => {
+                *pending = false;
+            }
+
+            ControlKindState::Readout { .. } => {}
+        }
+    }
+
+    fn discard_edit(&mut self) {
+        match &mut self.kind {
+            ControlKindState::Number {
+                value,
+                draft_value,
+                pending,
+                ..
+            } => {
+                *draft_value = *value;
+                *pending = false;
+            }
+
+            ControlKindState::Toggle {
+                value,
+                draft_value,
+                pending,
+                ..
+            } => {
+                *draft_value = *value;
+                *pending = false;
+            }
+
+            ControlKindState::Button { pending, .. } => {
+                *pending = false;
+            }
+
+            ControlKindState::Readout { .. } => {}
+        }
+    }
+}
+
+impl ControlKindState {
     fn value_type_name(&self) -> &'static str {
         match self {
             Self::Readout { .. } => "text",
@@ -285,80 +362,22 @@ impl ControlState {
             Self::Button { .. } => "button",
         }
     }
-
-    fn commit_edit(&mut self) {
-        match self {
-            Self::Number {
-                value,
-                draft_value,
-                pending,
-                ..
-            } => {
-                *value = *draft_value;
-                *pending = false;
-            }
-
-            Self::Toggle {
-                value,
-                draft_value,
-                pending,
-                ..
-            } => {
-                *value = *draft_value;
-                *pending = false;
-            }
-
-            Self::Button { pending, .. } => {
-                *pending = false;
-            }
-
-            Self::Readout { .. } => {}
-        }
-    }
-
-    fn discard_edit(&mut self) {
-        match self {
-            Self::Number {
-                value,
-                draft_value,
-                pending,
-                ..
-            } => {
-                *draft_value = *value;
-                *pending = false;
-            }
-
-            Self::Toggle {
-                value,
-                draft_value,
-                pending,
-                ..
-            } => {
-                *draft_value = *value;
-                *pending = false;
-            }
-
-            Self::Button { pending, .. } => {
-                *pending = false;
-            }
-
-            Self::Readout { .. } => {}
-        }
-    }
 }
 
 impl From<&ControlDefinition> for ControlState {
     fn from(definition: &ControlDefinition) -> Self {
-        match definition {
+        let (id, label, kind) = match definition {
             ControlDefinition::Readout {
                 id,
                 label,
                 initial_text,
-            } => Self::Readout {
-                id: id.clone(),
-                label: label.clone(),
-                text: initial_text.clone(),
-            },
+            } => (
+                id.clone(),
+                label.clone(),
+                ControlKindState::Readout {
+                    text: initial_text.clone(),
+                },
+            ),
 
             ControlDefinition::Number {
                 id,
@@ -368,42 +387,56 @@ impl From<&ControlDefinition> for ControlState {
                 maximum,
                 step,
                 on_change,
-            } => Self::Number {
-                id: id.clone(),
-                label: label.clone(),
-                value: *initial_value,
-                minimum: *minimum,
-                maximum: *maximum,
-                step: *step,
-                on_change: on_change.clone(),
-                draft_value: *initial_value,
-                pending: false,
-            },
+            } => (
+                id.clone(),
+                label.clone(),
+                ControlKindState::Number {
+                    value: *initial_value,
+                    minimum: *minimum,
+                    maximum: *maximum,
+                    step: *step,
+                    on_change: on_change.clone(),
+                    draft_value: *initial_value,
+                    pending: false,
+                },
+            ),
 
             ControlDefinition::Toggle {
                 id,
                 label,
                 initial_value,
                 on_change,
-            } => Self::Toggle {
-                id: id.clone(),
-                label: label.clone(),
-                value: *initial_value,
-                on_change: on_change.clone(),
-                draft_value: *initial_value,
-                pending: false,
-            },
+            } => (
+                id.clone(),
+                label.clone(),
+                ControlKindState::Toggle {
+                    value: *initial_value,
+                    on_change: on_change.clone(),
+                    draft_value: *initial_value,
+                    pending: false,
+                },
+            ),
 
             ControlDefinition::Button {
                 id,
                 label,
                 on_click,
-            } => Self::Button {
-                id: id.clone(),
-                label: label.clone(),
-                on_click: on_click.clone(),
-                pending: false,
-            },
+            } => (
+                id.clone(),
+                label.clone(),
+                ControlKindState::Button {
+                    on_click: on_click.clone(),
+                    pending: false,
+                },
+            ),
+        };
+
+        Self {
+            id,
+            label,
+            enabled: true,
+            disabled_reason: None,
+            kind,
         }
     }
 }
@@ -552,6 +585,11 @@ mod tests {
         assert_eq!(panel.title(), "Metakon 5X3",);
 
         assert_eq!(panel.controls().len(), 4,);
+
+        assert_eq!(panel.controls()[1].id(), "setpoint");
+        assert_eq!(panel.controls()[1].label(), "Setpoint");
+        assert!(panel.controls()[1].enabled());
+        assert_eq!(panel.controls()[1].disabled_reason(), None);
 
         assert_eq!(
             panel.controls()[0].value(),
