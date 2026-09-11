@@ -464,10 +464,21 @@ function Controller:reset() end
 ---@field at? number Absolute UTC Unix timestamp. Exactly one of after, at or when is required.
 ---@field when? ScenarioCondition Measurement condition. Exactly one of after, at or when is required.
 
+---@class ScenarioStageTransition
+---@field next string Destination stage name.
+---@field reason? string Transition reason; defaults to a generated trigger description.
+---@field after? number Relative delay in seconds. Exactly one of after, at or when is required.
+---@field at? number Absolute UTC Unix timestamp. Exactly one of after, at or when is required.
+---@field when? ScenarioCondition Measurement condition. Exactly one of after, at or when is required.
+
+---@class ScenarioStageDefinition
+---@field enter string Callback invoked when the stage is entered.
+---@field transitions? ScenarioStageTransition[] Atomic transitions activated after enter and its actions complete.
+
 ---@class ScenarioEvent
 ---@field scenario_id string Scenario that produced the callback.
 ---@field callback string Callback name selected by the scenario.
----@field trigger '"timer"'|'"absolute_time"'|'"measurement"' Trigger kind.
+---@field trigger '"timer"'|'"absolute_time"'|'"measurement"'|'"stage"' Trigger kind.
 ---@field fired_at number UTC Unix timestamp when the trigger was dispatched.
 
 ---@class ScenarioTimerEvent: ScenarioEvent
@@ -488,10 +499,18 @@ function Controller:reset() end
 ---@field for_seconds number Configured continuous hold duration.
 ---@field hysteresis number Configured rearming hysteresis.
 
+---@class ScenarioStageEvent: ScenarioEvent
+---@field trigger '"stage"'
+---@field stage string Stage being entered.
+---@field previous_stage? string Stage that selected the transition; absent for the initial stage.
+---@field reason string Start or transition reason.
+---@field transition_trigger? '"timer"'|'"absolute_time"'|'"measurement"' Trigger that selected the transition.
+
 ---@alias ScenarioCallbackEvent
 ---| ScenarioTimerEvent
 ---| ScenarioAbsoluteTimeEvent
 ---| ScenarioMeasurementEvent
+---| ScenarioStageEvent
 
 ---@alias ScenarioCallback fun(event: ScenarioCallbackEvent)
 
@@ -518,6 +537,16 @@ function Scenario:when(condition, callback) end
 ---alternatives in the group are cancelled before its callback is dispatched.
 ---@param alternatives ScenarioRaceAlternative[] Non-empty array.
 function Scenario:race(alternatives) end
+
+---Defines a named scenario stage. Definitions are immutable after start.
+---@param name string Unique stage identifier.
+---@param definition ScenarioStageDefinition
+function Scenario:stage(name, definition) end
+
+---Starts stage execution. All transition targets are validated before the
+---initial enter callback is dispatched; this method may only be called once.
+---@param name string Defined initial stage.
+function Scenario:start(name) end
 
 ---Cancels the scenario and all of its pending tasks.
 function Scenario:cancel() end

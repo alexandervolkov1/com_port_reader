@@ -1,4 +1,7 @@
-use std::time::{Duration, SystemTime};
+use std::{
+    collections::HashSet,
+    time::{Duration, SystemTime},
+};
 
 use crossbeam_channel::Sender;
 use mlua::{Lua, Table, UserData, UserDataMethods, Value};
@@ -7,7 +10,8 @@ use super::send_application_command;
 use crate::{
     scenario::{
         ScenarioCommand, ScenarioCondition, ScenarioId, ScenarioRaceAlternative,
-        ScenarioRaceTrigger, ThresholdDirection,
+        ScenarioRaceTrigger, ScenarioStageDefinition, ScenarioStageName, ScenarioStageTransition,
+        ThresholdDirection,
     },
     user_command::UserCommand,
 };
@@ -32,6 +36,9 @@ pub(super) fn register_scenario(
         lua.create_userdata(LuaScenarioHandle {
             id,
             command_sender: command_sender.clone(),
+            stage_names: HashSet::new(),
+            stage_targets: Vec::new(),
+            stages_started: false,
         })
     })?;
 
@@ -41,6 +48,9 @@ pub(super) fn register_scenario(
 struct LuaScenarioHandle {
     id: ScenarioId,
     command_sender: Sender<UserCommand>,
+    stage_names: HashSet<ScenarioStageName>,
+    stage_targets: Vec<(ScenarioStageName, ScenarioStageName)>,
+    stages_started: bool,
 }
 
 impl UserData for LuaScenarioHandle {
@@ -112,6 +122,85 @@ impl UserData for LuaScenarioHandle {
             )
         });
 
+        methods.add_method_mut("stage", |_, scenario, (name, options): (String, Table)| {
+            if scenario.stages_started {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "Scenario '{}' cannot define stages after start",
+                    scenario.id.as_str(),
+                )));
+            }
+            let name = ScenarioStageName::new(name)
+                .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+            if scenario.stage_names.contains(&name) {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "Scenario '{}' contains duplicate stage '{}'",
+                    scenario.id.as_str(),
+                    name.as_str(),
+                )));
+            }
+            let definition = parse_stage_definition(&options, &name)?;
+            let targets = definition
+                .transitions
+                .iter()
+                .map(|transition| (name.clone(), transition.next.clone()))
+                .collect::<Vec<_>>();
+
+            send_application_command(
+                &scenario.command_sender,
+                ScenarioCommand::DefineStage {
+                    id: scenario.id.clone(),
+                    name: name.clone(),
+                    definition,
+                }
+                .into(),
+            )?;
+
+            scenario.stage_names.insert(name);
+            scenario.stage_targets.extend(targets);
+            Ok(())
+        });
+
+        methods.add_method_mut("start", |_, scenario, name: String| {
+            if scenario.stages_started {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "Scenario '{}' stages have already been started",
+                    scenario.id.as_str(),
+                )));
+            }
+            let stage = ScenarioStageName::new(name)
+                .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+            if !scenario.stage_names.contains(&stage) {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "Scenario '{}' start stage '{}' is not defined",
+                    scenario.id.as_str(),
+                    stage.as_str(),
+                )));
+            }
+            if let Some((source, target)) = scenario
+                .stage_targets
+                .iter()
+                .find(|(_, target)| !scenario.stage_names.contains(target))
+            {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "Scenario '{}' stage '{}' has a transition to unknown stage '{}'",
+                    scenario.id.as_str(),
+                    source.as_str(),
+                    target.as_str(),
+                )));
+            }
+
+            send_application_command(
+                &scenario.command_sender,
+                ScenarioCommand::Start {
+                    id: scenario.id.clone(),
+                    stage,
+                }
+                .into(),
+            )?;
+            scenario.stages_started = true;
+            Ok(())
+        });
+
         methods.add_method("cancel", |_, scenario, ()| {
             send_application_command(
                 &scenario.command_sender,
@@ -127,50 +216,16 @@ impl UserData for LuaScenarioHandle {
 }
 
 fn parse_race(options: &Table) -> mlua::Result<Vec<ScenarioRaceAlternative>> {
-    let mut indexed_alternatives = Vec::new();
-
-    for pair in options.clone().pairs::<Value, Value>() {
-        let (key, value) = pair?;
-        let Value::Integer(index) = key else {
-            return Err(mlua::Error::RuntimeError(
-                "Scenario race must be an array without named keys".to_owned(),
-            ));
-        };
-        if index <= 0 {
-            return Err(mlua::Error::RuntimeError(
-                "Scenario race array indices must start at 1".to_owned(),
-            ));
-        }
-        let Value::Table(alternative) = value else {
-            return Err(mlua::Error::RuntimeError(format!(
-                "Scenario race alternative #{index} must be a table",
-            )));
-        };
-
-        indexed_alternatives.push((index, alternative));
-    }
-
-    indexed_alternatives.sort_by_key(|(index, _)| *index);
-
-    if indexed_alternatives.is_empty() {
+    let alternatives = parse_table_array(options, "Scenario race")?;
+    if alternatives.is_empty() {
         return Err(mlua::Error::RuntimeError(
             "Scenario race must contain at least one alternative".to_owned(),
         ));
     }
 
-    for (offset, (index, _)) in indexed_alternatives.iter().enumerate() {
-        let expected = i64::try_from(offset + 1).expect("race alternative index must fit i64");
-        if *index != expected {
-            return Err(mlua::Error::RuntimeError(
-                "Scenario race alternatives must use consecutive array indices starting at 1"
-                    .to_owned(),
-            ));
-        }
-    }
-
-    indexed_alternatives
+    alternatives
         .into_iter()
-        .map(|(_, alternative)| parse_race_alternative(&alternative))
+        .map(|alternative| parse_race_alternative(&alternative))
         .collect()
 }
 
@@ -181,6 +236,73 @@ fn parse_race_alternative(options: &Table) -> mlua::Result<ScenarioRaceAlternati
         &["after", "at", "when", "callback"],
     )?;
 
+    Ok(ScenarioRaceAlternative {
+        trigger: parse_trigger(options, "Scenario race alternative")?,
+        callback: validate_callback(required_string(
+            options,
+            "callback",
+            "scenario race alternative",
+        )?)?,
+    })
+}
+
+fn parse_stage_definition(
+    options: &Table,
+    name: &ScenarioStageName,
+) -> mlua::Result<ScenarioStageDefinition> {
+    let context = format!("scenario stage '{}'", name.as_str());
+    validate_keys(options, &context, &["enter", "transitions"])?;
+    let enter = validate_callback(required_string(options, "enter", &context)?)?;
+    let transitions = match options.get::<Option<Table>>("transitions")? {
+        Some(transitions) => parse_stage_transitions(&transitions, name)?,
+        None => Vec::new(),
+    };
+
+    Ok(ScenarioStageDefinition { enter, transitions })
+}
+
+fn parse_stage_transitions(
+    options: &Table,
+    stage: &ScenarioStageName,
+) -> mlua::Result<Vec<ScenarioStageTransition>> {
+    let context = format!("Transitions of scenario stage '{}'", stage.as_str());
+    parse_table_array(options, &context)?
+        .into_iter()
+        .enumerate()
+        .map(|(index, transition)| {
+            let transition_context = format!(
+                "transition #{} of scenario stage '{}'",
+                index + 1,
+                stage.as_str(),
+            );
+            validate_keys(
+                &transition,
+                &transition_context,
+                &["after", "at", "when", "next", "reason"],
+            )?;
+            let next = required_string(&transition, "next", &transition_context)?;
+            let next = ScenarioStageName::new(next)
+                .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+            let reason = transition.get::<Option<String>>("reason")?;
+            if reason
+                .as_ref()
+                .is_some_and(|reason| reason.trim().is_empty())
+            {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "{transition_context} reason cannot be empty",
+                )));
+            }
+
+            Ok(ScenarioStageTransition {
+                trigger: parse_trigger(&transition, &transition_context)?,
+                next,
+                reason,
+            })
+        })
+        .collect()
+}
+
+fn parse_trigger(options: &Table, context: &str) -> mlua::Result<ScenarioRaceTrigger> {
     let after = options.get::<Option<f64>>("after")?;
     let at = options.get::<Option<f64>>("at")?;
     let when = options.get::<Option<Table>>("when")?;
@@ -188,34 +310,65 @@ fn parse_race_alternative(options: &Table) -> mlua::Result<ScenarioRaceAlternati
         usize::from(after.is_some()) + usize::from(at.is_some()) + usize::from(when.is_some());
 
     if trigger_count != 1 {
-        return Err(mlua::Error::RuntimeError(
-            "Scenario race alternative must define exactly one of 'after', 'at' or 'when'"
-                .to_owned(),
-        ));
+        return Err(mlua::Error::RuntimeError(format!(
+            "{context} must define exactly one of 'after', 'at' or 'when'",
+        )));
     }
 
-    let trigger = if let Some(seconds) = after {
-        ScenarioRaceTrigger::After {
-            delay: parse_duration(seconds, "Scenario race delay")?,
-        }
+    if let Some(seconds) = after {
+        Ok(ScenarioRaceTrigger::After {
+            delay: parse_duration(seconds, &format!("{context} delay"))?,
+        })
     } else if let Some(timestamp) = at {
-        ScenarioRaceTrigger::At {
+        Ok(ScenarioRaceTrigger::At {
             deadline: parse_unix_timestamp(timestamp)?,
-        }
+        })
     } else {
-        ScenarioRaceTrigger::When {
-            condition: parse_condition(&when.expect("race trigger count was validated"))?,
-        }
-    };
+        Ok(ScenarioRaceTrigger::When {
+            condition: parse_condition(&when.expect("trigger count was validated"))?,
+        })
+    }
+}
 
-    Ok(ScenarioRaceAlternative {
-        trigger,
-        callback: validate_callback(required_string(
-            options,
-            "callback",
-            "scenario race alternative",
-        )?)?,
-    })
+fn parse_table_array(options: &Table, context: &str) -> mlua::Result<Vec<Table>> {
+    let mut indexed_entries = Vec::new();
+
+    for pair in options.clone().pairs::<Value, Value>() {
+        let (key, value) = pair?;
+        let Value::Integer(index) = key else {
+            return Err(mlua::Error::RuntimeError(format!(
+                "{context} must be an array without named keys",
+            )));
+        };
+        if index <= 0 {
+            return Err(mlua::Error::RuntimeError(format!(
+                "{context} array indices must start at 1",
+            )));
+        }
+        let Value::Table(entry) = value else {
+            return Err(mlua::Error::RuntimeError(format!(
+                "{context} entry #{index} must be a table",
+            )));
+        };
+
+        indexed_entries.push((index, entry));
+    }
+
+    indexed_entries.sort_by_key(|(index, _)| *index);
+
+    for (offset, (index, _)) in indexed_entries.iter().enumerate() {
+        let expected = i64::try_from(offset + 1).expect("Lua table index must fit i64");
+        if *index != expected {
+            return Err(mlua::Error::RuntimeError(format!(
+                "{context} entries must use consecutive array indices starting at 1",
+            )));
+        }
+    }
+
+    Ok(indexed_entries
+        .into_iter()
+        .map(|(_, entry)| entry)
+        .collect())
 }
 
 fn parse_condition(options: &Table) -> mlua::Result<ScenarioCondition> {
@@ -380,6 +533,26 @@ mod tests {
                         callback = "absolute_timeout",
                     },
                 })
+                scenario:stage("heating", {
+                    enter = "start_heating",
+                    transitions = {
+                        {
+                            when = {
+                                series = "temperature",
+                                above = 150.0,
+                            },
+                            next = "holding",
+                        },
+                        {
+                            after = 1800.0,
+                            next = "failed",
+                            reason = "Heating timeout",
+                        },
+                    },
+                })
+                scenario:stage("holding", { enter = "start_holding" })
+                scenario:stage("failed", { enter = "handle_failure" })
+                scenario:start("heating")
                 scenario:cancel()
             "#,
         )
@@ -447,6 +620,47 @@ mod tests {
             ScenarioRaceTrigger::At { deadline }
                 if deadline == SystemTime::UNIX_EPOCH
                     + Duration::from_millis(1_700_000_030_250)
+        ));
+
+        let UserCommand::Scenario(ScenarioCommand::DefineStage {
+            id,
+            name,
+            definition,
+        }) = receiver.try_recv().unwrap()
+        else {
+            panic!("expected heating stage definition");
+        };
+        assert_eq!(id.as_str(), "heat_cycle");
+        assert_eq!(name.as_str(), "heating");
+        assert_eq!(definition.enter, "start_heating");
+        assert_eq!(definition.transitions.len(), 2);
+        assert_eq!(definition.transitions[0].next.as_str(), "holding");
+        assert_eq!(definition.transitions[1].next.as_str(), "failed");
+        assert_eq!(
+            definition.transitions[1].reason.as_deref(),
+            Some("Heating timeout")
+        );
+
+        for (expected_name, expected_callback) in
+            [("holding", "start_holding"), ("failed", "handle_failure")]
+        {
+            assert!(matches!(
+                receiver.try_recv().unwrap(),
+                UserCommand::Scenario(ScenarioCommand::DefineStage {
+                    id,
+                    name,
+                    definition,
+                }) if id.as_str() == "heat_cycle"
+                    && name.as_str() == expected_name
+                    && definition.enter == expected_callback
+                    && definition.transitions.is_empty()
+            ));
+        }
+
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            UserCommand::Scenario(ScenarioCommand::Start { id, stage })
+                if id.as_str() == "heat_cycle" && stage.as_str() == "heating"
         ));
 
         assert!(matches!(
@@ -543,7 +757,58 @@ mod tests {
         assert!(error.contains("consecutive array indices"));
     }
 
+    #[test]
+    fn rejects_duplicate_scenario_stage() {
+        let error = execute_invalid_stage(
+            r#"
+                scenario:stage("heating", { enter = "first" })
+                scenario:stage("heating", { enter = "second" })
+            "#,
+        );
+
+        assert!(error.contains("duplicate stage 'heating'"));
+    }
+
+    #[test]
+    fn rejects_unknown_stage_transition_target() {
+        let error = execute_invalid_stage(
+            r#"
+                scenario:stage("heating", {
+                    enter = "start_heating",
+                    transitions = {{ after = 1.0, next = "missing" }},
+                })
+                scenario:start("heating")
+            "#,
+        );
+
+        assert!(error.contains("transition to unknown stage 'missing'"));
+    }
+
+    #[test]
+    fn rejects_unknown_start_stage() {
+        let error = execute_invalid_stage("scenario:start('missing')");
+
+        assert!(error.contains("start stage 'missing' is not defined"));
+    }
+
+    #[test]
+    fn rejects_repeated_scenario_start() {
+        let error = execute_invalid_stage(
+            r#"
+                scenario:stage("heating", { enter = "start_heating" })
+                scenario:start("heating")
+                scenario:start("heating")
+            "#,
+        );
+
+        assert!(error.contains("stages have already been started"));
+    }
+
     fn execute_invalid_race(source: &str) -> String {
+        execute_invalid_stage(source)
+    }
+
+    fn execute_invalid_stage(source: &str) -> String {
         let lua = Lua::new();
         let app = lua.create_table().unwrap();
         let (sender, _receiver) = unbounded();

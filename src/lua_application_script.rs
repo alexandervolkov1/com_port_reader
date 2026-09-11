@@ -222,6 +222,21 @@ fn scenario_callback_event(
             event.set("for_seconds", condition.hold.as_secs_f64())?;
             event.set("hysteresis", condition.hysteresis)?;
         }
+
+        ScenarioCallbackTrigger::Stage {
+            stage,
+            previous_stage,
+            reason,
+            transition_trigger,
+        } => {
+            event.set("stage", stage.as_str())?;
+            event.set(
+                "previous_stage",
+                previous_stage.as_ref().map(|stage| stage.as_str()),
+            )?;
+            event.set("reason", reason.as_str())?;
+            event.set("transition_trigger", transition_trigger.as_deref())?;
+        }
     }
 
     Ok(event)
@@ -865,7 +880,7 @@ mod tests {
     };
     use crate::scenario::{
         ScenarioCallbackInvocation, ScenarioCallbackTrigger, ScenarioCondition, ScenarioId,
-        ThresholdDirection,
+        ScenarioStageName, ThresholdDirection,
     };
 
     #[test]
@@ -1175,6 +1190,41 @@ mod tests {
         assert_eq!(event.get::<f64>("threshold").unwrap(), 150.0);
         assert_eq!(event.get::<f64>("for_seconds").unwrap(), 5.0);
         assert_eq!(event.get::<f64>("hysteresis").unwrap(), 2.0);
+    }
+
+    #[test]
+    fn passes_stage_context_to_global_scenario_callback() {
+        let lua = Lua::new();
+        lua.load("function capture(event) scenario_event = event end")
+            .exec()
+            .unwrap();
+
+        let invocation = ScenarioCallbackInvocation::new(
+            ScenarioId::new("heat_cycle").unwrap(),
+            "capture".to_owned(),
+            SystemTime::UNIX_EPOCH + Duration::from_secs(60),
+            ScenarioCallbackTrigger::Stage {
+                stage: ScenarioStageName::new("holding").unwrap(),
+                previous_stage: Some(ScenarioStageName::new("heating").unwrap()),
+                reason: "Target temperature reached".to_owned(),
+                transition_trigger: Some("measurement".to_owned()),
+            },
+        );
+
+        invoke_scenario_callback(&lua, &invocation).unwrap();
+
+        let event = lua.globals().get::<Table>("scenario_event").unwrap();
+        assert_eq!(event.get::<String>("trigger").unwrap(), "stage");
+        assert_eq!(event.get::<String>("stage").unwrap(), "holding");
+        assert_eq!(event.get::<String>("previous_stage").unwrap(), "heating");
+        assert_eq!(
+            event.get::<String>("reason").unwrap(),
+            "Target temperature reached"
+        );
+        assert_eq!(
+            event.get::<String>("transition_trigger").unwrap(),
+            "measurement"
+        );
     }
 
     #[test]

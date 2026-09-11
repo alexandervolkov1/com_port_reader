@@ -1467,6 +1467,103 @@ mod tests {
     }
 
     #[test]
+    fn scenario_stages_transition_after_entry_actions_complete() {
+        let directory = runtime_test_directory("scenario_stages");
+        let source = r#"
+            local definition = {
+                connections = {
+                    primary = { port = "COM248" },
+                },
+            }
+
+            local scenario
+
+            function enter_heating(event)
+                assert(event.trigger == "stage")
+                assert(event.stage == "heating")
+                assert(event.previous_stage == nil)
+                assert(event.reason == "Scenario started")
+                assert(event.transition_trigger == nil)
+                app.add_serial("heating", {
+                    name = "heating_entered",
+                    interval = 1.0,
+                })
+            end
+
+            function enter_holding(event)
+                assert(event.trigger == "stage")
+                assert(event.stage == "holding")
+                assert(event.previous_stage == "heating")
+                assert(event.reason == "Target temperature reached")
+                assert(event.transition_trigger == "measurement")
+                app.add_serial("holding", {
+                    name = "holding_entered",
+                    interval = 1.0,
+                })
+            end
+
+            function definition.setup()
+                app.add_serial("temperature", {
+                    name = "temperature",
+                    interval = 1.0,
+                })
+
+                scenario = app.scenario({ id = "heat_cycle" })
+                scenario:stage("heating", {
+                    enter = "enter_heating",
+                    transitions = {{
+                        when = {
+                            series = "temperature",
+                            above = 150.0,
+                        },
+                        next = "holding",
+                        reason = "Target temperature reached",
+                    }},
+                })
+                scenario:stage("holding", { enter = "enter_holding" })
+                scenario:start("heating")
+            end
+
+            return definition
+        "#;
+        let profile = write_test_profile(&directory, "startup.lua", source);
+        let (mut runtime, mut log_model, _lua_events) = build_test_runtime(&profile);
+
+        wait_for_series(&mut runtime, "temperature");
+        wait_for_series(&mut runtime, "heating_entered");
+
+        let metadata = runtime.series().metadata();
+        let temperature = metadata
+            .iter()
+            .find(|series| series.name == "temperature")
+            .unwrap();
+        runtime.process_recorder.record_measurements(
+            temperature.connection_id,
+            &[SeriesSample::new(temperature.id, Sample::new(1.0, 151.0))],
+            &metadata,
+        );
+
+        wait_for_series(&mut runtime, "holding_entered");
+        runtime.poll();
+        log_model.poll();
+
+        assert!(log_model.entries().iter().any(|entry| {
+            entry.text().contains(
+                "Scenario 'heat_cycle' selected transition 'heating' -> 'holding': Target temperature reached.",
+            )
+        }));
+        assert!(log_model.entries().iter().any(|entry| {
+            entry
+                .text()
+                .contains("Scenario 'heat_cycle' stage 'holding' transitions activated.")
+        }));
+
+        drop(runtime);
+        drop(log_model);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn rebuilds_runtime_from_another_profile() {
         let directory = runtime_test_directory("profile_rebuild");
 
