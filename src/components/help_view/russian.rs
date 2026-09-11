@@ -33,7 +33,7 @@ pub(super) fn show(ui: &mut egui::Ui) {
 
     ui.label(
         "Поддерживаются корневые разделы application, \
-         connections, emulator, scripts и setup.",
+         connections, emulator, plot_panes, scripts и setup.",
     );
 
     ui.label(
@@ -95,6 +95,21 @@ pub(super) fn show(ui: &mut egui::Ui) {
         "max_plot_points_per_series",
         "Максимальное число подготовленных точек одной \
          видимой серии. По умолчанию: 4000.",
+    );
+
+    section(ui, "Декларативная раскладка графиков");
+
+    reference(
+        ui,
+        "plot_panes = { { id, title, weight? }, ... }",
+        "Задаёт начальные панели графиков. id — стабильный ключ Lua, \
+         title показывается в интерфейсе, положительный weight задаёт \
+         относительную высоту. Первая панель используется по умолчанию.",
+    );
+
+    ui.label(
+        "Если plot_panes отсутствует, создаётся совместимая одиночная \
+         панель по умолчанию. Явно указанная неизвестная панель считается ошибкой.",
     );
 
     section(ui, "Последовательные подключения");
@@ -302,9 +317,28 @@ pub(super) fn show(ui: &mut egui::Ui) {
 
     reference(
         ui,
+        "visible",
+        "Начальная видимость серии на графике. По умолчанию: true.",
+    );
+
+    reference(
+        ui,
+        "pane",
+        "Необязательный id панели из plot_panes. При отсутствии \
+         используется первая панель.",
+    );
+
+    reference(
+        ui,
         "app.set_color(name, color)",
         "Меняет цвет существующей серии. Передайте nil, \
          чтобы снова выбирать цвет автоматически.",
+    );
+
+    reference(
+        ui,
+        "app.set_series_pane(name, pane)",
+        "Перемещает существующую серию на настроенную панель графика.",
     );
 
     code(ui, SERIES_COLOR_EXAMPLE);
@@ -358,7 +392,7 @@ pub(super) fn show(ui: &mut egui::Ui) {
     );
 
     ui.label(
-        "Поддерживаются exponential с time_constant, moving_average с window и median с нечётным window. Для новой фильтрованной серии также можно задать color.",
+        "Поддерживаются exponential с time_constant, moving_average с window и median с нечётным window. Для новой фильтрованной серии также можно задать color, visible и pane.",
     );
 
     code(ui, FILTER_EXAMPLE);
@@ -549,7 +583,7 @@ pub(super) fn show(ui: &mut egui::Ui) {
     reference(
         ui,
         "controller:add(diagnostic, options)",
-        "Добавляет событийную диагностическую серию. Можно задать имя и цвет, но не интервал опроса.",
+        "Добавляет событийную диагностическую серию. Можно задать name, color, visible и pane, но не интервал опроса.",
     );
 
     reference(
@@ -626,6 +660,14 @@ pub(super) fn show(ui: &mut egui::Ui) {
          Кнопки не хранят значение.",
     );
 
+    reference(
+        ui,
+        "app.set_control_enabled(script_id, panel_id, control_id, enabled, reason?)",
+        "Включает или отключает элемент и может показать причину. \
+         Это защита интерфейса; безопасность оборудования по-прежнему \
+         обеспечивают подсистемы управления и выходов.",
+    );
+
     ui.label(
         "Поддерживаются элементы readout, number, toggle и \
          button. Для number и toggle используется on_change, \
@@ -650,6 +692,58 @@ pub(super) fn show(ui: &mut egui::Ui) {
     );
 
     code(ui, CONTROL_PANEL_EXAMPLE);
+
+    section(ui, "Событийные сценарии процесса");
+
+    reference(
+        ui,
+        "app.scenario({ id = id })",
+        "Создаёт сценарий либо перезапускает сценарий с тем же id, \
+         отменяя его прежние задания.",
+    );
+
+    reference(
+        ui,
+        "scenario:after(seconds, callback)",
+        "Однократно вызывает именованный Lua callback после относительной \
+         задержки по монотонным часам.",
+    );
+
+    reference(
+        ui,
+        "scenario:at(unix_timestamp, callback)",
+        "Однократно вызывает callback в абсолютный момент UTC, заданный \
+         Unix timestamp в секундах.",
+    );
+
+    reference(
+        ui,
+        "scenario:when(condition, callback)",
+        "Однократно срабатывает, когда серия выше или ниже порога. \
+         for_seconds задаёт непрерывную выдержку, hysteresis — условие \
+         повторного взвода; edge пока принимает только \"rising\".",
+    );
+
+    reference(
+        ui,
+        "scenario:cancel(), scenario:id()",
+        "Отменяет все ожидающие задания или возвращает стабильный id сценария.",
+    );
+
+    ui.label(
+        "Callback должен быть короткой глобальной функцией либо однозначно \
+         именованной функцией зарегистрированного сценария приложения. \
+         Таймеры и измерения проверяет Rust, Lua только выдаёт команды.",
+    );
+
+    ui.label(
+        "Callback одного сценария выполняются последовательно. Следующий \
+         callback ждёт Applied для всех записываемых действий. Ошибка callback \
+         или Failed останавливает сценарий; переходы попадают в журнал процесса. \
+         Перезагрузка профиля отменяет все сценарии.",
+    );
+
+    code(ui, SCENARIO_EXAMPLE);
 
     section(ui, "Модели виртуальных приборов");
 
@@ -708,6 +802,12 @@ pub(super) fn show(ui: &mut egui::Ui) {
          панелей графиков. Перетаскивайте разделитель между \
          панелями, чтобы менять их относительную высоту. \
          Пропорции сохраняются при изменении размера окна.",
+    );
+
+    ui.label(
+        "Стартовый профиль может задать начальные панели через plot_panes. \
+         Параметры серии принимают visible и pane, а app.set_series_pane() \
+         перемещает серию позднее.",
     );
 
     ui.label(

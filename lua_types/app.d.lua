@@ -34,6 +34,11 @@
 ---Line color written as a hexadecimal RGB value such as "#1A2B3C".
 ---@alias SeriesColor string
 
+---@class PlotPaneDefinition
+---@field id string Stable pane identifier used by series options and app.set_series_pane().
+---@field title string Displayed pane title.
+---@field weight? number Positive initial relative height. Default: 1.0.
+
 ---@class RuntimeDefinition
 ---@field fps? integer GUI refresh rate. Default: 30.
 ---@field poll_interval? number Default series polling interval in seconds. Default: 1.0.
@@ -59,12 +64,15 @@
 ---@field connections? table<string, SerialConnectionDefinition>
 ---@field emulator? EmulatorDefinition
 ---@field scripts? string[] Application scripts executed after setup().
+---@field plot_panes? PlotPaneDefinition[] Declarative plot layout. The first pane is the default.
 ---@field setup? fun() Called once after the application Lua API is installed.
 
 ---@class SeriesOptions
 ---@field name? string Optional unique series name.
 ---@field interval? number Polling interval in seconds. The application default is used when omitted.
 ---@field color? SeriesColor Line color in #RRGGBB format. An automatic color is used when omitted.
+---@field visible? boolean Initial plot visibility. Default: true.
+---@field pane? string Plot pane id. The first pane is used when omitted.
 
 ---@class SerialSeriesOptions: SeriesOptions
 ---@field connection? string Serial connection name. Default: "primary".
@@ -235,18 +243,24 @@ function VirtualInstrument:on_off(parameter, options) end
 ---@class ExponentialFilterSeriesOptions
 ---@field name string Unique output series name.
 ---@field color? SeriesColor
+---@field visible? boolean Initial plot visibility. Default: true.
+---@field pane? string Plot pane id. The first pane is used when omitted.
 ---@field kind '"exponential"'
 ---@field time_constant number Positive time constant in seconds.
 
 ---@class MovingAverageFilterSeriesOptions
 ---@field name string Unique output series name.
 ---@field color? SeriesColor
+---@field visible? boolean Initial plot visibility. Default: true.
+---@field pane? string Plot pane id. The first pane is used when omitted.
 ---@field kind '"moving_average"'
 ---@field window integer Positive sample window size.
 
 ---@class MedianFilterSeriesOptions
 ---@field name string Unique output series name.
 ---@field color? SeriesColor
+---@field visible? boolean Initial plot visibility. Default: true.
+---@field pane? string Plot pane id. The first pane is used when omitted.
 ---@field kind '"median"'
 ---@field window integer Positive odd sample window size.
 
@@ -311,6 +325,8 @@ function VirtualInstrument:on_off(parameter, options) end
 ---@class ControllerSeriesOptions
 ---@field name? string Unique series name. Defaults to <controller>_<diagnostic>.
 ---@field color? SeriesColor
+---@field visible? boolean Initial plot visibility. Default: true.
+---@field pane? string Plot pane id. The first pane is used when omitted.
 
 ---@class RampReferenceOptions
 ---@field start number Initial value.
@@ -431,6 +447,41 @@ function Controller:reset() end
 ---@field panels? ControlPanelDefinition[]
 ---@field [string] any Named Lua callbacks may be stored in the script table.
 
+---@class ScenarioOptions
+---@field id string Stable scenario identifier: ASCII letter or underscore, then letters, digits or underscores.
+
+---@class ScenarioCondition
+---@field series string Series name.
+---@field above? number Trigger above this threshold. Exactly one of above or below is required.
+---@field below? number Trigger below this threshold. Exactly one of above or below is required.
+---@field for_seconds? number Required continuous threshold duration. Default: 0.
+---@field hysteresis? number Non-negative rearming hysteresis. Default: 0.
+---@field edge? '"rising"' Only rising-edge triggering is currently supported.
+
+---@class Scenario
+local Scenario = {}
+
+---Schedules a one-shot callback after a monotonic relative delay.
+---@param seconds number Finite non-negative delay.
+---@param callback string Global or unambiguous application-script callback name.
+function Scenario:after(seconds, callback) end
+
+---Schedules a one-shot callback at an absolute UTC Unix timestamp.
+---@param unix_timestamp number Seconds since 1970-01-01 00:00:00 UTC.
+---@param callback string Global or unambiguous application-script callback name.
+function Scenario:at(unix_timestamp, callback) end
+
+---Schedules a one-shot measurement condition evaluated by Rust.
+---@param condition ScenarioCondition
+---@param callback string Global or unambiguous application-script callback name.
+function Scenario:when(condition, callback) end
+
+---Cancels the scenario and all of its pending tasks.
+function Scenario:cancel() end
+
+---@return string
+function Scenario:id() end
+
 ---@class ApplicationApi
 app = {}
 
@@ -515,6 +566,11 @@ function app.set_color(
 )
 end
 
+---Moves an existing series to a configured plot pane.
+---@param name string Existing unique series name.
+---@param pane string Plot pane id from ApplicationDefinition.plot_panes.
+function app.set_series_pane(name, pane) end
+
 ---Re-enables periodic polling for a suspended series.
 ---
 ---The series is identified by its unique name.
@@ -574,3 +630,26 @@ function app.set_control(
     value
 )
 end
+
+---Enables or disables a GUI control without changing its value.
+---This is a UX guard and does not replace equipment safety checks.
+---@param script_id string
+---@param panel_id string
+---@param control_id string
+---@param enabled boolean
+---@param reason? string Explanation displayed while disabled.
+function app.set_control_enabled(
+    script_id,
+    panel_id,
+    control_id,
+    enabled,
+    reason
+)
+end
+
+---Creates or restarts an event-driven scenario.
+---Callbacks are serialized per scenario. Recorded actions must be Applied before
+---the next callback runs; a callback error or Failed action stops the scenario.
+---@param options ScenarioOptions
+---@return Scenario
+function app.scenario(options) end

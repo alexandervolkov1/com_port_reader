@@ -24,6 +24,11 @@ pub(super) const STARTUP_EXAMPLE: &str = r#"local definition = {
         script = "emulator_scripts/sine_generator.lua",
     },
 
+    plot_panes = {
+        { id = "temperature", title = "Temperature", weight = 2.0 },
+        { id = "control", title = "Control" },
+    },
+
     scripts = {
         "lua_scripts/experiment.lua",
     },
@@ -42,6 +47,8 @@ pub(super) const SERIAL_SERIES_EXAMPLE: &str = r##"app.add_serial(
         connection = "primary",
         interval = 0.5,
         color = "#1976D2",
+        visible = true,
+        pane = "temperature",
     }
 )"##;
 
@@ -52,6 +59,7 @@ pub(super) const FILTER_EXAMPLE: &str = r##"app.filter(
         kind = "moving_average",
         window = 5,
         color = "#7B1FA2",
+        pane = "temperature",
     }
 )
 
@@ -203,7 +211,33 @@ function write(
 end"#;
 
 pub(super) const SERIES_COLOR_EXAMPLE: &str = r##"app.set_color("temperature", "#D32F2F")
-app.set_color("temperature", nil) -- restore automatic color"##;
+app.set_color("temperature", nil) -- restore automatic color
+app.set_series_pane("heater_output", "control")"##;
+
+pub(super) const SCENARIO_EXAMPLE: &str = r#"local process = app.scenario({
+    id = "heat_cycle",
+})
+
+function start_process()
+    app.start()
+
+    process:when({
+        series = "temperature",
+        above = 150.0,
+        for_seconds = 5.0,
+        hysteresis = 2.0,
+        edge = "rising",
+    }, "stop_process")
+end
+
+function stop_process()
+    app.stop()
+    process:cancel()
+end
+
+-- os.time() returns a UTC Unix timestamp in seconds.
+process:at(os.time() + 60, "start_process")
+process:after(3600, "stop_process")"#;
 
 pub(super) const CONTROL_PANEL_EXAMPLE: &str = r#"local controller = app.metakon({
     connection = "primary",

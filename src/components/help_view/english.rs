@@ -35,7 +35,7 @@ pub(super) fn show(ui: &mut egui::Ui) {
 
     ui.label(
         "Supported root sections are application, \
-         connections, emulator, scripts and setup.",
+         connections, emulator, plot_panes, scripts and setup.",
     );
 
     ui.label(
@@ -98,6 +98,21 @@ pub(super) fn show(ui: &mut egui::Ui) {
         "max_plot_points_per_series",
         "Maximum number of prepared points for one \
          visible series. Default: 4000.",
+    );
+
+    section(ui, "Declarative plot layout");
+
+    reference(
+        ui,
+        "plot_panes = { { id, title, weight? }, ... }",
+        "Defines the initial plot panes. IDs are stable Lua keys, \
+         titles are displayed in the GUI, and positive weights set \
+         relative heights. The first pane is the default.",
+    );
+
+    ui.label(
+        "If plot_panes is omitted, the compatible single default pane \
+         is created. An explicitly named unknown pane is an error.",
     );
 
     section(ui, "Serial connections");
@@ -294,9 +309,28 @@ pub(super) fn show(ui: &mut egui::Ui) {
 
     reference(
         ui,
+        "visible",
+        "Optional initial plot visibility. Default: true.",
+    );
+
+    reference(
+        ui,
+        "pane",
+        "Optional plot pane id from plot_panes. The first pane is used \
+         when omitted.",
+    );
+
+    reference(
+        ui,
         "app.set_color(name, color)",
         "Changes an existing series color. Pass nil to \
          restore automatic color selection.",
+    );
+
+    reference(
+        ui,
+        "app.set_series_pane(name, pane)",
+        "Moves an existing series to a configured plot pane.",
     );
 
     code(ui, SERIES_COLOR_EXAMPLE);
@@ -349,7 +383,7 @@ pub(super) fn show(ui: &mut egui::Ui) {
     );
 
     ui.label(
-        "Supported filters are exponential (time_constant), moving_average (window) and median (an odd window). New filtered series may also specify color.",
+        "Supported filters are exponential (time_constant), moving_average (window) and median (an odd window). New filtered series may also specify color, visible and pane.",
     );
 
     code(ui, FILTER_EXAMPLE);
@@ -545,7 +579,7 @@ pub(super) fn show(ui: &mut egui::Ui) {
     reference(
         ui,
         "controller:add(diagnostic, options)",
-        "Adds an event-driven diagnostic series. It accepts a name and color, but no polling interval.",
+        "Adds an event-driven diagnostic series. It accepts name, color, visible and pane, but no polling interval.",
     );
 
     reference(
@@ -621,6 +655,14 @@ pub(super) fn show(ui: &mut egui::Ui) {
          Buttons do not store a value.",
     );
 
+    reference(
+        ui,
+        "app.set_control_enabled(script_id, panel_id, control_id, enabled, reason?)",
+        "Enables or disables a control and optionally shows a reason. \
+         This is a GUI guard; equipment safety remains enforced by the \
+         control and output subsystems.",
+    );
+
     ui.label(
         "Control kinds are readout, number, toggle and \
          button. Number and toggle controls use on_change; \
@@ -643,6 +685,56 @@ pub(super) fn show(ui: &mut egui::Ui) {
     );
 
     code(ui, CONTROL_PANEL_EXAMPLE);
+
+    section(ui, "Event-driven scenarios");
+
+    reference(
+        ui,
+        "app.scenario({ id = id })",
+        "Creates a scenario, or restarts the existing scenario with the \
+         same id and cancels its old tasks.",
+    );
+
+    reference(
+        ui,
+        "scenario:after(seconds, callback)",
+        "Runs a named Lua callback once after a monotonic relative delay.",
+    );
+
+    reference(
+        ui,
+        "scenario:at(unix_timestamp, callback)",
+        "Runs a named callback once at an absolute UTC Unix timestamp in seconds.",
+    );
+
+    reference(
+        ui,
+        "scenario:when(condition, callback)",
+        "Runs once when a series is above or below a threshold. Optional \
+         for_seconds requires a continuous duration; hysteresis controls \
+         rearming; edge currently accepts only \"rising\".",
+    );
+
+    reference(
+        ui,
+        "scenario:cancel(), scenario:id()",
+        "Cancels all pending tasks, or returns the stable scenario id.",
+    );
+
+    ui.label(
+        "Callbacks must be short global functions or unambiguous named \
+         functions in a registered application script. Rust evaluates \
+         timers and measurements; Lua only issues application commands.",
+    );
+
+    ui.label(
+        "Callbacks are serialized per scenario. Recorded actions must be \
+         Applied before another callback runs. A callback error or Failed \
+         action stops the scenario, and every transition is written to the \
+         process log. Reloading a profile cancels all scenarios.",
+    );
+
+    code(ui, SCENARIO_EXAMPLE);
 
     section(ui, "Virtual instrument models");
 
@@ -701,6 +793,12 @@ pub(super) fn show(ui: &mut egui::Ui) {
          number of panes. Drag the separator between panes to \
          change their relative heights. The proportions are \
          preserved while the window is resized.",
+    );
+
+    ui.label(
+        "A startup profile may define the initial panes declaratively with \
+         plot_panes. Series options accept visible and pane, and \
+         app.set_series_pane() moves a series later.",
     );
 
     ui.label(
