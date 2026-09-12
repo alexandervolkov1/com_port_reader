@@ -214,30 +214,49 @@ pub(super) const SERIES_COLOR_EXAMPLE: &str = r##"app.set_color("temperature", "
 app.set_color("temperature", nil) -- restore automatic color
 app.set_series_pane("heater_output", "control")"##;
 
-pub(super) const SCENARIO_EXAMPLE: &str = r#"local process = app.scenario({
-    id = "heat_cycle",
-})
+pub(super) const SCENARIO_EXAMPLE: &str = r#"local process = app.scenario({ id = "heat_cycle" })
 
-function start_process()
-    app.start()
-
-    process:when({
-        series = "temperature",
-        above = 150.0,
-        for_seconds = 5.0,
-        hysteresis = 2.0,
-        edge = "rising",
-    }, "stop_process")
-end
-
-function stop_process()
+function safe_stop(event)
     app.stop()
-    process:cancel()
+    app.log("Scenario cleanup: " .. event.reason)
 end
 
--- os.time() returns a UTC Unix timestamp in seconds.
-process:at(os.time() + 60, "start_process")
-process:after(3600, "stop_process")"#;
+function failed(event)
+    app.stop()
+    app.log("Scenario failed: " .. event.error)
+end
+
+function enter_heating(event)
+    app.start()
+    app.add_serial("heater", { name = "heater_command", interval = 1.0 })
+end
+
+function enter_holding(event)
+    process:complete("Target temperature reached")
+end
+
+process:on_stop("safe_stop")
+process:on_error("failed")
+process:stage("heating", {
+    enter = "enter_heating",
+    transitions = {{
+        when = {
+            series = "temperature",
+            above = 150.0,
+            for_seconds = 5.0,
+            hysteresis = 2.0,
+        },
+        next = "holding",
+    }, {
+        after = 3600.0,
+        next = "holding",
+        reason = "Heating timeout",
+    }},
+})
+process:stage("holding", { enter = "enter_holding" })
+process:start("heating")
+
+-- stop() runs cleanup; cancel() immediately discards pending work."#;
 
 pub(super) const CONTROL_PANEL_EXAMPLE: &str = r#"local controller = app.metakon({
     connection = "primary",

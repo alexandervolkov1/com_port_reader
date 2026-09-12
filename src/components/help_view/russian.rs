@@ -719,9 +719,34 @@ pub(super) fn show(ui: &mut egui::Ui) {
     reference(
         ui,
         "scenario:when(condition, callback)",
-        "Однократно срабатывает, когда серия выше или ниже порога. \
-         for_seconds задаёт непрерывную выдержку, hysteresis — условие \
-         повторного взвода; edge пока принимает только \"rising\".",
+        "Однократно срабатывает при выполнении декларативного условия: \
+         порог, диапазон, стабильность, скорость, отсутствие свежих данных \
+         или композиция all/any. for_seconds задаёт выдержку; edge пока \
+         принимает только \"rising\".",
+    );
+
+    reference(
+        ui,
+        "scenario:race(alternatives)",
+        "Атомарно выбирает первый готовый таймер, timeout или условие измерения; проигравшие варианты отменяются.",
+    );
+
+    reference(
+        ui,
+        "scenario:stage(name, definition), scenario:start(name)",
+        "Определяет именованные этапы и запускает один из них. Actions enter должны получить Applied до активации переходов.",
+    );
+
+    reference(
+        ui,
+        "scenario:on_stop(callback), scenario:on_error(callback)",
+        "Регистрирует однократный cleanup callback. stop() и complete() используют on_stop, ошибки callback/action — on_error.",
+    );
+
+    reference(
+        ui,
+        "scenario:complete(reason), scenario:stop(reason)",
+        "Завершает сценарий после ожидающих actions и cleanup. cancel() остаётся немедленной отменой без cleanup.",
     );
 
     reference(
@@ -734,6 +759,10 @@ pub(super) fn show(ui: &mut egui::Ui) {
         "Callback должен быть короткой глобальной функцией либо однозначно \
          именованной функцией зарегистрированного сценария приложения. \
          Таймеры и измерения проверяет Rust, Lua только выдаёт команды.",
+    );
+
+    ui.label(
+        "Окно «Сценарии» в меню показывает только статус, этап, ожидающие триггеры, последний переход и ошибки. Окно не выполняет команды и не влияет на сценарии.",
     );
 
     ui.label(

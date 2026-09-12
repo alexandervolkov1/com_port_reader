@@ -710,9 +710,34 @@ pub(super) fn show(ui: &mut egui::Ui) {
     reference(
         ui,
         "scenario:when(condition, callback)",
-        "Runs once when a series is above or below a threshold. Optional \
-         for_seconds requires a continuous duration; hysteresis controls \
-         rearming; edge currently accepts only \"rising\".",
+        "Runs once when a declarative condition is satisfied: thresholds, \
+         ranges, stability, rate, stale data or all/any compositions. \
+         for_seconds requires a continuous duration; edge currently accepts \
+         only \"rising\".",
+    );
+
+    reference(
+        ui,
+        "scenario:race(alternatives)",
+        "Atomically selects the first ready timer, measurement condition or timeout; losing alternatives are cancelled.",
+    );
+
+    reference(
+        ui,
+        "scenario:stage(name, definition), scenario:start(name)",
+        "Defines named stages and starts one. Enter actions must be Applied before stage transitions become active.",
+    );
+
+    reference(
+        ui,
+        "scenario:on_stop(callback), scenario:on_error(callback)",
+        "Registers one cleanup callback. stop() and complete() use on_stop; callback/action failures use on_error.",
+    );
+
+    reference(
+        ui,
+        "scenario:complete(reason), scenario:stop(reason)",
+        "Finishes gracefully after pending actions and cleanup. cancel() remains an immediate cancellation without cleanup.",
     );
 
     reference(
@@ -725,6 +750,10 @@ pub(super) fn show(ui: &mut egui::Ui) {
         "Callbacks must be short global functions or unambiguous named \
          functions in a registered application script. Rust evaluates \
          timers and measurements; Lua only issues application commands.",
+    );
+
+    ui.label(
+        "Open the Scenarios window from the menu to inspect read-only status, stage, pending triggers, last transition and errors. The window never executes scenario commands.",
     );
 
     ui.label(
