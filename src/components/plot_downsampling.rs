@@ -15,9 +15,8 @@ pub(super) fn downsample_min_max_into(
         return;
     }
 
-    // На каждый блок может приходиться две точки:
-    // минимальная и максимальная. Ещё две позиции
-    // оставляем для первого и последнего отсчётов.
+    // Each bucket can contribute a minimum and a maximum point. Reserve two further slots for
+    // the first and last samples so the visible range always retains its endpoints.
     let target_buckets = max_points.saturating_sub(2).div_ceil(2).max(1);
 
     let bucket_size = samples.len().div_ceil(target_buckets);

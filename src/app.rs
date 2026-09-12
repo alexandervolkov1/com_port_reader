@@ -314,7 +314,7 @@ impl eframe::App for MyApp {
                     &mut self.control_panel_open,
                 );
                 if ui
-                    .selectable_label(self.scenario_panel_open, "Сценарии")
+                    .selectable_label(self.scenario_panel_open, "Scenarios")
                     .clicked()
                 {
                     self.scenario_panel_open = !self.scenario_panel_open;
@@ -474,12 +474,12 @@ impl eframe::App for MyApp {
 }
 
 fn show_scenario_window(context: &egui::Context, open: &mut bool, snapshots: &[ScenarioSnapshot]) {
-    egui::Window::new("Состояние сценариев")
+    egui::Window::new("Scenario status")
         .open(open)
         .resizable(true)
         .show(context, |ui| {
             if snapshots.is_empty() {
-                ui.label("Активных сценариев нет.");
+                ui.label("No active scenarios.");
                 return;
             }
 
@@ -488,25 +488,22 @@ fn show_scenario_window(context: &egui::Context, open: &mut bool, snapshots: &[S
                     format!("{} — {}", snapshot.id, status_label(snapshot.status)),
                     |ui| {
                         if let Some(stage) = &snapshot.current_stage {
-                            ui.label(format!("Этап: {stage}"));
+                            ui.label(format!("Stage: {stage}"));
                         }
                         if let Some(started_at) = snapshot.started_at {
-                            ui.label(format!("Запущен: {started_at:.3} Unix"));
+                            ui.label(format!("Started: {started_at:.3} Unix"));
                         }
                         if let Some(stage_started_at) = snapshot.stage_started_at {
-                            ui.label(format!("Этап запущен: {stage_started_at:.3} Unix"));
+                            ui.label(format!("Stage started: {stage_started_at:.3} Unix"));
                         }
                         if !snapshot.pending_triggers.is_empty() {
-                            ui.label(format!(
-                                "Ожидания: {}",
-                                snapshot.pending_triggers.join(", ")
-                            ));
+                            ui.label(format!("Pending: {}", snapshot.pending_triggers.join(", ")));
                         }
                         if let Some(transition) = &snapshot.last_transition {
-                            ui.label(format!("Последний переход: {transition}"));
+                            ui.label(format!("Last transition: {transition}"));
                         }
                         if let Some(error) = &snapshot.last_error {
-                            ui.colored_label(egui::Color32::RED, format!("Ошибка: {error}"));
+                            ui.colored_label(egui::Color32::RED, format!("Error: {error}"));
                         }
                     },
                 );
@@ -516,10 +513,10 @@ fn show_scenario_window(context: &egui::Context, open: &mut bool, snapshots: &[S
 
 fn status_label(status: ScenarioStatus) -> &'static str {
     match status {
-        ScenarioStatus::Running => "выполняется / running",
-        ScenarioStatus::Completed => "завершён / completed",
-        ScenarioStatus::Stopped => "остановлен / stopped",
-        ScenarioStatus::Cancelled => "отменён / cancelled",
-        ScenarioStatus::Failed => "ошибка / failed",
+        ScenarioStatus::Running => "running",
+        ScenarioStatus::Completed => "completed",
+        ScenarioStatus::Stopped => "stopped",
+        ScenarioStatus::Cancelled => "cancelled",
+        ScenarioStatus::Failed => "failed",
     }
 }

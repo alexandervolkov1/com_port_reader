@@ -8,7 +8,7 @@ use super::help_model::{HelpLanguage, HelpModel};
 
 pub fn show_menu_button(ui: &mut egui::Ui, model: &mut HelpModel) {
     ui.menu_button("Help", |ui| {
-        if ui.button("Lua reference / Справка Lua").clicked() {
+        if ui.button("Lua reference").clicked() {
             model.open_command_reference();
             ui.close();
         }
@@ -24,7 +24,7 @@ pub fn show_window(context: &egui::Context, model: &mut HelpModel) {
 
     let mut language = model.language();
 
-    egui::Window::new("Lua reference / Справка Lua")
+    egui::Window::new("Lua reference")
         .open(&mut open)
         .default_size(egui::vec2(780.0, 680.0))
         .resizable(true)
@@ -32,7 +32,7 @@ pub fn show_window(context: &egui::Context, model: &mut HelpModel) {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut language, HelpLanguage::English, "English");
 
-                ui.selectable_value(&mut language, HelpLanguage::Russian, "Русский");
+                ui.selectable_value(&mut language, HelpLanguage::Russian, "Russian");
             });
 
             ui.separator();
