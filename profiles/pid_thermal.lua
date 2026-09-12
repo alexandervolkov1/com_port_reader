@@ -6,21 +6,8 @@ local definition = {
         max_plot_points_per_series = 2000,
     },
 
-    connections = {
-        primary = {
-            port = "COM10",
-            baud_rate = 9600,
-            data_bits = 8,
-            parity = "none",
-            stop_bits = 1,
-            flow_control = "none",
-            timeout = 0.25,
-        },
-    },
-
     emulator = {
-        connection = "primary",
-        port = "COM11",
+        transport = "memory",
         script = "../emulator_scripts/pid_thermal_plant.lua",
     },
 

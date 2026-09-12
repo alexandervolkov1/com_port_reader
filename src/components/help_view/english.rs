@@ -815,6 +815,11 @@ pub(super) fn show(ui: &mut egui::Ui) {
 
     code(ui, VIRTUAL_MODEL_EXAMPLE);
 
+    ui.label(
+        "The emulator uses the in-memory transport by default; virtual COM \
+         ports are only needed when transport = 'serial' is selected.",
+    );
+
     section(ui, "Plot controls");
 
     ui.label(

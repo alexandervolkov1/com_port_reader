@@ -824,6 +824,12 @@ pub(super) fn show(ui: &mut egui::Ui) {
 
     code(ui, VIRTUAL_MODEL_EXAMPLE);
 
+    ui.label(
+        "По умолчанию эмулятор использует обмен в памяти, поэтому виртуальные \
+         COM-порты не нужны. transport = 'serial' нужен только для \
+         интеграционных тестов протокола.",
+    );
+
     section(ui, "Управление графиками");
 
     ui.label(

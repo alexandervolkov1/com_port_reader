@@ -6,17 +6,8 @@ local definition = {
         max_plot_points_per_series = 4000,
     },
 
-    connections = {
-        primary = {
-            port = "COM10",
-            baud_rate = 9600,
-            timeout = 0.25,
-        },
-    },
-
     emulator = {
-        connection = "primary",
-        port = "COM11",
+        transport = "memory",
         script = "../emulator_scripts/furnace_plant.lua",
     },
 

@@ -412,31 +412,19 @@ fn dispatch_tracked_write_to_sender(
             ))
         })?;
 
-    let serial_config_store = write_context
+    let port_name = write_context
         .serial_connections
         .store(connection_id)
-        .ok_or_else(|| {
-            OutputRequestError::Transport(format!(
-                "connection {connection_id} \
-                         does not have a serial \
-                         configuration store",
-            ))
-        })?;
-
-    let serial_config = serial_config_store.snapshot().ok_or_else(|| {
-        OutputRequestError::Transport(format!(
-            "connection {connection_id} \
-                         does not have a selected \
-                         COM port",
-        ))
-    })?;
+        .and_then(|store| store.snapshot())
+        .map(|config| config.port_name().to_owned())
+        .unwrap_or_default();
 
     let completion_id = write_context.allocate_completion_id();
 
     worker
         .write_instrument_quiet_tracked(
             action_id,
-            serial_config.port_name().to_owned(),
+            port_name,
             request,
             completion_id,
             write_context.completion_sender.clone(),
@@ -478,25 +466,14 @@ fn dispatch_write_to_sender(
         ))
     })?;
 
-    let serial_config_store = serial_connections.store(connection_id).ok_or_else(|| {
-        OutputRequestError::Transport(format!(
-            "connection {connection_id} does not have a serial configuration store",
-        ))
-    })?;
-
-    let serial_config = serial_config_store.snapshot().ok_or_else(|| {
-        OutputRequestError::Transport(format!(
-            "connection {connection_id} does not have a selected COM port",
-        ))
-    })?;
+    let port_name = serial_connections
+        .store(connection_id)
+        .and_then(|store| store.snapshot())
+        .map(|config| config.port_name().to_owned())
+        .unwrap_or_default();
 
     worker
-        .write_instrument_quiet(
-            action_id,
-            serial_config.port_name().to_owned(),
-            request,
-            response_sender,
-        )
+        .write_instrument_quiet(action_id, port_name, request, response_sender)
         .map_err(|error| {
             OutputRequestError::Transport(format!(
                 "cannot enqueue instrument write for connection {connection_id}: {error}",

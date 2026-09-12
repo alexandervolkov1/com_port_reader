@@ -3,7 +3,7 @@ use crate::{
     connection::ConnectionId,
     output_control::{OutputHandle, OutputRequestError},
     process_recorder::{ProcessActionContext, ProcessRecorder},
-    serial_connection::{SerialConnectionRegistry, SerialPortConfig},
+    serial_connection::SerialConnectionRegistry,
     user_command::InstrumentCommand,
     worker::{ConnectionRouter, WorkerHandle},
 };
@@ -70,22 +70,12 @@ impl<'a> InstrumentCommandHandler<'a> {
     ) {
         let action_id = action_context.map(|context| context.action_id());
 
-        let config = match self.serial_config(connection_id) {
-            Ok(config) => config,
-
-            Err(error) => {
-                let error_message = error.to_string();
-
-                if let Some(action_id) = action_id {
-                    self.process_recorder
-                        .record_action_failed(action_id, error_message);
-                }
-
-                let _ = response_sender.send(Err(error));
-
-                return;
-            }
-        };
+        let port_name = self
+            .serial_connections
+            .store(connection_id)
+            .and_then(|store| store.snapshot())
+            .map(|config| config.port_name().to_owned())
+            .unwrap_or_default();
 
         let worker_handle = match self.connection_worker(connection_id) {
             Ok(worker_handle) => worker_handle,
@@ -104,12 +94,8 @@ impl<'a> InstrumentCommandHandler<'a> {
             }
         };
 
-        let send_result = worker_handle.read_instrument(
-            action_id,
-            config.port_name().to_owned(),
-            request,
-            response_sender.clone(),
-        );
+        let send_result =
+            worker_handle.read_instrument(action_id, port_name, request, response_sender.clone());
 
         if let Err(send_error) = send_result {
             let error = AcquisitionError::from(format!(
@@ -166,19 +152,6 @@ impl<'a> InstrumentCommandHandler<'a> {
     ) {
         let action_id = action_context.map(|context| context.action_id());
 
-        if let Err(error) = self.serial_config(connection_id) {
-            let error_message = error.to_string();
-
-            if let Some(action_id) = action_id {
-                self.process_recorder
-                    .record_action_failed(action_id, error_message);
-            }
-
-            let _ = response_sender.send(Err(error));
-
-            return;
-        }
-
         let worker_handle = match self.connection_worker(connection_id) {
             Ok(worker_handle) => worker_handle,
 
@@ -225,29 +198,6 @@ impl<'a> InstrumentCommandHandler<'a> {
                 "Connection worker \
                      {connection_id:?} is not \
                      registered",
-            ))
-        })
-    }
-
-    fn serial_config(
-        &self,
-        connection_id: ConnectionId,
-    ) -> Result<SerialPortConfig, AcquisitionError> {
-        let store = self
-            .serial_connections
-            .store(connection_id)
-            .ok_or_else(|| {
-                AcquisitionError::from(format!(
-                    "Serial connection \
-                     {connection_id} is not \
-                     registered",
-                ))
-            })?;
-
-        store.snapshot().ok_or_else(|| {
-            AcquisitionError::from(format!(
-                "Serial connection {connection_id} \
-                 has no configured COM port",
             ))
         })
     }

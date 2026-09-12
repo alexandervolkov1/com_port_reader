@@ -1,7 +1,8 @@
 # Furnace control demo
 
-Load `profiles/furnace_manual.lua` after configuring its client/emulator COM-port
-pair. The profile runs `emulator_scripts/furnace_plant.lua` and opens the
+Load `profiles/furnace_manual.lua` directly; it uses the in-memory emulator by
+default, so no virtual COM-port pair is required. The profile runs
+`emulator_scripts/furnace_plant.lua` and opens the
 Manual / PID / Furnace panel. It starts in Manual with zero heater power.
 
 - Manual allows direct heater power changes.

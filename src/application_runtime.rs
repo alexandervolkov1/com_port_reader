@@ -797,6 +797,7 @@ impl ApplicationRuntime {
 
 #[cfg(test)]
 mod tests {
+    use crate::user_command::EmulatorCommand;
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -1516,6 +1517,96 @@ mod tests {
                 .contains("Scenario 'overheat' callback 'add_overheat_marker' completed.")
         }));
 
+        drop(runtime);
+        drop(log_model);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn memory_emulator_profile_works_without_serial_ports() {
+        let directory = runtime_test_directory("memory_emulator");
+        let model_path = directory.join("furnace.lua");
+        fs::create_dir_all(&directory).unwrap();
+        fs::copy(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("emulator_scripts")
+                .join("furnace_plant.lua"),
+            &model_path,
+        )
+        .unwrap();
+        let source = r#"
+            return {
+                emulator = { script = "furnace.lua", transport = "memory" },
+                setup = function()
+                    app.start_emu()
+                end,
+            }
+        "#;
+        let profile = write_test_profile(&directory, "startup.lua", source);
+        let (mut runtime, log_model, lua_events) = build_test_runtime(&profile);
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !runtime.device_emulator.is_running() {
+            runtime.poll();
+            assert!(Instant::now() < deadline, "memory emulator did not start");
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        runtime
+            .lua_handle()
+            .execute(
+                r#"
+                    instrument = app.virtual_instrument({ id = 1 })
+                    instrument:add("temperature", { name = "temperature", interval = 0.05 })
+                    instrument:write("heater_power", 25.0)
+                    assert(instrument:read("heater_power") == 25.0)
+                    app.start()
+                "#,
+            )
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut succeeded = false;
+        while !succeeded {
+            runtime.poll();
+            if let Ok(event) = lua_events.try_recv() {
+                match event {
+                    LuaEvent::ExecutionSucceeded(_) => succeeded = true,
+                    LuaEvent::ExecutionFailed(error) => {
+                        panic!("memory profile Lua failed: {error}")
+                    }
+                    _ => {}
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "memory profile command timed out"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        wait_for_series(&mut runtime, "temperature");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            runtime.poll();
+            let has_sample = runtime.series().with(|series| {
+                series
+                    .iter()
+                    .any(|series| series.name == "temperature" && !series.samples.is_empty())
+            });
+            if has_sample {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "memory emulator produced no samples"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        assert!(runtime.is_running());
+        runtime.execute(EmulatorCommand::Stop.into());
+        assert!(!runtime.device_emulator.is_running());
         drop(runtime);
         drop(log_model);
         fs::remove_dir_all(directory).unwrap();
