@@ -39,6 +39,9 @@ pub use handle::{WorkerHandle, WorkerHandleError};
 pub use router::ConnectionRouter;
 pub use serial::spawn_serial_connection_worker;
 
+#[allow(unused_imports)]
+pub(crate) use serial::spawn_serial_connection_worker_with_sources;
+
 const MAX_CONSECUTIVE_POLL_FAILURES: u8 = 3;
 
 #[derive(Clone)]
