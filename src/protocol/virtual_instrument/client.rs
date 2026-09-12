@@ -16,6 +16,10 @@ use crate::{
 
 pub trait VirtualInstrumentTransport: Read + Write {
     fn clear_input(&mut self) -> std::io::Result<()>;
+
+    fn supports_timeout_recovery(&self) -> bool {
+        false
+    }
 }
 
 impl VirtualInstrumentTransport for SerialConnection {

@@ -22,7 +22,7 @@ use crate::{
     process_recorder::{
         ProcessAction, ProcessActionContext, ProcessActionOrigin, ProcessRecord, ProcessRecorder,
     },
-    protocol::virtual_instrument::MemoryEndpoint,
+    protocol::virtual_instrument::MemoryClientTransport,
     scenario::{ScenarioService, ScenarioSnapshot},
     serial_connection::SerialConnectionRegistry,
     signal_processing::{ProcessingEvent, ProcessingService},
@@ -132,11 +132,14 @@ impl ApplicationRuntime {
                 )
             })
             .map(|_| {
-                let (client, server) = MemoryEndpoint::new();
+                let session =
+                    std::sync::Arc::new(std::sync::Mutex::new(None::<MemoryClientTransport>));
                 (
-                    Some(Box::new(LocalVirtualInstrumentSource::new(client))
-                        as Box<dyn crate::acquisition::AcquisitionSource>),
-                    Some(server),
+                    Some(
+                        Box::new(LocalVirtualInstrumentSource::with_session(session.clone()))
+                            as Box<dyn crate::acquisition::AcquisitionSource>,
+                    ),
+                    Some(session),
                 )
             })
             .unwrap_or((None, None));
@@ -797,7 +800,6 @@ impl ApplicationRuntime {
 
 #[cfg(test)]
 mod tests {
-    use crate::user_command::EmulatorCommand;
     use std::{
         fs,
         path::{Path, PathBuf},
@@ -1536,7 +1538,7 @@ mod tests {
         .unwrap();
         let source = r#"
             return {
-                emulator = { script = "furnace.lua", transport = "memory" },
+                emulator = { script = "furnace.lua" },
                 setup = function()
                     app.start_emu()
                 end,
@@ -1605,11 +1607,115 @@ mod tests {
         }
 
         assert!(runtime.is_running());
-        runtime.execute(EmulatorCommand::Stop.into());
+
+        run_memory_test_script(
+            &mut runtime,
+            &lua_events,
+            r#"
+            instrument:add("heater_power", { name = "power", interval = 0.05 })
+            controller = instrument:on_off("heater_power", {
+                name = "test_thermostat", input = "temperature", setpoint = 1000,
+                hysteresis = 2, output_off = 0, output_on = 60, safe_output = 0,
+            })
+        "#,
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !runtime.series().with(|all| {
+            all.iter().any(|series| {
+                series.name == "power" && series.samples.iter().any(|sample| sample.value == 60.0)
+            })
+        }) {
+            runtime.poll();
+            assert!(
+                Instant::now() < deadline,
+                "controller did not write to local emulator"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        run_memory_test_script(
+            &mut runtime,
+            &lua_events,
+            r#"
+            controller:pause()
+            assert(instrument:read("heater_power") == 0)
+            app.stop_emu()
+            local ok, err = pcall(function() instrument:write("heater_power", 99) end)
+            assert(not ok and string.find(tostring(err), "stopped"), tostring(err))
+        "#,
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !runtime.series().metadata().iter().any(|series| {
+            series.name == "power" && series.polling_state == SeriesPollingState::Suspended
+        }) {
+            runtime.poll();
+            assert!(
+                Instant::now() < deadline,
+                "failed memory polling did not suspend"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        run_memory_test_script(
+            &mut runtime,
+            &lua_events,
+            r#"
+            app.start_emu()
+            assert(instrument:read("heater_power") == 0)
+            instrument:write("heater_power", 75)
+            app.stop_emu()
+            app.start_emu()
+            assert(instrument:read("heater_power") == 0)
+        "#,
+        );
+        assert!(
+            runtime
+                .series()
+                .metadata()
+                .iter()
+                .any(|series| series.name == "power"
+                    && series.polling_state == SeriesPollingState::Enabled)
+        );
+        let (mut rebuilt, rebuilt_events) = runtime.rebuild_from_profile(&profile).unwrap();
         assert!(!runtime.device_emulator.is_running());
+        run_memory_test_script(
+            &mut rebuilt,
+            &rebuilt_events,
+            r#"
+            local instrument = app.virtual_instrument({ id = 1 })
+            assert(instrument:read("heater_power") == 0)
+        "#,
+        );
+        // Drop with an active emulator; joining its thread must finish cleanly.
+        assert!(rebuilt.device_emulator.is_running());
+        drop(rebuilt);
         drop(runtime);
         drop(log_model);
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    fn run_memory_test_script(
+        runtime: &mut ApplicationRuntime,
+        events: &crossbeam_channel::Receiver<LuaEvent>,
+        script: &str,
+    ) {
+        runtime.lua_handle().execute(script).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            runtime.poll();
+            for event in events.try_iter() {
+                match event {
+                    LuaEvent::ExecutionSucceeded(_) => return,
+                    LuaEvent::ExecutionFailed(error) => {
+                        panic!("memory lifecycle script failed: {error}")
+                    }
+                    _ => {}
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "memory lifecycle script timed out"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
     }
 
     #[test]

@@ -316,6 +316,37 @@ mod tests {
     }
 
     #[test]
+    fn missing_metakon_port_does_not_change_output_mode_or_enqueue_write() {
+        use crate::instrument::metakon_5x3::{Metakon5x3, Metakon5x3Write};
+        let connection_id = ConnectionId::PRIMARY;
+        let request = InstrumentWriteRequest::metakon_5x3(
+            Metakon5x3::new(1, 0),
+            Metakon5x3Write::Setpoint(35),
+            1.0,
+        )
+        .unwrap();
+        let target = ConnectedParameterAddress::new(connection_id, request.parameter_address());
+        let serial_connections = SerialConnectionRegistry::new();
+        let router = ConnectionRouter::default();
+        let (sender, receiver) = unbounded();
+        router.insert(WorkerHandle::new(connection_id, sender));
+        let service = OutputService::spawn(router, serial_connections).unwrap();
+        let handle = service.handle();
+        handle
+            .register_controller(target, "heater", instance_id(), Some(request))
+            .unwrap();
+        let (response_sender, _) = bounded(1);
+        assert!(
+            handle
+                .write_instrument(None, connection_id, request, response_sender)
+                .is_err()
+        );
+        assert!(handle.apply_safe("heater").is_err());
+        assert_eq!(handle.mode(target), Ok(OutputMode::Automatic));
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
     fn keeps_automatic_mode_when_manual_write_cannot_be_enqueued() {
         let service = service();
         let handle = service.handle();

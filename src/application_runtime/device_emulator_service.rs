@@ -1,9 +1,12 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use crate::{
     app_log::LogHandle,
     device_emulator_handle::{DeviceEmulatorHandle, DeviceEmulatorPortConfig},
-    protocol::virtual_instrument::MemoryEndpoint,
+    protocol::virtual_instrument::{MemoryClientTransport, MemoryEndpoint},
     serial_connection::SerialPortConfig,
 };
 
@@ -12,14 +15,14 @@ pub struct DeviceEmulatorService {
     handle: Option<DeviceEmulatorHandle>,
     log: LogHandle,
     script_path: Option<PathBuf>,
-    local_transport: Option<MemoryEndpoint>,
+    local_transport: Option<Arc<Mutex<Option<MemoryClientTransport>>>>,
 }
 
 impl DeviceEmulatorService {
     pub fn new(
         configured_port: Option<String>,
         configured_script_path: Option<PathBuf>,
-        local_transport: Option<MemoryEndpoint>,
+        local_transport: Option<Arc<Mutex<Option<MemoryClientTransport>>>>,
         log: LogHandle,
     ) -> Self {
         Self {
@@ -40,6 +43,16 @@ impl DeviceEmulatorService {
     pub fn start(&mut self, serial_config: Option<&SerialPortConfig>) -> Result<(), String> {
         self.poll();
 
+        if self
+            .local_transport
+            .as_ref()
+            .is_some_and(|session| session.lock().unwrap_or_else(|e| e.into_inner()).is_none())
+        {
+            // A failed exchange may have disconnected before the server
+            // thread had time to exit. Join it before publishing a new session.
+            self.stop();
+        }
+
         if self.handle.is_some() {
             return Ok(());
         }
@@ -48,9 +61,12 @@ impl DeviceEmulatorService {
             return Err("Select a Lua device model first.".to_owned());
         };
 
-        if let Some(transport) = self.local_transport.clone() {
+        if let Some(session) = &self.local_transport {
+            let (client, transport) = MemoryEndpoint::new();
             let handle = DeviceEmulatorHandle::start_with_transport(transport, script_path)
                 .map_err(|error| format!("Failed to start local device emulator: {error}"))?;
+            *session.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some(MemoryClientTransport::new(client));
             self.handle = Some(handle);
             return Ok(());
         }
@@ -107,6 +123,7 @@ impl DeviceEmulatorService {
                  with an error: {error}",
             ));
         }
+        self.disconnect_local();
     }
 
     pub fn poll(&mut self) {
@@ -150,9 +167,22 @@ impl DeviceEmulatorService {
                 ));
             }
         }
+        self.disconnect_local();
+    }
+
+    fn disconnect_local(&self) {
+        if let Some(session) = &self.local_transport {
+            session.lock().unwrap_or_else(|e| e.into_inner()).take();
+        }
     }
 
     fn report_error(&self, message: impl Into<String>) {
         self.log.error(message);
+    }
+}
+
+impl Drop for DeviceEmulatorService {
+    fn drop(&mut self) {
+        self.stop();
     }
 }

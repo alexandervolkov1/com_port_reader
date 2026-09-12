@@ -1,10 +1,7 @@
 use std::{
     collections::VecDeque,
     io,
-    sync::{
-        Arc, Mutex,
-        mpsc::{self, Receiver, RecvTimeoutError, Sender},
-    },
+    sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
     time::Duration,
 };
 
@@ -17,9 +14,8 @@ const DEFAULT_READ_TIMEOUT: Duration = Duration::from_millis(100);
 /// Each write is delivered as one block to the peer, while reads may consume
 /// only part of that block. This mirrors the observable byte-stream behavior
 /// needed by the virtual-instrument protocol without emulating serial settings.
-#[derive(Clone)]
 pub struct MemoryEndpoint {
-    incoming: Arc<Mutex<Receiver<Vec<u8>>>>,
+    incoming: Receiver<Vec<u8>>,
     outgoing: Sender<Vec<u8>>,
     read_buffer: VecDeque<u8>,
     read_timeout: Duration,
@@ -32,13 +28,13 @@ impl MemoryEndpoint {
 
         (
             Self {
-                incoming: Arc::new(Mutex::new(first_receiver)),
+                incoming: first_receiver,
                 outgoing: first_sender,
                 read_buffer: VecDeque::new(),
                 read_timeout,
             },
             Self {
-                incoming: Arc::new(Mutex::new(second_receiver)),
+                incoming: second_receiver,
                 outgoing: second_sender,
                 read_buffer: VecDeque::new(),
                 read_timeout,
@@ -51,11 +47,7 @@ impl MemoryEndpoint {
     }
 
     fn fill_read_buffer(&mut self) -> io::Result<()> {
-        let result = self
-            .incoming
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .recv_timeout(self.read_timeout);
+        let result = self.incoming.recv_timeout(self.read_timeout);
         match result {
             Ok(bytes) => {
                 self.read_buffer.extend(bytes);
@@ -112,13 +104,7 @@ impl std::io::Write for MemoryEndpoint {
 impl VirtualInstrumentTransport for MemoryEndpoint {
     fn clear_input(&mut self) -> io::Result<()> {
         self.read_buffer.clear();
-        while self
-            .incoming
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .try_recv()
-            .is_ok()
-        {}
+        while self.incoming.try_recv().is_ok() {}
         Ok(())
     }
 }
@@ -174,6 +160,41 @@ mod tests {
         let (_first, mut second) = MemoryEndpoint::with_timeout(Duration::from_millis(1));
         let error = second.read(&mut [0; 1]).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn buffered_bytes_survive_timeout_and_peer_disconnect() {
+        let (mut first, mut second) = MemoryEndpoint::with_timeout(Duration::from_millis(1));
+        first.write_all(b"abc").unwrap();
+        let mut prefix = [0; 1];
+        second.read_exact(&mut prefix).unwrap();
+        assert_eq!(&prefix, b"a");
+        drop(first);
+        let mut remaining = [0; 2];
+        second.read_exact(&mut remaining).unwrap();
+        assert_eq!(&remaining, b"bc");
+        assert_eq!(
+            second.read(&mut prefix).unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
+    }
+
+    #[test]
+    fn clear_input_discards_partial_and_queued_blocks_and_timeout_is_recoverable() {
+        use crate::protocol::virtual_instrument::VirtualInstrumentTransport;
+        let (mut first, mut second) = MemoryEndpoint::with_timeout(Duration::from_millis(1));
+        first.write_all(b"abc").unwrap();
+        first.write_all(b"def").unwrap();
+        second.read_exact(&mut [0; 1]).unwrap();
+        second.clear_input().unwrap();
+        assert_eq!(
+            second.read(&mut [0; 1]).unwrap_err().kind(),
+            std::io::ErrorKind::TimedOut
+        );
+        first.write_all(b"new").unwrap();
+        let mut response = [0; 3];
+        second.read_exact(&mut response).unwrap();
+        assert_eq!(&response, b"new");
     }
 
     #[test]

@@ -419,6 +419,8 @@ fn dispatch_tracked_write_to_sender(
         .map(|config| config.port_name().to_owned())
         .unwrap_or_default();
 
+    require_serial_port_for_metakon(connection_id, request, &port_name)?;
+
     let completion_id = write_context.allocate_completion_id();
 
     worker
@@ -472,6 +474,8 @@ fn dispatch_write_to_sender(
         .map(|config| config.port_name().to_owned())
         .unwrap_or_default();
 
+    require_serial_port_for_metakon(connection_id, request, &port_name)?;
+
     worker
         .write_instrument_quiet(action_id, port_name, request, response_sender)
         .map_err(|error| {
@@ -479,4 +483,17 @@ fn dispatch_write_to_sender(
                 "cannot enqueue instrument write for connection {connection_id}: {error}",
             ))
         })
+}
+
+fn require_serial_port_for_metakon(
+    connection_id: ConnectionId,
+    request: InstrumentWriteRequest,
+    port_name: &str,
+) -> Result<(), OutputRequestError> {
+    if port_name.is_empty() && matches!(request, InstrumentWriteRequest::Metakon5x3 { .. }) {
+        return Err(OutputRequestError::Transport(format!(
+            "connection {connection_id} does not have a selected COM port",
+        )));
+    }
+    Ok(())
 }

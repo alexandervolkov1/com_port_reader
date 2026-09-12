@@ -10,6 +10,10 @@ mod message;
 #[path = "virtual_instrument/memory_transport.rs"]
 mod memory_transport;
 
+#[path = "virtual_instrument/memory_client_transport.rs"]
+mod memory_client_transport;
+pub use memory_client_transport::MemoryClientTransport;
+
 #[path = "virtual_instrument/server.rs"]
 mod server;
 
