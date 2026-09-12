@@ -9,6 +9,9 @@ use crate::instrument::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Proportional, integral, and derivative gains for [`PidController`].
+///
+/// All gains must be finite; integral and derivative actions use elapsed measurement time.
 pub struct PidGains {
     proportional: f64,
     integral: f64,
@@ -80,6 +83,7 @@ impl fmt::Display for PidGainsError {
 impl Error for PidGainsError {}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Inclusive range to which a PID output is constrained.
 pub struct PidOutputLimits {
     minimum: f64,
     maximum: f64,
@@ -145,6 +149,7 @@ impl fmt::Display for PidOutputLimitsError {
 impl Error for PidOutputLimitsError {}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// PID terms and the final constrained output for one measurement update.
 pub struct PidOutput {
     value: f64,
     unconstrained_value: f64,
@@ -187,6 +192,10 @@ struct PreviousSample {
 }
 
 #[derive(Debug)]
+/// PID controller using derivative-on-measurement and conditional integration anti-windup.
+///
+/// Call [`Self::update`] with strictly increasing measurement timestamps. [`Self::resynchronize`]
+/// establishes a new measurement baseline without discarding the accumulated integral term.
 pub struct PidController {
     setpoint: f64,
     gains: PidGains,

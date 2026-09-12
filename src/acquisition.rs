@@ -1,3 +1,9 @@
+//! Hardware- and emulator-facing acquisition abstractions.
+//!
+//! [`AcquisitionSource`] supplies samples and instrument operations to connection workers.
+//! Sources are owned by one worker at a time; [`CombinedSource`] routes each request to the
+//! source that supports it, allowing serial and in-memory virtual instruments to share a worker.
+
 use crate::{
     data::{Sample, SeriesMetadata, SeriesSample},
     instrument::{
@@ -15,6 +21,7 @@ pub(crate) use local_virtual_instrument_source::LocalVirtualInstrumentSource;
 pub use serial_command_source::SerialCommandSource;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// An acquisition operation failed without producing a usable instrument value.
 pub struct AcquisitionError {
     message: String,
 }
@@ -42,12 +49,14 @@ impl From<&str> for AcquisitionError {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Identifies a series whose scheduled acquisition attempt failed.
 pub struct SeriesAcquisitionFailure {
     pub series_id: crate::data::SeriesId,
     pub series_name: String,
     pub error: AcquisitionError,
 }
 
+/// Result of a single instrument read.
 pub type InstrumentReadResult = Result<InstrumentValue, AcquisitionError>;
 pub type InstrumentWriteResult = Result<InstrumentValue, AcquisitionError>;
 pub type VirtualInstrumentDescribeResult =
@@ -63,6 +72,10 @@ pub struct InstrumentWriteCompletion {
     pub(crate) result: InstrumentWriteResult,
 }
 
+/// Backend used by a connection worker to acquire series and access instruments.
+///
+/// Implementations must be `Send` because the worker exclusively owns them on its background
+/// thread. Returning `Ok(None)` from sampling means that the source does not support that series.
 pub trait AcquisitionSource: Send {
     fn start(&mut self) -> Result<(), AcquisitionError> {
         Ok(())

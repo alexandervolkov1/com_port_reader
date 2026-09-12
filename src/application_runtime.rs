@@ -1,3 +1,9 @@
+//! Application composition root and lifecycle coordinator.
+//!
+//! The runtime owns workers, Lua execution, signal processing, output arbitration, recording,
+//! and the optional emulator. It keeps hardware I/O off the GUI thread and coordinates orderly
+//! startup, profile replacement, and shutdown through command channels.
+
 use std::{
     collections::BTreeMap,
     fs,

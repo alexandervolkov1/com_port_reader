@@ -25,6 +25,7 @@ impl OnOffOutput {
 }
 
 #[derive(Debug)]
+/// Hysteretic two-state controller for outputs that are either fully on or fully off.
 pub struct OnOffController {
     setpoint: f64,
     hysteresis: f64,

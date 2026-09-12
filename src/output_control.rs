@@ -1,3 +1,9 @@
+//! Safety-sensitive arbitration of manual and controller output writes.
+//!
+//! The service tracks ownership per physical output. Moving into automatic control first writes
+//! the configured safe value; only a successful completion grants the controller ownership.
+//! Failed writes retain or restore a safe state instead of silently changing ownership.
+
 use std::{collections::HashMap, error::Error, fmt};
 
 use crate::{

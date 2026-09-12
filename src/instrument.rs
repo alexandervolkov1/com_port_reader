@@ -1,3 +1,8 @@
+//! Instrument-independent addressing, values, and requests.
+//!
+//! Drivers such as [`metakon_5x3`] translate these common requests to a device protocol, while
+//! [`virtual_instrument`] supplies runtime descriptors for Lua-backed instruments.
+
 use self::{
     metakon_5x3::{Metakon5x3, Metakon5x3Register, Metakon5x3Write},
     virtual_instrument::{VirtualInstrumentId, VirtualParameterId},
@@ -8,6 +13,7 @@ pub mod metakon_5x3;
 pub mod virtual_instrument;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// Stable address of a parameter within a concrete instrument family.
 pub enum InstrumentParameterAddress {
     Metakon5x3 {
         instrument: Metakon5x3,
@@ -40,6 +46,7 @@ impl InstrumentParameterAddress {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// An instrument parameter together with the connection that owns it.
 pub struct ConnectedParameterAddress {
     connection_id: ConnectionId,
     parameter: InstrumentParameterAddress,

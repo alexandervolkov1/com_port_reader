@@ -18,6 +18,10 @@ const MIN_PLOT_POINTS_PER_SERIES: usize = 4;
 const MAX_PLOT_POINTS_PER_SERIES: usize = 100_000;
 
 #[derive(Clone, Debug, PartialEq)]
+/// Validated configuration used to construct an [`crate::application_runtime::ApplicationRuntime`].
+///
+/// A definition is assembled before it replaces a live runtime, so invalid profiles cannot leave
+/// a partially reconfigured application behind.
 pub struct ApplicationDefinition {
     runtime: RuntimeDefinition,
     serial_connections: Vec<SerialConnectionDefinition>,
@@ -200,6 +204,7 @@ impl ApplicationDefinition {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Path to a Lua application script loaded after the runtime starts.
 pub struct ApplicationScriptDefinition {
     path: PathBuf,
 }
@@ -263,6 +268,7 @@ impl Default for ApplicationDefinition {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// GUI and acquisition timing limits declared by a profile.
 pub struct RuntimeDefinition {
     fps: u32,
     default_poll_interval: Duration,
@@ -352,6 +358,7 @@ impl Default for RuntimeDefinition {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// A named serial connection made available to scripts and acquisition workers.
 pub struct SerialConnectionDefinition {
     id: ConnectionId,
     name: String,
@@ -435,12 +442,17 @@ impl SerialConnectionDefinition {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Definition of the optional Lua virtual-instrument emulator.
+///
+/// The normal [`EmulatorTransport::Memory`] mode does not require a COM-port driver. Serial mode
+/// is retained for integrations that need a physical or virtual serial endpoint.
 pub struct EmulatorDefinition {
     transport: EmulatorTransport,
     script_path: PathBuf,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Transport between the application and its virtual-instrument emulator.
 pub enum EmulatorTransport {
     Memory,
     Serial {

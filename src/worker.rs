@@ -1,3 +1,9 @@
+//! Per-connection acquisition workers and their command protocol.
+//!
+//! Each worker exclusively owns its [`AcquisitionSource`] and runs scheduled polling plus
+//! read/write commands. Events flow back to the runtime over channels. On repeated polling failure
+//! only the affected series is suspended, preserving unrelated acquisition on the connection.
+
 use std::{
     collections::HashMap,
     sync::{

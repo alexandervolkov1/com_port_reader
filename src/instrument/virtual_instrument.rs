@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use super::{ParameterAccess, ParameterRange, ParameterValueType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// Numeric identifier assigned by a virtual-instrument Lua model.
 pub struct VirtualInstrumentId(u16);
 
 impl VirtualInstrumentId {
@@ -22,6 +23,7 @@ impl std::fmt::Display for VirtualInstrumentId {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// Numeric identifier of a parameter inside a virtual instrument.
 pub struct VirtualParameterId(u16);
 
 impl VirtualParameterId {
@@ -41,6 +43,10 @@ impl std::fmt::Display for VirtualParameterId {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Runtime schema for a value exposed by a virtual instrument.
+///
+/// The descriptor is validated before requests are sent, including its access mode, type, and
+/// optional engineering range.
 pub struct VirtualParameterDescriptor {
     id: VirtualParameterId,
     key: String,
@@ -122,6 +128,7 @@ impl VirtualParameterDescriptor {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Runtime schema for one instrument exposed by the emulator model.
 pub struct VirtualInstrumentDescriptor {
     id: VirtualInstrumentId,
     name: String,

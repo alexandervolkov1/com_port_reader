@@ -1,3 +1,8 @@
+//! Lua bindings installed as the global `app` table.
+//!
+//! Lua code only publishes commands and UI events; [`crate::application_runtime`] receives and
+//! performs them. This keeps scripts from directly owning workers or hardware connections.
+
 mod controllers;
 mod conversion;
 mod filters;

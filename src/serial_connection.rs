@@ -1,3 +1,8 @@
+//! Serial-port configuration and synchronous request/response I/O.
+//!
+//! A connection is opened and used by its dedicated worker, never by the GUI thread. The worker
+//! clears stale input before issuing requests so a delayed response is not mistaken for a new one.
+
 use std::{
     collections::{BTreeMap, btree_map::Entry},
     io::{Read, Write},
@@ -12,6 +17,7 @@ use crate::connection::ConnectionId;
 const MAX_RESPONSE_LENGTH: usize = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Settings used to open one named serial port.
 pub struct SerialPortConfig {
     port_name: String,
     baud_rate: u32,

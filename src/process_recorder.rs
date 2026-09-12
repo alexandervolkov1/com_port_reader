@@ -1,3 +1,8 @@
+//! Asynchronous process-history recording.
+//!
+//! Measurements, user and Lua actions, and logs are sent to a dedicated writer thread. Recorder
+//! failures are surfaced as application events but deliberately do not stop acquisition or control.
+
 use std::{
     io,
     path::PathBuf,
@@ -23,6 +28,7 @@ mod sqlite;
 pub(crate) use sqlite::{SqliteProcessRecordWriter, new_process_database_path};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Severity attached to a process log record.
 pub enum ProcessLogLevel {
     Info,
     Error,

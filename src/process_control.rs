@@ -1,3 +1,9 @@
+//! Closed-loop control algorithms and their runtime registry.
+//!
+//! Controllers process timestamped measurements in the signal-processing worker and emit output
+//! intents. [`crate::output_control`] performs the corresponding instrument writes and enforces
+//! manual-versus-automatic ownership.
+
 mod control_loop;
 mod controller;
 mod diagnostic;

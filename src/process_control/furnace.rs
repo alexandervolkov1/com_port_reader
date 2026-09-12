@@ -211,6 +211,10 @@ struct PreviousSample {
 }
 
 #[derive(Debug)]
+/// Model-assisted furnace controller with heater-lag prediction and feed-forward support.
+///
+/// It is intended for the thermal model described by [`FurnaceModel`], not as a general PID
+/// replacement. Its diagnostics expose the prediction and output terms used for tuning.
 pub struct FurnaceController {
     setpoint: f64,
     gains: FurnaceGains,
