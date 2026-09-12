@@ -287,6 +287,16 @@ fn scenario_callback_event(
             event.set("reason", reason.as_str())?;
             event.set("transition_trigger", transition_trigger.as_deref())?;
         }
+
+        ScenarioCallbackTrigger::Stop { status, reason } => {
+            event.set("status", status.as_str())?;
+            event.set("reason", reason.as_str())?;
+        }
+
+        ScenarioCallbackTrigger::Error { error } => {
+            event.set("status", "failed")?;
+            event.set("error", error.as_str())?;
+        }
     }
 
     Ok(event)

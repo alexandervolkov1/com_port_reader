@@ -433,6 +433,7 @@ mod tests {
         let UserCommand::ScenarioStep {
             scenario_id,
             command,
+            ..
         } = command
         else {
             panic!("scenario callback command was not tagged");

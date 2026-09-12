@@ -495,7 +495,7 @@ function Controller:reset() end
 ---@class ScenarioEvent
 ---@field scenario_id string Scenario that produced the callback.
 ---@field callback string Callback name selected by the scenario.
----@field trigger '"timer"'|'"absolute_time"'|'"measurement"'|'"stage"' Trigger kind.
+---@field trigger '"timer"'|'"absolute_time"'|'"measurement"'|'"stage"'|'"stop"'|'"error"' Trigger kind.
 ---@field fired_at number UTC Unix timestamp when the trigger was dispatched.
 
 ---@class ScenarioTimerEvent: ScenarioEvent
@@ -529,11 +529,23 @@ function Controller:reset() end
 ---@field reason string Start or transition reason.
 ---@field transition_trigger? '"timer"'|'"absolute_time"'|'"measurement"' Trigger that selected the transition.
 
+---@class ScenarioStopEvent: ScenarioEvent
+---@field trigger '"stop"'
+---@field status '"completed"'|'"stopped"' Requested final status.
+---@field reason string Completion or stop reason.
+
+---@class ScenarioErrorEvent: ScenarioEvent
+---@field trigger '"error"'
+---@field status '"failed"'
+---@field error string Original scenario failure.
+
 ---@alias ScenarioCallbackEvent
 ---| ScenarioTimerEvent
 ---| ScenarioAbsoluteTimeEvent
 ---| ScenarioMeasurementEvent
 ---| ScenarioStageEvent
+---| ScenarioStopEvent
+---| ScenarioErrorEvent
 
 ---@alias ScenarioCallback fun(event: ScenarioCallbackEvent)
 
@@ -571,7 +583,23 @@ function Scenario:stage(name, definition) end
 ---@param name string Defined initial stage.
 function Scenario:start(name) end
 
----Cancels the scenario and all of its pending tasks.
+---Registers the one-shot cleanup callback used by complete() and stop().
+---@param callback string Global or unambiguous application-script callback name receiving a ScenarioStopEvent.
+function Scenario:on_stop(callback) end
+
+---Registers the one-shot cleanup callback used for callback or action failures.
+---@param callback string Global or unambiguous application-script callback name receiving a ScenarioErrorEvent.
+function Scenario:on_error(callback) end
+
+---Completes the scenario after the current callback actions and cleanup finish.
+---@param reason string Non-empty completion reason.
+function Scenario:complete(reason) end
+
+---Stops the scenario after the current callback actions and cleanup finish.
+---@param reason string Non-empty stop reason.
+function Scenario:stop(reason) end
+
+---Immediately cancels pending tasks without running on_stop or on_error.
 function Scenario:cancel() end
 
 ---@return string

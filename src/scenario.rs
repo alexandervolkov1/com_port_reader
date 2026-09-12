@@ -58,6 +58,40 @@ impl ScenarioStageName {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ScenarioRunId(u64);
+
+impl ScenarioRunId {
+    const fn new(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScenarioStatus {
+    Running,
+    Completed,
+    Stopped,
+    Cancelled,
+    Failed,
+}
+
+impl ScenarioStatus {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Stopped => "stopped",
+            Self::Cancelled => "cancelled",
+            Self::Failed => "failed",
+        }
+    }
+
+    const fn is_terminal(self) -> bool {
+        !matches!(self, Self::Running)
+    }
+}
+
 fn is_valid_identifier(value: &str) -> bool {
     let mut characters = value.chars();
     characters
@@ -99,9 +133,44 @@ pub(crate) enum ScenarioCommand {
         id: ScenarioId,
         stage: ScenarioStageName,
     },
+    OnStop {
+        id: ScenarioId,
+        callback: String,
+    },
+    OnError {
+        id: ScenarioId,
+        callback: String,
+    },
+    Complete {
+        id: ScenarioId,
+        reason: String,
+    },
+    Stop {
+        id: ScenarioId,
+        reason: String,
+    },
     Cancel {
         id: ScenarioId,
     },
+}
+
+impl ScenarioCommand {
+    fn id(&self) -> &ScenarioId {
+        match self {
+            Self::Register { id }
+            | Self::After { id, .. }
+            | Self::At { id, .. }
+            | Self::When { id, .. }
+            | Self::Race { id, .. }
+            | Self::DefineStage { id, .. }
+            | Self::Start { id, .. }
+            | Self::OnStop { id, .. }
+            | Self::OnError { id, .. }
+            | Self::Complete { id, .. }
+            | Self::Stop { id, .. }
+            | Self::Cancel { id } => id,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -148,6 +217,13 @@ pub(crate) enum ScenarioCallbackTrigger {
         reason: String,
         transition_trigger: Option<String>,
     },
+    Stop {
+        status: ScenarioStatus,
+        reason: String,
+    },
+    Error {
+        error: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -164,6 +240,8 @@ impl ScenarioCallbackTrigger {
             Self::AbsoluteTime { .. } => "absolute_time",
             Self::Measurement { .. } => "measurement",
             Self::Stage { .. } => "stage",
+            Self::Stop { .. } => "stop",
+            Self::Error { .. } => "error",
         }
     }
 
@@ -196,6 +274,10 @@ impl ScenarioCallbackTrigger {
             Self::Stage { stage, reason, .. } => {
                 format!("entered stage '{}': {reason}", stage.as_str())
             }
+            Self::Stop { status, reason } => {
+                format!("scenario {}: {reason}", status.as_str())
+            }
+            Self::Error { error } => format!("scenario failed: {error}"),
         }
     }
 }
@@ -203,6 +285,7 @@ impl ScenarioCallbackTrigger {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ScenarioCallbackInvocation {
     scenario_id: ScenarioId,
+    run_id: ScenarioRunId,
     callback: String,
     fired_at: SystemTime,
     trigger: ScenarioCallbackTrigger,
@@ -217,6 +300,7 @@ impl ScenarioCallbackInvocation {
     ) -> Self {
         Self {
             scenario_id,
+            run_id: ScenarioRunId::default(),
             callback,
             fired_at,
             trigger,
@@ -229,6 +313,10 @@ impl ScenarioCallbackInvocation {
 
     pub(crate) fn callback(&self) -> &str {
         &self.callback
+    }
+
+    pub(crate) const fn run_id(&self) -> ScenarioRunId {
+        self.run_id
     }
 
     pub(crate) const fn fired_at(&self) -> SystemTime {
@@ -247,6 +335,8 @@ pub(crate) struct ScenarioCallbackResult {
 }
 
 struct ScenarioState {
+    run_id: ScenarioRunId,
+    status: ScenarioStatus,
     timers: Vec<ScenarioTimer>,
     conditions: Vec<ScenarioConditionState>,
     races: Vec<ScenarioRaceState>,
@@ -257,11 +347,17 @@ struct ScenarioState {
     callback_in_flight: bool,
     pending_actions: HashSet<ProcessActionId>,
     waiting_callback: Option<String>,
+    on_stop: Option<String>,
+    on_error: Option<String>,
+    finalization: Option<ScenarioFinalization>,
+    cleanup_in_flight: bool,
 }
 
 impl ScenarioState {
-    fn new() -> Self {
+    fn new(run_id: ScenarioRunId) -> Self {
         Self {
+            run_id,
+            status: ScenarioStatus::Running,
             timers: Vec::new(),
             conditions: Vec::new(),
             races: Vec::new(),
@@ -272,11 +368,26 @@ impl ScenarioState {
             callback_in_flight: false,
             pending_actions: HashSet::new(),
             waiting_callback: None,
+            on_stop: None,
+            on_error: None,
+            finalization: None,
+            cleanup_in_flight: false,
         }
     }
 
     fn is_busy(&self) -> bool {
         self.callback_in_flight || !self.pending_actions.is_empty()
+    }
+
+    fn accepts_steps(&self, run_id: ScenarioRunId) -> bool {
+        self.run_id == run_id && !self.status.is_terminal()
+    }
+
+    fn clear_waits(&mut self) {
+        self.timers.clear();
+        self.conditions.clear();
+        self.races.clear();
+        self.pending_stage_activation = None;
     }
 
     fn poll_race(
@@ -354,6 +465,28 @@ impl ScenarioState {
 
         Ok(())
     }
+}
+
+#[derive(Clone, Copy)]
+enum ScenarioCleanupKind {
+    Stop,
+    Error,
+}
+
+impl ScenarioCleanupKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Stop => "stop",
+            Self::Error => "error",
+        }
+    }
+}
+
+struct ScenarioFinalization {
+    intended_status: ScenarioStatus,
+    reason: String,
+    handler: Option<(ScenarioCleanupKind, String)>,
+    cleanup_error: Option<String>,
 }
 
 struct ScenarioTimer {
@@ -543,6 +676,7 @@ pub(crate) struct ScenarioService {
     callback_result_sender: Sender<ScenarioCallbackResult>,
     lua: LuaWorkerHandle,
     log: LogHandle,
+    next_run_id: u64,
 }
 
 impl ScenarioService {
@@ -560,15 +694,34 @@ impl ScenarioService {
             callback_result_sender,
             lua,
             log,
+            next_run_id: 1,
         }
     }
 
     pub(crate) fn execute(&mut self, command: ScenarioCommand) {
+        if !matches!(
+            &command,
+            ScenarioCommand::Register { .. } | ScenarioCommand::Cancel { .. }
+        ) {
+            let id = command.id();
+            if self.scenarios.get(id).is_some_and(|scenario| {
+                scenario.status.is_terminal() || scenario.finalization.is_some()
+            }) {
+                self.log.error(format!(
+                    "Scenario '{}' is already finalizing or finished.",
+                    id.as_str(),
+                ));
+                return;
+            }
+        }
+
         match command {
             ScenarioCommand::Register { id } => {
+                let run_id = ScenarioRunId::new(self.next_run_id);
+                self.next_run_id = self.next_run_id.wrapping_add(1).max(1);
                 let replaced = self
                     .scenarios
-                    .insert(id.clone(), ScenarioState::new())
+                    .insert(id.clone(), ScenarioState::new(run_id))
                     .is_some();
                 if replaced {
                     self.log.info(format!(
@@ -693,14 +846,226 @@ impl ScenarioService {
                 self.start_stage(id, stage);
             }
 
-            ScenarioCommand::Cancel { id } => {
-                if self.scenarios.remove(&id).is_some() {
-                    self.log
-                        .info(format!("Scenario '{}' cancelled.", id.as_str()));
-                } else {
+            ScenarioCommand::OnStop { id, callback } => {
+                let Some(scenario) = self.scenarios.get_mut(&id) else {
                     self.unknown_scenario(&id);
+                    return;
+                };
+                if scenario.on_stop.is_some() {
+                    self.log.error(format!(
+                        "Scenario '{}' stop handler is already defined.",
+                        id.as_str(),
+                    ));
+                } else {
+                    scenario.on_stop = Some(callback);
                 }
             }
+
+            ScenarioCommand::OnError { id, callback } => {
+                let Some(scenario) = self.scenarios.get_mut(&id) else {
+                    self.unknown_scenario(&id);
+                    return;
+                };
+                if scenario.on_error.is_some() {
+                    self.log.error(format!(
+                        "Scenario '{}' error handler is already defined.",
+                        id.as_str(),
+                    ));
+                } else {
+                    scenario.on_error = Some(callback);
+                }
+            }
+
+            ScenarioCommand::Complete { id, reason } => {
+                self.request_finalization(&id, ScenarioStatus::Completed, reason, false);
+            }
+
+            ScenarioCommand::Stop { id, reason } => {
+                self.request_finalization(&id, ScenarioStatus::Stopped, reason, false);
+            }
+
+            ScenarioCommand::Cancel { id } => {
+                let Some(scenario) = self.scenarios.get_mut(&id) else {
+                    self.unknown_scenario(&id);
+                    return;
+                };
+                if scenario.status.is_terminal() {
+                    self.log.error(format!(
+                        "Scenario '{}' is already finished with status '{}'.",
+                        id.as_str(),
+                        scenario.status.as_str(),
+                    ));
+                    return;
+                }
+                scenario.clear_waits();
+                scenario.pending_actions.clear();
+                scenario.waiting_callback = None;
+                scenario.callback_in_flight = false;
+                scenario.finalization = None;
+                scenario.cleanup_in_flight = false;
+                scenario.status = ScenarioStatus::Cancelled;
+                self.log.info(format!(
+                    "Scenario '{}' finalized: status=cancelled; reason=cancel() requested.",
+                    id.as_str(),
+                ));
+            }
+        }
+    }
+
+    pub(crate) fn accepts_step(&self, id: &ScenarioId, run_id: ScenarioRunId) -> bool {
+        self.scenarios
+            .get(id)
+            .is_some_and(|scenario| scenario.accepts_steps(run_id))
+    }
+
+    fn request_finalization(
+        &mut self,
+        id: &ScenarioId,
+        status: ScenarioStatus,
+        reason: String,
+        discard_pending_actions: bool,
+    ) {
+        let Some(scenario) = self.scenarios.get_mut(id) else {
+            self.unknown_scenario(id);
+            return;
+        };
+        if scenario.status.is_terminal() {
+            return;
+        }
+        if scenario.finalization.is_some() && status != ScenarioStatus::Failed {
+            return;
+        }
+
+        scenario.clear_waits();
+        if discard_pending_actions {
+            scenario.pending_actions.clear();
+            scenario.waiting_callback = None;
+        }
+        scenario.cleanup_in_flight = false;
+        let handler = match status {
+            ScenarioStatus::Completed | ScenarioStatus::Stopped => scenario
+                .on_stop
+                .clone()
+                .map(|callback| (ScenarioCleanupKind::Stop, callback)),
+            ScenarioStatus::Failed => scenario
+                .on_error
+                .clone()
+                .map(|callback| (ScenarioCleanupKind::Error, callback)),
+            ScenarioStatus::Running | ScenarioStatus::Cancelled => None,
+        };
+        scenario.finalization = Some(ScenarioFinalization {
+            intended_status: status,
+            reason,
+            handler,
+            cleanup_error: None,
+        });
+
+        self.advance_finalization(id);
+    }
+
+    fn advance_finalization(&mut self, id: &ScenarioId) {
+        let invocation = {
+            let Some(scenario) = self.scenarios.get_mut(id) else {
+                return;
+            };
+            if scenario.is_busy() || scenario.cleanup_in_flight {
+                return;
+            }
+            let Some(finalization) = &scenario.finalization else {
+                return;
+            };
+            let Some((kind, callback)) = &finalization.handler else {
+                self.finalize_scenario(id);
+                return;
+            };
+
+            scenario.cleanup_in_flight = true;
+            let trigger = match kind {
+                ScenarioCleanupKind::Stop => ScenarioCallbackTrigger::Stop {
+                    status: finalization.intended_status,
+                    reason: finalization.reason.clone(),
+                },
+                ScenarioCleanupKind::Error => ScenarioCallbackTrigger::Error {
+                    error: finalization.reason.clone(),
+                },
+            };
+            ScenarioCallbackInvocation::new(
+                id.clone(),
+                callback.clone(),
+                SystemTime::now(),
+                trigger,
+            )
+        };
+
+        self.invoke_callback(invocation);
+    }
+
+    fn cleanup_failed(&mut self, id: &ScenarioId, callback: &str, error: String) {
+        let Some(scenario) = self.scenarios.get_mut(id) else {
+            return;
+        };
+        let Some(finalization) = scenario.finalization.as_mut() else {
+            return;
+        };
+        let original_reason = finalization.reason.clone();
+        let cleanup_kind = finalization
+            .handler
+            .as_ref()
+            .map_or("cleanup", |(kind, _)| kind.as_str());
+        finalization.cleanup_error = Some(error.clone());
+        scenario.callback_in_flight = false;
+        scenario.cleanup_in_flight = false;
+        scenario.pending_actions.clear();
+        scenario.waiting_callback = None;
+
+        self.log.error(format!(
+            "Scenario '{}' {cleanup_kind} handler '{callback}' failed: {error}. Original termination reason: {original_reason}",
+            id.as_str(),
+        ));
+        self.finalize_scenario(id);
+    }
+
+    fn finalize_scenario(&mut self, id: &ScenarioId) {
+        let Some(scenario) = self.scenarios.get_mut(id) else {
+            return;
+        };
+        let Some(finalization) = scenario.finalization.take() else {
+            return;
+        };
+        let status = if finalization.cleanup_error.is_some() {
+            ScenarioStatus::Failed
+        } else {
+            finalization.intended_status
+        };
+        scenario.status = status;
+        scenario.callback_in_flight = false;
+        scenario.cleanup_in_flight = false;
+        scenario.pending_actions.clear();
+        scenario.waiting_callback = None;
+
+        let message = finalization.cleanup_error.map_or_else(
+            || {
+                format!(
+                    "Scenario '{}' finalized: status={}; reason={}.",
+                    id.as_str(),
+                    status.as_str(),
+                    finalization.reason,
+                )
+            },
+            |cleanup_error| {
+                format!(
+                    "Scenario '{}' finalized: status={}; reason={}; cleanup_error={}.",
+                    id.as_str(),
+                    status.as_str(),
+                    finalization.reason,
+                    cleanup_error,
+                )
+            },
+        );
+        if status == ScenarioStatus::Failed {
+            self.log.error(message);
+        } else {
+            self.log.info(message);
         }
     }
 
@@ -800,8 +1165,17 @@ impl ScenarioService {
         )
     }
 
-    pub(crate) fn track_action(&mut self, id: &ScenarioId, action_id: ProcessActionId) {
-        if let Some(scenario) = self.scenarios.get_mut(id) {
+    pub(crate) fn track_action(
+        &mut self,
+        id: &ScenarioId,
+        run_id: ScenarioRunId,
+        action_id: ProcessActionId,
+    ) {
+        if let Some(scenario) = self
+            .scenarios
+            .get_mut(id)
+            .filter(|scenario| scenario.accepts_steps(run_id))
+        {
             scenario.pending_actions.insert(action_id);
         } else {
             self.log.error(format!(
@@ -824,7 +1198,11 @@ impl ScenarioService {
         let race_eligible = self
             .scenarios
             .iter()
-            .filter(|(_, scenario)| !scenario.is_busy())
+            .filter(|(_, scenario)| {
+                !scenario.is_busy()
+                    && !scenario.status.is_terminal()
+                    && scenario.finalization.is_none()
+            })
             .map(|(id, _)| id.clone())
             .collect::<HashSet<_>>();
         let mut callbacks = Vec::new();
@@ -834,7 +1212,10 @@ impl ScenarioService {
         let mut stage_transitions = Vec::new();
 
         for (id, scenario) in &mut self.scenarios {
-            if scenario.is_busy() {
+            if scenario.is_busy()
+                || scenario.status.is_terminal()
+                || scenario.finalization.is_some()
+            {
                 continue;
             }
 
@@ -996,13 +1377,47 @@ impl ScenarioService {
         for result in results {
             let id = result.invocation.scenario_id().clone();
             let callback = result.invocation.callback().to_owned();
+            let run_id = result.invocation.run_id();
+
+            if !self
+                .scenarios
+                .get(&id)
+                .is_some_and(|scenario| scenario.accepts_steps(run_id))
+            {
+                continue;
+            }
 
             if let Some(error) = result.error {
-                self.scenarios.remove(&id);
-                self.log.error(format!(
-                    "Scenario '{}' callback '{callback}' failed; scenario stopped: {error}",
-                    id.as_str(),
-                ));
+                let cleanup_in_flight = self
+                    .scenarios
+                    .get(&id)
+                    .is_some_and(|scenario| scenario.cleanup_in_flight);
+                if cleanup_in_flight {
+                    self.cleanup_failed(&id, &callback, error);
+                } else {
+                    let already_failed = self.scenarios.get(&id).is_some_and(|scenario| {
+                        scenario.finalization.as_ref().is_some_and(|finalization| {
+                            finalization.intended_status == ScenarioStatus::Failed
+                        })
+                    });
+                    if let Some(scenario) = self.scenarios.get_mut(&id) {
+                        scenario.callback_in_flight = false;
+                    }
+                    if already_failed {
+                        self.log.error(format!(
+                            "Scenario '{}' callback '{callback}' also failed: {error}.",
+                            id.as_str(),
+                        ));
+                        self.advance_finalization(&id);
+                    } else {
+                        let reason = format!("callback '{callback}' failed: {error}");
+                        self.log.error(format!(
+                            "Scenario '{}' {reason}; starting error finalization.",
+                            id.as_str(),
+                        ));
+                        self.request_finalization(&id, ScenarioStatus::Failed, reason, true);
+                    }
+                }
             } else if let Some(scenario) = self.scenarios.get_mut(&id) {
                 scenario.callback_in_flight = false;
                 if scenario.pending_actions.is_empty() {
@@ -1043,6 +1458,26 @@ impl ScenarioService {
             id.as_str(),
         ));
 
+        let finalizing = self
+            .scenarios
+            .get(id)
+            .is_some_and(|scenario| scenario.finalization.is_some());
+        if finalizing {
+            let cleanup_finished = self
+                .scenarios
+                .get(id)
+                .is_some_and(|scenario| scenario.cleanup_in_flight);
+            if cleanup_finished {
+                if let Some(scenario) = self.scenarios.get_mut(id) {
+                    scenario.cleanup_in_flight = false;
+                }
+                self.finalize_scenario(id);
+            } else {
+                self.advance_finalization(id);
+            }
+            return;
+        }
+
         let activation = self
             .scenarios
             .get_mut(id)
@@ -1070,26 +1505,53 @@ impl ScenarioService {
             scenario
                 .pending_actions
                 .contains(&action_id)
-                .then(|| id.clone())
+                .then(|| (id.clone(), scenario.cleanup_in_flight))
         });
 
-        if let Some(id) = failed_scenario {
-            self.scenarios.remove(&id);
-            self.log.error(format!(
-                "Scenario '{}' action {} failed; scenario stopped: {error}",
-                id.as_str(),
-                action_id.value(),
-            ));
+        if let Some((id, cleanup_in_flight)) = failed_scenario {
+            if cleanup_in_flight {
+                let callback = self
+                    .scenarios
+                    .get(&id)
+                    .and_then(|scenario| scenario.waiting_callback.clone())
+                    .or_else(|| {
+                        self.scenarios.get(&id).and_then(|scenario| {
+                            scenario.finalization.as_ref().and_then(|finalization| {
+                                finalization
+                                    .handler
+                                    .as_ref()
+                                    .map(|(_, callback)| callback.clone())
+                            })
+                        })
+                    })
+                    .unwrap_or_else(|| "cleanup".to_owned());
+                self.cleanup_failed(
+                    &id,
+                    &callback,
+                    format!("action {} failed: {error}", action_id.value()),
+                );
+            } else {
+                let reason = format!("action {} failed: {error}", action_id.value());
+                self.log.error(format!(
+                    "Scenario '{}' {reason}; starting error finalization.",
+                    id.as_str(),
+                ));
+                self.request_finalization(&id, ScenarioStatus::Failed, reason, true);
+            }
         }
     }
 
-    fn invoke_callback(&mut self, invocation: ScenarioCallbackInvocation) {
+    fn invoke_callback(&mut self, mut invocation: ScenarioCallbackInvocation) {
         let id = invocation.scenario_id().clone();
         let callback = invocation.callback().to_owned();
 
         let Some(scenario) = self.scenarios.get_mut(&id) else {
             return;
         };
+        if scenario.status.is_terminal() {
+            return;
+        }
+        invocation.run_id = scenario.run_id;
         scenario.callback_in_flight = true;
 
         if let Err(error) = self
@@ -1112,11 +1574,23 @@ impl ScenarioService {
         callback: &str,
         error: LuaWorkerHandleError,
     ) {
-        self.scenarios.remove(id);
-        self.log.error(format!(
-            "Scenario '{}' could not invoke callback '{callback}'; scenario stopped: {error}",
-            id.as_str(),
-        ));
+        let cleanup_in_flight = self
+            .scenarios
+            .get(id)
+            .is_some_and(|scenario| scenario.cleanup_in_flight);
+        if cleanup_in_flight {
+            self.cleanup_failed(id, callback, error.to_string());
+        } else {
+            if let Some(scenario) = self.scenarios.get_mut(id) {
+                scenario.callback_in_flight = false;
+            }
+            let reason = format!("could not invoke callback '{callback}': {error}");
+            self.log.error(format!(
+                "Scenario '{}' {reason}; starting error finalization.",
+                id.as_str(),
+            ));
+            self.request_finalization(id, ScenarioStatus::Failed, reason, true);
+        }
     }
 
     fn unknown_scenario(&self, id: &ScenarioId) {
@@ -1144,8 +1618,9 @@ mod tests {
 
     use super::{
         ScenarioCallbackTrigger, ScenarioCondition, ScenarioConditionKind, ScenarioRaceAlternative,
-        ScenarioRaceState, ScenarioRaceTrigger, ScenarioStageDefinition, ScenarioStageName,
-        ScenarioStageTransition, ScenarioState, ScenarioTriggerTarget, ThresholdDirection,
+        ScenarioRaceState, ScenarioRaceTrigger, ScenarioRunId, ScenarioStageDefinition,
+        ScenarioStageName, ScenarioStageTransition, ScenarioState, ScenarioTriggerTarget,
+        ThresholdDirection,
     };
     use crate::{connection::ConnectionId, data::SeriesId, process_recorder::ProcessMeasurement};
 
@@ -1161,7 +1636,7 @@ mod tests {
             },
             hold: Duration::ZERO,
         };
-        let mut scenario = ScenarioState::new();
+        let mut scenario = ScenarioState::new(ScenarioRunId::new(1));
         scenario.races.push(
             ScenarioRaceState::new(
                 vec![
@@ -1223,7 +1698,7 @@ mod tests {
         let activation_time = registration_time + Duration::from_secs(60);
         let heating = ScenarioStageName::new("heating").unwrap();
         let holding = ScenarioStageName::new("holding").unwrap();
-        let mut scenario = ScenarioState::new();
+        let mut scenario = ScenarioState::new(ScenarioRunId::new(1));
         scenario.stages.insert(
             heating.clone(),
             ScenarioStageDefinition {

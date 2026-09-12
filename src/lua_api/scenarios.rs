@@ -39,6 +39,8 @@ pub(super) fn register_scenario(
             stage_names: HashSet::new(),
             stage_targets: Vec::new(),
             stages_started: false,
+            stop_handler_registered: false,
+            error_handler_registered: false,
         })
     })?;
 
@@ -51,6 +53,8 @@ struct LuaScenarioHandle {
     stage_names: HashSet<ScenarioStageName>,
     stage_targets: Vec<(ScenarioStageName, ScenarioStageName)>,
     stages_started: bool,
+    stop_handler_registered: bool,
+    error_handler_registered: bool,
 }
 
 impl UserData for LuaScenarioHandle {
@@ -199,6 +203,68 @@ impl UserData for LuaScenarioHandle {
             )?;
             scenario.stages_started = true;
             Ok(())
+        });
+
+        methods.add_method_mut("on_stop", |_, scenario, callback: String| {
+            if scenario.stop_handler_registered {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "Scenario '{}' stop handler is already defined",
+                    scenario.id.as_str(),
+                )));
+            }
+            let callback = validate_callback(callback)?;
+            send_application_command(
+                &scenario.command_sender,
+                ScenarioCommand::OnStop {
+                    id: scenario.id.clone(),
+                    callback,
+                }
+                .into(),
+            )?;
+            scenario.stop_handler_registered = true;
+            Ok(())
+        });
+
+        methods.add_method_mut("on_error", |_, scenario, callback: String| {
+            if scenario.error_handler_registered {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "Scenario '{}' error handler is already defined",
+                    scenario.id.as_str(),
+                )));
+            }
+            let callback = validate_callback(callback)?;
+            send_application_command(
+                &scenario.command_sender,
+                ScenarioCommand::OnError {
+                    id: scenario.id.clone(),
+                    callback,
+                }
+                .into(),
+            )?;
+            scenario.error_handler_registered = true;
+            Ok(())
+        });
+
+        methods.add_method("complete", |_, scenario, reason: String| {
+            send_application_command(
+                &scenario.command_sender,
+                ScenarioCommand::Complete {
+                    id: scenario.id.clone(),
+                    reason: validate_reason(reason)?,
+                }
+                .into(),
+            )
+        });
+
+        methods.add_method("stop", |_, scenario, reason: String| {
+            send_application_command(
+                &scenario.command_sender,
+                ScenarioCommand::Stop {
+                    id: scenario.id.clone(),
+                    reason: validate_reason(reason)?,
+                }
+                .into(),
+            )
         });
 
         methods.add_method("cancel", |_, scenario, ()| {
@@ -669,6 +735,16 @@ fn validate_callback(callback: String) -> mlua::Result<String> {
     Ok(callback)
 }
 
+fn validate_reason(reason: String) -> mlua::Result<String> {
+    if reason.trim().is_empty() {
+        return Err(mlua::Error::RuntimeError(
+            "Scenario termination reason cannot be empty".to_owned(),
+        ));
+    }
+
+    Ok(reason)
+}
+
 fn validate_keys(table: &Table, context: &str, allowed: &[&str]) -> mlua::Result<()> {
     for pair in table.clone().pairs::<String, Value>() {
         let (key, _) = pair?;
@@ -763,6 +839,10 @@ mod tests {
                 scenario:stage("holding", { enter = "start_holding" })
                 scenario:stage("failed", { enter = "handle_failure" })
                 scenario:start("heating")
+                scenario:on_stop("cleanup")
+                scenario:on_error("recover")
+                scenario:complete("normal completion")
+                scenario:stop("operator requested stop")
                 scenario:cancel()
             "#,
         )
@@ -882,6 +962,27 @@ mod tests {
             receiver.try_recv().unwrap(),
             UserCommand::Scenario(ScenarioCommand::Start { id, stage })
                 if id.as_str() == "heat_cycle" && stage.as_str() == "heating"
+        ));
+
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            UserCommand::Scenario(ScenarioCommand::OnStop { id, callback })
+                if id.as_str() == "heat_cycle" && callback == "cleanup"
+        ));
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            UserCommand::Scenario(ScenarioCommand::OnError { id, callback })
+                if id.as_str() == "heat_cycle" && callback == "recover"
+        ));
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            UserCommand::Scenario(ScenarioCommand::Complete { id, reason })
+                if id.as_str() == "heat_cycle" && reason == "normal completion"
+        ));
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            UserCommand::Scenario(ScenarioCommand::Stop { id, reason })
+                if id.as_str() == "heat_cycle" && reason == "operator requested stop"
         ));
 
         assert!(matches!(
@@ -1179,6 +1280,16 @@ mod tests {
         );
 
         assert!(error.contains("stages have already been started"));
+    }
+
+    #[test]
+    fn rejects_invalid_scenario_finalization() {
+        let error = execute_invalid_stage("scenario:complete('   ')");
+        assert!(error.contains("termination reason cannot be empty"));
+
+        let error =
+            execute_invalid_stage("scenario:on_stop('cleanup'); scenario:on_stop('cleanup_again')");
+        assert!(error.contains("stop handler is already defined"));
     }
 
     fn execute_invalid_race(source: &str) -> String {

@@ -34,17 +34,17 @@ use crate::{
     application_definition::ApplicationDefinition,
     connection::ConnectionId,
     lua_application_script::LuaApplicationEvent,
-    scenario::ScenarioId,
+    scenario::{ScenarioId, ScenarioRunId},
     user_command::{
         AcquisitionCommand, EmulatorCommand, SerialCommand, SeriesCommand, UserCommand,
     },
 };
 
 thread_local! {
-    static SCENARIO_COMMAND_CONTEXT: RefCell<Option<ScenarioId>> = const { RefCell::new(None) };
+    static SCENARIO_COMMAND_CONTEXT: RefCell<Option<(ScenarioId, ScenarioRunId)>> = const { RefCell::new(None) };
 }
 
-struct ScenarioCommandContextGuard(Option<ScenarioId>);
+struct ScenarioCommandContextGuard(Option<(ScenarioId, ScenarioRunId)>);
 
 impl Drop for ScenarioCommandContextGuard {
     fn drop(&mut self) {
@@ -56,9 +56,11 @@ impl Drop for ScenarioCommandContextGuard {
 
 pub(crate) fn with_scenario_command_context<T>(
     scenario_id: ScenarioId,
+    run_id: ScenarioRunId,
     callback: impl FnOnce() -> T,
 ) -> T {
-    let previous = SCENARIO_COMMAND_CONTEXT.with(|context| context.replace(Some(scenario_id)));
+    let previous =
+        SCENARIO_COMMAND_CONTEXT.with(|context| context.replace(Some((scenario_id, run_id))));
     let _guard = ScenarioCommandContextGuard(previous);
     callback()
 }
@@ -218,10 +220,11 @@ pub(super) fn send_application_command(
     command_sender: &Sender<UserCommand>,
     command: UserCommand,
 ) -> mlua::Result<()> {
-    let scenario_id = SCENARIO_COMMAND_CONTEXT.with(|context| context.borrow().clone());
-    let command = match scenario_id {
-        Some(scenario_id) => UserCommand::ScenarioStep {
+    let scenario = SCENARIO_COMMAND_CONTEXT.with(|context| context.borrow().clone());
+    let command = match scenario {
+        Some((scenario_id, run_id)) => UserCommand::ScenarioStep {
             scenario_id,
+            run_id,
             command: Box::new(command),
         },
         None => command,

@@ -439,6 +439,7 @@ pub enum UserCommand {
     Scenario(ScenarioCommand),
     ScenarioStep {
         scenario_id: crate::scenario::ScenarioId,
+        run_id: crate::scenario::ScenarioRunId,
         command: Box<UserCommand>,
     },
 
