@@ -21,7 +21,7 @@ use crate::{
     process_recorder::{
         ProcessAction, ProcessActionContext, ProcessActionOrigin, ProcessRecord, ProcessRecorder,
     },
-    scenario::ScenarioService,
+    scenario::{ScenarioService, ScenarioSnapshot},
     serial_connection::SerialConnectionRegistry,
     signal_processing::{ProcessingEvent, ProcessingService},
     user_command::{AcquisitionCommand, EmulatorCommand, UserCommand},
@@ -489,6 +489,10 @@ impl ApplicationRuntime {
 
     pub(crate) const fn series(&self) -> &SeriesStore {
         &self.series
+    }
+
+    pub(crate) fn scenario_snapshots(&self) -> Vec<ScenarioSnapshot> {
+        self.scenario.snapshots()
     }
 
     pub(crate) const fn definition(&self) -> &ApplicationDefinition {

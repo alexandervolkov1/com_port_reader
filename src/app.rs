@@ -28,6 +28,7 @@ use crate::{
         NullProcessRecordWriter, ProcessRecorder, SqliteProcessRecordWriter,
         new_process_database_path,
     },
+    scenario::{ScenarioSnapshot, ScenarioStatus},
 };
 
 const SERIES_PANEL_WIDTH: f32 = 150.0;
@@ -43,6 +44,7 @@ pub struct MyApp {
     log_panel_open: bool,
     control_panels: ControlPanelModel,
     control_panel_open: bool,
+    scenario_panel_open: bool,
     settings: SettingsModel,
 }
 
@@ -134,6 +136,7 @@ impl MyApp {
             log_panel_open: false,
             control_panels,
             control_panel_open: false,
+            scenario_panel_open: false,
             settings: SettingsModel::default(),
         }
     }
@@ -310,6 +313,12 @@ impl eframe::App for MyApp {
                     &self.control_panels,
                     &mut self.control_panel_open,
                 );
+                if ui
+                    .selectable_label(self.scenario_panel_open, "Сценарии")
+                    .clicked()
+                {
+                    self.scenario_panel_open = !self.scenario_panel_open;
+                }
                 settings_view::show_menu_button(ui, &mut self.settings);
                 help_view::show_menu_button(ui, &mut self.help);
             });
@@ -441,6 +450,12 @@ impl eframe::App for MyApp {
 
         settings_view::show_window(ui.ctx(), &mut self.settings, &self.runtime);
 
+        show_scenario_window(
+            ui.ctx(),
+            &mut self.scenario_panel_open,
+            &self.runtime.scenario_snapshots(),
+        );
+
         if let Some(path) = self.settings.take_profile_load_request() {
             let result = self.load_profile(&path);
 
@@ -455,5 +470,56 @@ impl eframe::App for MyApp {
 
         ui.ctx()
             .request_repaint_after(self.runtime.definition().runtime().repaint_interval());
+    }
+}
+
+fn show_scenario_window(context: &egui::Context, open: &mut bool, snapshots: &[ScenarioSnapshot]) {
+    egui::Window::new("Состояние сценариев")
+        .open(open)
+        .resizable(true)
+        .show(context, |ui| {
+            if snapshots.is_empty() {
+                ui.label("Активных сценариев нет.");
+                return;
+            }
+
+            for snapshot in snapshots {
+                ui.collapsing(
+                    format!("{} — {}", snapshot.id, status_label(snapshot.status)),
+                    |ui| {
+                        if let Some(stage) = &snapshot.current_stage {
+                            ui.label(format!("Этап: {stage}"));
+                        }
+                        if let Some(started_at) = snapshot.started_at {
+                            ui.label(format!("Запущен: {started_at:.3} Unix"));
+                        }
+                        if let Some(stage_started_at) = snapshot.stage_started_at {
+                            ui.label(format!("Этап запущен: {stage_started_at:.3} Unix"));
+                        }
+                        if !snapshot.pending_triggers.is_empty() {
+                            ui.label(format!(
+                                "Ожидания: {}",
+                                snapshot.pending_triggers.join(", ")
+                            ));
+                        }
+                        if let Some(transition) = &snapshot.last_transition {
+                            ui.label(format!("Последний переход: {transition}"));
+                        }
+                        if let Some(error) = &snapshot.last_error {
+                            ui.colored_label(egui::Color32::RED, format!("Ошибка: {error}"));
+                        }
+                    },
+                );
+            }
+        });
+}
+
+fn status_label(status: ScenarioStatus) -> &'static str {
+    match status {
+        ScenarioStatus::Running => "выполняется / running",
+        ScenarioStatus::Completed => "завершён / completed",
+        ScenarioStatus::Stopped => "остановлен / stopped",
+        ScenarioStatus::Cancelled => "отменён / cancelled",
+        ScenarioStatus::Failed => "ошибка / failed",
     }
 }

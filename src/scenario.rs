@@ -76,6 +76,18 @@ pub(crate) enum ScenarioStatus {
     Failed,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ScenarioSnapshot {
+    pub(crate) id: String,
+    pub(crate) status: ScenarioStatus,
+    pub(crate) current_stage: Option<String>,
+    pub(crate) started_at: Option<f64>,
+    pub(crate) stage_started_at: Option<f64>,
+    pub(crate) pending_triggers: Vec<String>,
+    pub(crate) last_transition: Option<String>,
+    pub(crate) last_error: Option<String>,
+}
+
 impl ScenarioStatus {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
@@ -351,6 +363,10 @@ struct ScenarioState {
     on_error: Option<String>,
     finalization: Option<ScenarioFinalization>,
     cleanup_in_flight: bool,
+    started_at: Option<SystemTime>,
+    stage_started_at: Option<SystemTime>,
+    last_transition: Option<String>,
+    last_error: Option<String>,
 }
 
 impl ScenarioState {
@@ -372,6 +388,50 @@ impl ScenarioState {
             on_error: None,
             finalization: None,
             cleanup_in_flight: false,
+            started_at: Some(SystemTime::now()),
+            stage_started_at: None,
+            last_transition: None,
+            last_error: None,
+        }
+    }
+
+    fn snapshot(&self, id: &ScenarioId) -> ScenarioSnapshot {
+        let timestamp = |time: Option<SystemTime>| {
+            time.and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs_f64())
+        };
+        let mut pending_triggers = self
+            .timers
+            .iter()
+            .map(|timer| timer.trigger.name().to_owned())
+            .collect::<Vec<_>>();
+        pending_triggers.extend(
+            self.conditions
+                .iter()
+                .map(|condition| condition.condition.kind_name().to_owned()),
+        );
+        pending_triggers.extend(self.races.iter().map(|_| "race".to_owned()));
+        if self.callback_in_flight {
+            pending_triggers.push("callback".to_owned());
+        }
+        if let Some(callback) = &self.waiting_callback {
+            pending_triggers.push(format!("actions → {callback}"));
+        }
+        if self.cleanup_in_flight {
+            pending_triggers.push("cleanup".to_owned());
+        }
+        ScenarioSnapshot {
+            id: id.as_str().to_owned(),
+            status: self.status,
+            current_stage: self
+                .current_stage
+                .as_ref()
+                .map(|stage| stage.as_str().to_owned()),
+            started_at: timestamp(self.started_at),
+            stage_started_at: timestamp(self.stage_started_at),
+            pending_triggers,
+            last_transition: self.last_transition.clone(),
+            last_error: self.last_error.clone(),
         }
     }
 
@@ -904,6 +964,7 @@ impl ScenarioService {
                 scenario.finalization = None;
                 scenario.cleanup_in_flight = false;
                 scenario.status = ScenarioStatus::Cancelled;
+                scenario.last_error = None;
                 self.log.info(format!(
                     "Scenario '{}' finalized: status=cancelled; reason=cancel() requested.",
                     id.as_str(),
@@ -916,6 +977,16 @@ impl ScenarioService {
         self.scenarios
             .get(id)
             .is_some_and(|scenario| scenario.accepts_steps(run_id))
+    }
+
+    pub(crate) fn snapshots(&self) -> Vec<ScenarioSnapshot> {
+        let mut snapshots = self
+            .scenarios
+            .iter()
+            .map(|(id, scenario)| scenario.snapshot(id))
+            .collect::<Vec<_>>();
+        snapshots.sort_by(|left, right| left.id.cmp(&right.id));
+        snapshots
     }
 
     fn request_finalization(
@@ -937,6 +1008,9 @@ impl ScenarioService {
         }
 
         scenario.clear_waits();
+        if status == ScenarioStatus::Failed {
+            scenario.last_error = Some(reason.clone());
+        }
         if discard_pending_actions {
             scenario.pending_actions.clear();
             scenario.waiting_callback = None;
@@ -1013,6 +1087,7 @@ impl ScenarioService {
             .as_ref()
             .map_or("cleanup", |(kind, _)| kind.as_str());
         finalization.cleanup_error = Some(error.clone());
+        scenario.last_error = Some(format!("{original_reason}; cleanup error: {error}"));
         scenario.callback_in_flight = false;
         scenario.cleanup_in_flight = false;
         scenario.pending_actions.clear();
@@ -1085,7 +1160,11 @@ impl ScenarioService {
             }
 
             scenario.started = true;
+            let now = SystemTime::now();
+            scenario.started_at = Some(now);
+            scenario.stage_started_at = Some(now);
             scenario.current_stage = Some(stage.clone());
+            scenario.last_transition = Some(format!("started at stage '{}'", stage.as_str()));
             scenario.pending_stage_activation = Some(stage.clone());
             scenario
                 .stages
@@ -1141,6 +1220,12 @@ impl ScenarioService {
                 .expect("scenario transition target must be validated before start");
             let callback = definition.enter.clone();
             scenario.current_stage = Some(next.clone());
+            scenario.stage_started_at = Some(SystemTime::now());
+            scenario.last_transition = Some(format!(
+                "{} -> {}: {reason}",
+                previous.as_str(),
+                next.as_str()
+            ));
             scenario.pending_stage_activation = Some(next.clone());
             callback
         };
@@ -1616,6 +1701,7 @@ impl std::error::Error for ScenarioDefinitionError {}
 mod tests {
     use std::time::{Duration, Instant, SystemTime};
 
+    use super::condition::ScenarioConditionState;
     use super::{
         ScenarioCallbackTrigger, ScenarioCondition, ScenarioConditionKind, ScenarioRaceAlternative,
         ScenarioRaceState, ScenarioRaceTrigger, ScenarioRunId, ScenarioStageDefinition,
@@ -1690,6 +1776,34 @@ mod tests {
         };
 
         assert_eq!(trigger.reason(), "timer elapsed after 30 seconds");
+    }
+
+    #[test]
+    fn snapshot_contains_status_stage_and_pending_trigger_summary() {
+        let id = super::ScenarioId::new("heat_cycle").unwrap();
+        let mut scenario = ScenarioState::new(ScenarioRunId::new(1));
+        scenario.current_stage = Some(ScenarioStageName::new("heating").unwrap());
+        scenario.conditions.push(ScenarioConditionState::new(
+            ScenarioCondition {
+                kind: ScenarioConditionKind::Threshold {
+                    series: "temperature".to_owned(),
+                    direction: ThresholdDirection::Above,
+                    threshold: 150.0,
+                    hysteresis: 0.0,
+                },
+                hold: Duration::ZERO,
+            },
+            ScenarioTriggerTarget::Callback("holding".to_owned()),
+            SystemTime::now(),
+        ));
+        scenario.callback_in_flight = true;
+
+        let snapshot = scenario.snapshot(&id);
+        assert_eq!(snapshot.id, "heat_cycle");
+        assert_eq!(snapshot.status, super::ScenarioStatus::Running);
+        assert_eq!(snapshot.current_stage.as_deref(), Some("heating"));
+        assert!(snapshot.pending_triggers.contains(&"above".to_owned()));
+        assert!(snapshot.pending_triggers.contains(&"callback".to_owned()));
     }
 
     #[test]
