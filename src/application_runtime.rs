@@ -393,6 +393,8 @@ impl ApplicationRuntime {
     }
 
     pub fn poll(&mut self) {
+        // Recording is observability, not a control dependency: report its failure without
+        // stopping acquisition or controller lifecycles.
         if let Some(error) = self.process_recorder.take_error() {
             self.log.error(format!("Process recorder failed: {error}",));
         }

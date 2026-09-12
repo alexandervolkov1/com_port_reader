@@ -348,6 +348,8 @@ impl PidController {
 
         let mut integral_limited = false;
 
+        // Conditional integration prevents windup beyond a saturated bound while still allowing
+        // the integral term to unwind toward the usable range.
         if proposed_value > maximum && integral_change > 0.0 {
             integral = if current_value < maximum {
                 self.integral + maximum - current_value

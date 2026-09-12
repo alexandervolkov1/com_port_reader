@@ -254,6 +254,8 @@ fn handle_write_completion(
                 return;
             }
 
+            // Automatic ownership is granted only after the tracked write is acknowledged. A
+            // dispatched safe request alone is not evidence that hardware reached a safe value.
             if let Some(transition_id) = pending.automatic_transition_id {
                 let _ = arbiter.complete_automatic_transition(
                     pending.target,
@@ -305,6 +307,8 @@ fn apply_safe(
 
     let instance_id = arbiter.controller_instance_id(target)?;
 
+    // Safety writes temporarily supersede controller ownership. Completion tracking keeps a
+    // device-side write failure visible after dispatch has succeeded.
     arbiter.authorize(target, &OutputSource::Safety)?;
 
     validate_request_target(target, request)?;

@@ -518,6 +518,8 @@ fn advance_series_schedules(
             continue;
         };
 
+        // Advance from the previous deadline to preserve a stable cadence. If a slow operation
+        // missed an entire interval, reset from completion instead of issuing catch-up polls.
         schedule.next_poll += schedule.interval;
 
         if completed_at > schedule.next_poll + schedule.interval {
@@ -553,6 +555,8 @@ fn update_series_polling_health(
             continue;
         }
 
+        // Isolate a persistently failing series so other series on this connection keep running.
+        // Retrying it later recreates its schedule and clears this failure history.
         schedules.remove(&series.id);
 
         if !series_store.suspend_polling(series.id) {
