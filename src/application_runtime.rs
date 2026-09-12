@@ -9,6 +9,7 @@ use std::{
 use crossbeam_channel::{Receiver, RecvTimeoutError, unbounded};
 
 use crate::{
+    acquisition::LocalVirtualInstrumentSource,
     app_log::LogHandle,
     application_definition::ApplicationDefinition,
     application_paths::ApplicationPaths,
@@ -21,11 +22,15 @@ use crate::{
     process_recorder::{
         ProcessAction, ProcessActionContext, ProcessActionOrigin, ProcessRecord, ProcessRecorder,
     },
+    protocol::virtual_instrument::MemoryEndpoint,
     scenario::{ScenarioService, ScenarioSnapshot},
     serial_connection::SerialConnectionRegistry,
     signal_processing::{ProcessingEvent, ProcessingService},
     user_command::{AcquisitionCommand, EmulatorCommand, UserCommand},
-    worker::{ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker},
+    worker::{
+        ConnectionWorkers, WorkerConfig, spawn_serial_connection_worker,
+        spawn_serial_connection_worker_with_sources,
+    },
 };
 
 mod acquisition_command_handler;
@@ -112,14 +117,36 @@ impl ApplicationRuntime {
 
         let emulator_port = definition
             .emulator()
-            .map(|emulator| emulator.port_name().to_owned());
+            .and_then(|emulator| emulator.port_name().map(str::to_owned));
 
         let emulator_script_path = definition
             .emulator()
             .map(|emulator| paths.resolve_profile(emulator.script_path()));
 
-        let device_emulator =
-            DeviceEmulatorService::new(emulator_port, emulator_script_path, log.clone());
+        let (local_source, local_transport) = definition
+            .emulator()
+            .filter(|emulator| {
+                matches!(
+                    emulator.transport(),
+                    crate::application_definition::EmulatorTransport::Memory
+                )
+            })
+            .map(|_| {
+                let (client, server) = MemoryEndpoint::new();
+                (
+                    Some(Box::new(LocalVirtualInstrumentSource::new(client))
+                        as Box<dyn crate::acquisition::AcquisitionSource>),
+                    Some(server),
+                )
+            })
+            .unwrap_or((None, None));
+
+        let device_emulator = DeviceEmulatorService::new(
+            emulator_port,
+            emulator_script_path,
+            local_transport,
+            log.clone(),
+        );
 
         let (event_sender, event_receiver) = crossbeam_channel::unbounded();
 
@@ -143,14 +170,25 @@ impl ApplicationRuntime {
 
         let worker_config = WorkerConfig::new(definition.runtime().default_poll_interval());
 
-        let primary_worker = spawn_serial_connection_worker(
-            serial_connections.primary(),
-            event_sender.clone(),
-            series.clone(),
-            process_recorder.clone(),
-            processing_handle.clone(),
-            worker_config,
-        );
+        let primary_worker = match local_source {
+            Some(source) => spawn_serial_connection_worker_with_sources(
+                serial_connections.primary(),
+                vec![source],
+                event_sender.clone(),
+                series.clone(),
+                process_recorder.clone(),
+                processing_handle.clone(),
+                worker_config,
+            ),
+            None => spawn_serial_connection_worker(
+                serial_connections.primary(),
+                event_sender.clone(),
+                series.clone(),
+                process_recorder.clone(),
+                processing_handle.clone(),
+                worker_config,
+            ),
+        };
 
         let mut workers = ConnectionWorkers::new(primary_worker);
 

@@ -11,6 +11,7 @@ mod local_virtual_instrument_source;
 mod serial_command_source;
 
 pub use combined_source::CombinedSource;
+pub(crate) use local_virtual_instrument_source::LocalVirtualInstrumentSource;
 pub use serial_command_source::SerialCommandSource;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

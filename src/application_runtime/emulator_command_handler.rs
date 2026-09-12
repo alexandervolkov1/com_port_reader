@@ -1,7 +1,7 @@
 use super::device_emulator_service::DeviceEmulatorService;
 use crate::{
     acquisition::AcquisitionError,
-    application_definition::ApplicationDefinition,
+    application_definition::{ApplicationDefinition, EmulatorTransport},
     connection::ConnectionId,
     process_recorder::{ProcessActionContext, ProcessRecorder},
     serial_connection::{SerialConnectionRegistry, SerialPortConfig},
@@ -48,19 +48,26 @@ impl<'a> EmulatorCommandHandler<'a> {
 
     fn start(&mut self, action_context: Option<ProcessActionContext>) {
         let result = (|| {
-            let serial_config = self.emulator_serial_config().map_err(|error| {
-                format!(
-                    "Cannot start emulator: \
-                             {error}",
-                )
-            })?;
+            let serial_config = match self
+                .application_definition
+                .emulator()
+                .map(|emulator| emulator.transport())
+            {
+                Some(EmulatorTransport::Memory) => None,
+                _ => Some(
+                    self.emulator_serial_config()
+                        .map_err(|error| format!("Cannot start emulator: {error}"))?,
+                ),
+            };
 
-            self.device_emulator.start(&serial_config).map_err(|error| {
-                format!(
-                    "Cannot start emulator: \
+            self.device_emulator
+                .start(serial_config.as_ref())
+                .map_err(|error| {
+                    format!(
+                        "Cannot start emulator: \
                          {error}",
-                )
-            })
+                    )
+                })
         })();
 
         match result {
@@ -95,7 +102,8 @@ impl<'a> EmulatorCommandHandler<'a> {
     fn emulator_connection_id(&self) -> ConnectionId {
         self.application_definition
             .emulator()
-            .map_or(ConnectionId::PRIMARY, |emulator| emulator.connection_id())
+            .and_then(|emulator| emulator.connection_id())
+            .unwrap_or(ConnectionId::PRIMARY)
     }
 
     fn emulator_serial_config(&self) -> Result<SerialPortConfig, AcquisitionError> {

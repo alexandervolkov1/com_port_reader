@@ -308,35 +308,6 @@ fn parse_emulator_definition(
 ) -> Result<EmulatorDefinition, LuaApplicationDefinitionError> {
     validate_emulator_keys(emulator)?;
 
-    let connection_name = emulator
-        .get::<Option<String>>("connection")
-        .map_err(LuaApplicationDefinitionError::from)?
-        .ok_or_else(|| {
-            LuaApplicationDefinitionError::new(
-                "Lua emulator definition must \
-                 contain 'connection'",
-            )
-        })?;
-
-    let connection_id = application_definition
-        .connection_id_by_name(&connection_name)
-        .ok_or_else(|| {
-            LuaApplicationDefinitionError::new(format!(
-                "Unknown emulator connection \
-                         '{connection_name}'",
-            ))
-        })?;
-
-    let port_name = emulator
-        .get::<Option<String>>("port")
-        .map_err(LuaApplicationDefinitionError::from)?
-        .ok_or_else(|| {
-            LuaApplicationDefinitionError::new(
-                "Lua emulator definition must \
-                 contain 'port'",
-            )
-        })?;
-
     let script_path = emulator
         .get::<Option<String>>("script")
         .map_err(LuaApplicationDefinitionError::from)?
@@ -347,15 +318,60 @@ fn parse_emulator_definition(
             )
         })?;
 
-    EmulatorDefinition::new(connection_id, port_name, script_path)
-        .map_err(|error| LuaApplicationDefinitionError::new(error.to_string()))
+    let transport = emulator
+        .get::<Option<String>>("transport")
+        .map_err(LuaApplicationDefinitionError::from)?
+        .unwrap_or_else(|| {
+            if emulator.contains_key("connection").unwrap_or(false)
+                || emulator.contains_key("port").unwrap_or(false)
+            {
+                "serial".to_owned()
+            } else {
+                "memory".to_owned()
+            }
+        });
+
+    match transport.to_ascii_lowercase().as_str() {
+        "memory" => EmulatorDefinition::memory(script_path)
+            .map_err(|error| LuaApplicationDefinitionError::new(error.to_string())),
+        "serial" => {
+            let connection_name = emulator
+                .get::<Option<String>>("connection")
+                .map_err(LuaApplicationDefinitionError::from)?
+                .ok_or_else(|| {
+                    LuaApplicationDefinitionError::new(
+                        "Lua emulator definition must contain 'connection'",
+                    )
+                })?;
+            let connection_id = application_definition
+                .connection_id_by_name(&connection_name)
+                .ok_or_else(|| {
+                    LuaApplicationDefinitionError::new(format!(
+                        "Unknown emulator connection '{connection_name}'"
+                    ))
+                })?;
+            let port_name = emulator
+                .get::<Option<String>>("port")
+                .map_err(LuaApplicationDefinitionError::from)?
+                .ok_or_else(|| {
+                    LuaApplicationDefinitionError::new(
+                        "Lua emulator definition must contain 'port'",
+                    )
+                })?;
+            EmulatorDefinition::new(connection_id, port_name, script_path)
+                .map_err(|error| LuaApplicationDefinitionError::new(error.to_string()))
+        }
+        _ => Err(LuaApplicationDefinitionError::new(format!(
+            "Lua emulator transport must be 'memory' or 'serial', got '{transport}'"
+        ))),
+    }
 }
 
 fn validate_emulator_keys(emulator: &Table) -> Result<(), LuaApplicationDefinitionError> {
     for pair in emulator.pairs::<String, Value>() {
         let (key, _) = pair.map_err(LuaApplicationDefinitionError::from)?;
 
-        if !matches!(key.as_str(), "connection" | "port" | "script") {
+        if !matches!(key.as_str(), "transport" | "connection" | "port" | "script") {
             return Err(LuaApplicationDefinitionError::new(format!(
                 "Unknown emulator option \
                          '{key}'",
@@ -1119,14 +1135,38 @@ mod tests {
             .emulator()
             .expect("emulator definition must exist");
 
-        assert_eq!(emulator.connection_id(), ConnectionId::PRIMARY,);
+        assert_eq!(emulator.connection_id(), Some(ConnectionId::PRIMARY),);
 
-        assert_eq!(emulator.port_name(), "COM4",);
+        assert_eq!(emulator.port_name(), Some("COM4"),);
 
         assert_eq!(
             emulator.script_path(),
             std::path::Path::new("emulator_scripts/device.lua",),
         );
+    }
+
+    #[test]
+    fn parses_memory_emulator_without_connection_or_port() {
+        let definition = apply_lua_definition(
+            r#"
+                return {
+                    emulator = {
+                        script = "emulator_scripts/device.lua",
+                        transport = "memory",
+                    },
+                }
+            "#,
+            &base_definition(),
+        )
+        .unwrap();
+
+        let emulator = definition.emulator().unwrap();
+        assert_eq!(
+            emulator.transport(),
+            &crate::application_definition::EmulatorTransport::Memory
+        );
+        assert_eq!(emulator.connection_id(), None);
+        assert_eq!(emulator.port_name(), None);
     }
 
     #[test]

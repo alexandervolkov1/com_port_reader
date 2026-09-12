@@ -1,7 +1,10 @@
 use std::{
     collections::VecDeque,
     io,
-    sync::mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    sync::{
+        Arc, Mutex,
+        mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    },
     time::Duration,
 };
 
@@ -14,8 +17,9 @@ const DEFAULT_READ_TIMEOUT: Duration = Duration::from_millis(100);
 /// Each write is delivered as one block to the peer, while reads may consume
 /// only part of that block. This mirrors the observable byte-stream behavior
 /// needed by the virtual-instrument protocol without emulating serial settings.
+#[derive(Clone)]
 pub struct MemoryEndpoint {
-    incoming: Receiver<Vec<u8>>,
+    incoming: Arc<Mutex<Receiver<Vec<u8>>>>,
     outgoing: Sender<Vec<u8>>,
     read_buffer: VecDeque<u8>,
     read_timeout: Duration,
@@ -28,13 +32,13 @@ impl MemoryEndpoint {
 
         (
             Self {
-                incoming: first_receiver,
+                incoming: Arc::new(Mutex::new(first_receiver)),
                 outgoing: first_sender,
                 read_buffer: VecDeque::new(),
                 read_timeout,
             },
             Self {
-                incoming: second_receiver,
+                incoming: Arc::new(Mutex::new(second_receiver)),
                 outgoing: second_sender,
                 read_buffer: VecDeque::new(),
                 read_timeout,
@@ -47,7 +51,12 @@ impl MemoryEndpoint {
     }
 
     fn fill_read_buffer(&mut self) -> io::Result<()> {
-        match self.incoming.recv_timeout(self.read_timeout) {
+        let result = self
+            .incoming
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .recv_timeout(self.read_timeout);
+        match result {
             Ok(bytes) => {
                 self.read_buffer.extend(bytes);
                 Ok(())
@@ -103,7 +112,13 @@ impl std::io::Write for MemoryEndpoint {
 impl VirtualInstrumentTransport for MemoryEndpoint {
     fn clear_input(&mut self) -> io::Result<()> {
         self.read_buffer.clear();
-        while self.incoming.try_recv().is_ok() {}
+        while self
+            .incoming
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .try_recv()
+            .is_ok()
+        {}
         Ok(())
     }
 }

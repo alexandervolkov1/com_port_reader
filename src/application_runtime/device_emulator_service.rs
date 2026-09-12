@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::{
     app_log::LogHandle,
     device_emulator_handle::{DeviceEmulatorHandle, DeviceEmulatorPortConfig},
+    protocol::virtual_instrument::MemoryEndpoint,
     serial_connection::SerialPortConfig,
 };
 
@@ -11,17 +12,20 @@ pub struct DeviceEmulatorService {
     handle: Option<DeviceEmulatorHandle>,
     log: LogHandle,
     script_path: Option<PathBuf>,
+    local_transport: Option<MemoryEndpoint>,
 }
 
 impl DeviceEmulatorService {
     pub fn new(
         configured_port: Option<String>,
         configured_script_path: Option<PathBuf>,
+        local_transport: Option<MemoryEndpoint>,
         log: LogHandle,
     ) -> Self {
         Self {
             selected_port: configured_port.filter(|port| !port.is_empty()),
             script_path: configured_script_path.filter(|path| !path.as_os_str().is_empty()),
+            local_transport,
             handle: None,
             log,
         }
@@ -33,10 +37,21 @@ impl DeviceEmulatorService {
             .is_some_and(DeviceEmulatorHandle::is_running)
     }
 
-    pub fn start(&mut self, serial_config: &SerialPortConfig) -> Result<(), String> {
+    pub fn start(&mut self, serial_config: Option<&SerialPortConfig>) -> Result<(), String> {
         self.poll();
 
         if self.handle.is_some() {
+            return Ok(());
+        }
+
+        let Some(script_path) = self.script_path.clone() else {
+            return Err("Select a Lua device model first.".to_owned());
+        };
+
+        if let Some(transport) = self.local_transport.clone() {
+            let handle = DeviceEmulatorHandle::start_with_transport(transport, script_path)
+                .map_err(|error| format!("Failed to start local device emulator: {error}"))?;
+            self.handle = Some(handle);
             return Ok(());
         }
 
@@ -44,10 +59,8 @@ impl DeviceEmulatorService {
             return Err("Select an emulator COM port first.".to_owned());
         };
 
-        let Some(script_path) = self.script_path.clone() else {
-            return Err("Select a Lua device model first.".to_owned());
-        };
-
+        let serial_config =
+            serial_config.ok_or_else(|| "Serial emulator configuration is missing.".to_owned())?;
         let client_port = serial_config.port_name();
 
         if port_name.eq_ignore_ascii_case(client_port) {

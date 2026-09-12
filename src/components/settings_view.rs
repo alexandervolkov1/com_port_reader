@@ -182,24 +182,28 @@ fn show_emulator(ui: &mut egui::Ui, definition: &ApplicationDefinition, paths: &
         return;
     };
 
-    let connection_name = definition
-        .connection_name_by_id(emulator.connection_id())
-        .unwrap_or("<unknown>");
-
     egui::Grid::new("settings_device_emulator")
         .num_columns(2)
         .spacing([16.0, 6.0])
         .show(ui, |ui| {
-            ui.label("Connection");
-            ui.label(format!(
-                "{} ({})",
-                connection_name,
-                emulator.connection_id(),
-            ));
-            ui.end_row();
-
-            ui.label("Port");
-            ui.monospace(emulator.port_name());
+            ui.label("Transport");
+            match emulator.transport() {
+                crate::application_definition::EmulatorTransport::Memory => {
+                    ui.monospace("memory");
+                }
+                crate::application_definition::EmulatorTransport::Serial {
+                    connection_id,
+                    port_name,
+                } => {
+                    let connection_name = definition
+                        .connection_name_by_id(*connection_id)
+                        .unwrap_or("<unknown>");
+                    ui.monospace(format!(
+                        "serial: {} ({connection_id}) on {port_name}",
+                        connection_name,
+                    ));
+                }
+            }
             ui.end_row();
 
             ui.label("Script");

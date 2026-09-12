@@ -338,8 +338,9 @@ mod tests {
     #[test]
     fn local_transport_supports_stop_and_restart() {
         let (mut client, server_transport) = MemoryEndpoint::new();
-        let mut handle = DeviceEmulatorHandle::start_with_transport(server_transport, model_path())
-            .expect("local emulator must start");
+        let mut handle =
+            DeviceEmulatorHandle::start_with_transport(server_transport.clone(), model_path())
+                .expect("local emulator must start");
 
         let instruments = VirtualInstrumentClient::new(&mut client)
             .describe()
@@ -350,7 +351,6 @@ mod tests {
         handle.stop().expect("local emulator must stop cleanly");
         assert!(!handle.is_running());
 
-        let (mut client, server_transport) = MemoryEndpoint::new();
         let mut restarted =
             DeviceEmulatorHandle::start_with_transport(server_transport, model_path())
                 .expect("local emulator must restart");

@@ -164,9 +164,9 @@ impl ApplicationDefinition {
         }
 
         if self.emulator.as_ref().is_some_and(|emulator| {
-            emulator
-                .port_name()
-                .eq_ignore_ascii_case(connection.serial_config().port_name())
+            emulator.port_name().is_some_and(|port_name| {
+                port_name.eq_ignore_ascii_case(connection.serial_config().port_name())
+            })
         }) {
             return Err(ApplicationDefinitionError::new(format!(
                 "COM port '{}' is reserved for the emulator",
@@ -226,27 +226,31 @@ fn validate_emulator(
     connections: &[SerialConnectionDefinition],
     emulator: &EmulatorDefinition,
 ) -> Result<(), ApplicationDefinitionError> {
-    if !connections
-        .iter()
-        .any(|connection| connection.id() == emulator.connection_id())
+    if let EmulatorTransport::Serial {
+        connection_id,
+        port_name,
+    } = emulator.transport()
     {
-        return Err(ApplicationDefinitionError::new(format!(
-            "Emulator connection {} is not defined",
-            emulator.connection_id(),
-        )));
-    }
+        if !connections
+            .iter()
+            .any(|connection| connection.id() == *connection_id)
+        {
+            return Err(ApplicationDefinitionError::new(format!(
+                "Emulator connection {connection_id} is not defined",
+            )));
+        }
 
-    if let Some(connection) = connections.iter().find(|connection| {
-        connection
-            .serial_config()
-            .port_name()
-            .eq_ignore_ascii_case(emulator.port_name())
-    }) {
-        return Err(ApplicationDefinitionError::new(format!(
-            "Emulator COM port '{}' is already used by connection '{}'",
-            emulator.port_name(),
-            connection.name(),
-        )));
+        if let Some(connection) = connections.iter().find(|connection| {
+            connection
+                .serial_config()
+                .port_name()
+                .eq_ignore_ascii_case(port_name)
+        }) {
+            return Err(ApplicationDefinitionError::new(format!(
+                "Emulator COM port '{port_name}' is already used by connection '{}'",
+                connection.name(),
+            )));
+        }
     }
 
     Ok(())
@@ -432,9 +436,17 @@ impl SerialConnectionDefinition {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EmulatorDefinition {
-    connection_id: ConnectionId,
-    port_name: String,
+    transport: EmulatorTransport,
     script_path: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EmulatorTransport {
+    Memory,
+    Serial {
+        connection_id: ConnectionId,
+        port_name: String,
+    },
 }
 
 impl EmulatorDefinition {
@@ -476,18 +488,43 @@ impl EmulatorDefinition {
         }
 
         Ok(Self {
-            connection_id,
-            port_name,
+            transport: EmulatorTransport::Serial {
+                connection_id,
+                port_name,
+            },
             script_path,
         })
     }
 
-    pub const fn connection_id(&self) -> ConnectionId {
-        self.connection_id
+    pub fn memory(script_path: impl Into<PathBuf>) -> Result<Self, ApplicationDefinitionError> {
+        let script_path = script_path.into();
+        if script_path.as_os_str().is_empty() {
+            return Err(ApplicationDefinitionError::new(
+                "Emulator script path cannot be empty",
+            ));
+        }
+        Ok(Self {
+            transport: EmulatorTransport::Memory,
+            script_path,
+        })
     }
 
-    pub fn port_name(&self) -> &str {
-        &self.port_name
+    pub const fn transport(&self) -> &EmulatorTransport {
+        &self.transport
+    }
+
+    pub const fn connection_id(&self) -> Option<ConnectionId> {
+        match &self.transport {
+            EmulatorTransport::Memory => None,
+            EmulatorTransport::Serial { connection_id, .. } => Some(*connection_id),
+        }
+    }
+
+    pub fn port_name(&self) -> Option<&str> {
+        match &self.transport {
+            EmulatorTransport::Memory => None,
+            EmulatorTransport::Serial { port_name, .. } => Some(port_name),
+        }
     }
 
     pub fn script_path(&self) -> &Path {
