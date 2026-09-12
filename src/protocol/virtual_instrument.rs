@@ -7,6 +7,9 @@ mod frame_io;
 #[path = "virtual_instrument/message.rs"]
 mod message;
 
+#[path = "virtual_instrument/memory_transport.rs"]
+mod memory_transport;
+
 #[path = "virtual_instrument/server.rs"]
 mod server;
 
@@ -14,6 +17,7 @@ pub use client::{
     VirtualInstrumentClient, VirtualInstrumentClientError, VirtualInstrumentTransport,
 };
 pub use frame_io::{VirtualFrameDecoder, VirtualFrameIoError, read_frame, write_frame};
+pub use memory_transport::MemoryEndpoint;
 pub use message::{VirtualInstrumentMessage, VirtualMessageCodecError};
 pub use server::{VirtualInstrumentModel, VirtualInstrumentModelError, VirtualInstrumentServer};
 
