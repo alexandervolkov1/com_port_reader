@@ -12,6 +12,8 @@ use crate::{
     },
 };
 
+/// Requests safe output, pauses computation even if that request fails, and waits for any queued
+/// safe write. An error is not evidence that the physical actuator reached a safe value.
 pub(super) fn pause_controller_safely(
     output_control: &OutputHandle,
     processing: &ProcessingHandle<SeriesId>,
@@ -46,6 +48,8 @@ pub(super) fn pause_controller_safely(
     }
 }
 
+/// Requests automatic ownership before resuming computation. If resume fails, rolls back the
+/// ownership request; successful return still requires an automatic-write acknowledgement.
 pub(super) fn resume_controller_safely(
     output_control: &OutputHandle,
     processing: &ProcessingHandle<SeriesId>,
@@ -67,6 +71,8 @@ pub(super) fn resume_controller_safely(
     Ok(())
 }
 
+/// Removes a loop only after safe pause succeeds. Failed safe output keeps it registered for recovery;
+/// diagnostic history is preserved when the processing registry detaches the loop.
 fn remove_controller_safely(
     output_control: &OutputHandle,
     processing: &ProcessingHandle<SeriesId>,

@@ -79,6 +79,8 @@ impl ApplicationEvent {
 }
 
 #[derive(Clone, Default)]
+/// Broadcasts cloned application events to independent subscribers without a persistence dependency.
+/// Disconnected subscribers are pruned on publish; each subscriber owns an unbounded queue.
 pub struct ApplicationEventHub {
     senders: Arc<Mutex<Vec<Sender<ApplicationEvent>>>>,
 }
@@ -88,6 +90,7 @@ impl ApplicationEventHub {
         Self::default()
     }
 
+    /// Creates a new broadcast subscription for future events; it does not replay past events.
     pub fn subscribe(&self) -> Receiver<ApplicationEvent> {
         let (sender, receiver) = unbounded();
 

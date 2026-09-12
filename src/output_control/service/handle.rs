@@ -1,3 +1,8 @@
+//! Synchronous command/reply facade for the output arbiter thread.
+//!
+//! Methods serialize ownership decisions with automatic control events. Returned tracked-write
+//! receivers represent hardware results, not just permission to enqueue a write.
+
 use crossbeam_channel::{Receiver, Sender, bounded};
 
 use super::{

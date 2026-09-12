@@ -1,3 +1,9 @@
+//! Laboratory acquisition and control application building blocks.
+//!
+//! Start with `application_runtime` for composition, `acquisition` for transport routing,
+//! `process_control` for pure controller algorithms, and `output_control` for actuator ownership.
+//! The GUI and optional standalone emulator share instrument/protocol types but own separate runtimes.
+
 mod acquisition;
 pub mod app;
 mod app_log;

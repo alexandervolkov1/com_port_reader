@@ -23,8 +23,9 @@ state. Returning from Manual to the same type resumes its existing instance.
 Temperature and power histories remain intact. Each new instance gets separate
 diagnostic series; old diagnostic samples remain visible but receive no new data.
 
-The example gains and furnace model are synthetic starting values. Strategy
-comparison and tuning are the next development step.
+The example gains and furnace model are synthetic starting values, not settings
+for real equipment. See the [deterministic comparison](furnace-controller-comparison.md)
+for the current measured baseline and its limitations.
 
 ## Lua API
 
@@ -56,7 +57,9 @@ for safe pause/removal. Constructors follow the existing API and start Running.
 
 The returned handle supports the existing `parameters`, `read`, `write`,
 `configure`, reference, input, state, pause/resume and reset methods.
-`setpoint` is managed through the existing fixed/ramp reference API.
+`setpoint` is directly writable until a fixed/ramp reference is installed; after
+that, use the reference API. See [controller methods](lua-api.md#controller-methods)
+and [output safety](output-safety.md) for the complete contract.
 `thermal_capacity` is a plant parameter, not a Furnace controller parameter.
 
 Furnace diagnostics are `setpoint`, `proportional`, `integral`, `output`,

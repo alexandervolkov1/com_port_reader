@@ -1,3 +1,8 @@
+//! Validated, transport-independent startup definitions and their invariants.
+//!
+//! Lua parsing produces these values before worker construction. Validation covers timing bounds,
+//! connection identity/port conflicts, emulator transport and script paths; it does not open devices.
+
 use std::{
     error::Error,
     fmt,
@@ -20,8 +25,8 @@ const MAX_PLOT_POINTS_PER_SERIES: usize = 100_000;
 #[derive(Clone, Debug, PartialEq)]
 /// Validated configuration used to construct an application runtime.
 ///
-/// A definition is assembled before it replaces a live runtime, so invalid profiles cannot leave
-/// a partially reconfigured application behind.
+/// Structural validation precedes replacement of a live runtime. This does not make profile
+/// setup transactional: setup can fail after the old experiment has already been stopped.
 pub struct ApplicationDefinition {
     runtime: RuntimeDefinition,
     serial_connections: Vec<SerialConnectionDefinition>,

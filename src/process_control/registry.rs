@@ -1,3 +1,8 @@
+//! Processing-thread controller registry and actuator compatibility checks.
+//!
+//! Rejects duplicate names and shared output addresses before installation. Configuration previews
+//! validate the entire proposed output range against the actuator before committing updates.
+
 use std::fmt;
 
 use super::{
@@ -29,6 +34,8 @@ where
         Self::default()
     }
 
+    /// Registers a uniquely named loop only if no other loop targets the same connected parameter
+    /// and the complete controller output range fits the actuator descriptor.
     pub fn add(
         &mut self,
         definition: ControlLoopDefinition<SignalId, ControlOutputTarget>,
@@ -173,6 +180,8 @@ where
         self.read_parameter(name, key)
     }
 
+    /// Previews the entire proposed output range against the actuator before committing any controller
+    /// updates. An invalid limit cannot partially modify gains or dynamic state.
     pub fn configure<I, K>(&mut self, name: &str, updates: I) -> Result<(), ControllerAccessError>
     where
         I: IntoIterator<Item = (K, InstrumentValue)>,

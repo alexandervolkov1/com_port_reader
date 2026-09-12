@@ -1,8 +1,11 @@
 # Furnace controller comparison
 
 `process_control::furnace_comparison_tests` runs PID and FurnaceController
-against the same deterministic version of `emulator_scripts/furnace_plant.lua`.
-It uses a one-second sample interval and the initial gains from the demo. The
+against the same deterministic Rust thermal model, using the equations of
+`emulator_scripts/furnace_plant.lua`. Its comparison heat capacity is 12,000 J/K;
+the current interactive model/demo defaults to 4,000 J/K, so these numbers are
+not predictions for an unchanged demo session. It uses a one-second sample
+interval and the initial gains from the demo. The
 tests measure overshoot, two-percent settling time, integrated absolute error
 (IAE), maximum temperature, time at an output limit and integrated heater
 energy. Noise is disabled so regressions are reproducible.

@@ -1,3 +1,8 @@
+//! Runtime-facing emulator lifecycle and local endpoint publication.
+//!
+//! Publishes a local session only after server initialization. Stop/restart joins the old server and
+//! clears the endpoint so requests cannot silently address a previous model instance.
+
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},

@@ -283,6 +283,9 @@ impl FurnaceController {
         self.integral
     }
 
+    /// Computes heat-loss feed-forward plus PI correction against a lag-predicted temperature.
+    /// Temperatures are Celsius, time is seconds and output is percent heater power. Rejected samples
+    /// leave integral, filtered measurement rate and previous timestamp unchanged.
     pub fn update(
         &mut self,
         timestamp: f64,
@@ -296,6 +299,9 @@ impl FurnaceController {
             return Err(FurnaceControllerError::NonFiniteMeasurement);
         }
 
+        // Commit the filtered rate together with the sample only after every output term has
+        // passed validation. A rejected extreme sample must not poison subsequent updates.
+        let mut measurement_rate = self.measurement_rate;
         let elapsed = match self.previous_sample {
             Some(previous) => {
                 if timestamp <= previous.timestamp {
@@ -310,7 +316,7 @@ impl FurnaceController {
 
                 let tau = self.model.heater_lag / 3.0;
 
-                self.measurement_rate = if tau > 0.0 {
+                measurement_rate = if tau > 0.0 {
                     let alpha = 1.0 - (-dt / tau).exp();
 
                     self.measurement_rate + alpha * (raw_rate - self.measurement_rate)
@@ -324,7 +330,7 @@ impl FurnaceController {
             None => None,
         };
 
-        let predicted_measurement = measurement + self.model.heater_lag * self.measurement_rate;
+        let predicted_measurement = measurement + self.model.heater_lag * measurement_rate;
 
         let error = self.setpoint - predicted_measurement;
 
@@ -343,7 +349,7 @@ impl FurnaceController {
         let proposed_value = feed_forward + proportional + proposed_integral;
 
         if !predicted_measurement.is_finite()
-            || !self.measurement_rate.is_finite()
+            || !measurement_rate.is_finite()
             || !error.is_finite()
             || !feed_forward.is_finite()
             || !proportional.is_finite()
@@ -392,10 +398,11 @@ impl FurnaceController {
             proportional,
             integral,
             predicted_measurement,
-            measurement_rate: self.measurement_rate,
+            measurement_rate,
             saturated: integral_limited || value != unconstrained_value,
         };
 
+        self.measurement_rate = measurement_rate;
         self.integral = integral;
         self.previous_sample = Some(PreviousSample {
             timestamp,
@@ -705,6 +712,8 @@ impl FurnaceController {
         Ok(InstrumentValue::Number(value))
     }
 
+    /// Validates thermal model, gains, setpoint and output limits as one candidate before committing.
+    /// Configuration changes preserve dynamic state; reset/resynchronize are separate operations.
     pub fn configure_parameters<I, K>(&mut self, updates: I) -> Result<(), ControllerParameterError>
     where
         I: IntoIterator<Item = (K, InstrumentValue)>,
@@ -792,6 +801,16 @@ mod tests {
             FurnaceOutputLimits::new(0.0, 100.0).unwrap(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn rejected_sample_preserves_rate_and_next_output() {
+        let mut actual = controller(90.0);
+        let mut expected = controller(90.0);
+        actual.update(0.0, 20.0).unwrap();
+        expected.update(0.0, 20.0).unwrap();
+        assert!(actual.update(1.0, f64::MAX).is_err());
+        assert_eq!(actual.update(2.0, 21.0), expected.update(2.0, 21.0));
     }
 
     #[test]

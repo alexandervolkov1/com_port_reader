@@ -1,3 +1,8 @@
+//! Strict Lua profile parsing without application-side effects.
+//!
+//! The root table is evaluated with an instruction limit against a base definition. Application
+//! commands belong in the later `setup` callback, after the runtime installs the `app` table.
+
 use std::{error::Error, fmt, fs, path::Path, time::Duration};
 
 use mlua::{Lua, Table, Value};
@@ -86,7 +91,7 @@ pub fn apply_lua_definition(
 ) -> Result<ApplicationDefinition, LuaApplicationDefinitionError> {
     let lua = Lua::new();
 
-    let root = lua.load(source).eval::<Table>()?;
+    let root = crate::lua_execution::run_with_limit(&lua, || lua.load(source).eval::<Table>())?;
     validate_root_keys(&root)?;
     validate_setup_function(&root)?;
 
@@ -739,6 +744,16 @@ mod tests {
         definition.add_serial_connection(connection).unwrap();
 
         definition
+    }
+
+    #[test]
+    fn profile_validation_interrupts_endless_lua() {
+        let error = apply_lua_definition("while true do end", &ApplicationDefinition::default())
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("Lua execution exceeded"),
+            "{error}"
+        );
     }
 
     fn temporary_path(name: &str) -> PathBuf {

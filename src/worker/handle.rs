@@ -1,3 +1,8 @@
+//! Cloneable bounded command endpoint for one acquisition worker.
+//!
+//! Enqueue success is distinct from hardware completion. Tracked operations provide reply receivers;
+//! callers must not hold shared series/router locks while waiting.
+
 use std::{error::Error, fmt};
 
 use crossbeam_channel::Sender;

@@ -1,3 +1,8 @@
+//! Thread ownership for the persistent application Lua runtime.
+//!
+//! Serializes initialization, console evaluation and panel/scenario callbacks. Request channels carry
+//! commands and results; dropping the worker requests shutdown and joins after the current call ends.
+
 use std::{
     fmt, fs,
     path::PathBuf,
@@ -142,6 +147,8 @@ impl Drop for LuaWorker {
     }
 }
 
+/// Owns the persistent application Lua state on one thread. Initialization failure terminates the
+/// worker; later console/callback errors are reported without discarding existing script state.
 fn run_lua_worker(
     command_receiver: Receiver<LuaCommand>,
     event_sender: Sender<LuaEvent>,

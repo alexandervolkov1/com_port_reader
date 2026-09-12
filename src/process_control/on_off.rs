@@ -89,6 +89,8 @@ impl OnOffController {
         self.active
     }
 
+    /// Switches on strictly below setpoint minus hysteresis and off strictly above setpoint plus
+    /// hysteresis. Equality and the interior band retain state. Both inputs must be finite.
     pub fn update(
         &mut self,
         timestamp: f64,
@@ -323,6 +325,8 @@ impl OnOffController {
         Ok(InstrumentValue::Number(value))
     }
 
+    /// Validates all proposed switching settings before updating them, preserving the current on/off
+    /// state until the next valid sample crosses a new threshold.
     pub fn configure_parameters<I, K>(&mut self, updates: I) -> Result<(), ControllerParameterError>
     where
         I: IntoIterator<Item = (K, InstrumentValue)>,

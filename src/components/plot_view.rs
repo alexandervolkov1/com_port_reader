@@ -1,3 +1,8 @@
+//! Plot preparation, pane interaction and time-axis synchronization.
+//!
+//! Prepares reusable display buffers from series history and delegates min/max reduction to
+//! `plot_downsampling`. Rendering limits do not truncate stored or recorded measurements.
+
 use eframe::egui;
 use egui_plot::{AxisHints, GridInput, GridMark, HoverPosition, Line, Plot, PlotPoints};
 

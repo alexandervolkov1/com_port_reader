@@ -1,3 +1,8 @@
+//! REPL input/output and pending-command state over a Lua worker handle.
+//!
+//! Console execution is asynchronous; completion events unlock submission without rebuilding the Lua
+//! state. History and displayed results belong to the GUI.
+
 use std::{
     fs,
     path::{Path, PathBuf},

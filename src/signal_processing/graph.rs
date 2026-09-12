@@ -1,3 +1,8 @@
+//! Acyclic filter graph with stable signal identities and dependency traversal.
+//!
+//! Filters own their sample history. Replacement resets dependent histories; removal can be previewed
+//! so the runtime makes affected controller outputs safe before changing topology.
+
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     error::Error,
@@ -59,6 +64,8 @@ where
         self.nodes.contains_key(&signal_id)
     }
 
+    /// Adds one derived output after checking output uniqueness and cycles. Inputs may be raw IDs or
+    /// existing derived outputs; the graph does not own raw acquisition series.
     pub fn add_filter(
         &mut self,
         input: SignalId,
@@ -85,6 +92,8 @@ where
         Ok(())
     }
 
+    /// Replaces a filter definition and clears its state plus downstream filter history, leaving graph
+    /// connections unchanged. The service separately resynchronizes affected controllers.
     pub fn replace_filter(
         &mut self,
         output: SignalId,
@@ -186,6 +195,8 @@ where
         self.outputs_by_input.clear();
     }
 
+    /// Previews the transitive set of derived outputs affected by removing this signal. The runtime
+    /// uses this before mutation to safely pause controllers consuming any affected output.
     pub fn removal_set_from(&self, signal_id: SignalId) -> Vec<SignalId> {
         let mut pending = VecDeque::from([signal_id]);
 

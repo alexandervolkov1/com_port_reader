@@ -1,3 +1,8 @@
+//! Shared series metadata and unbounded measurement history.
+//!
+//! Short mutex-protected operations provide snapshots for workers and plots. Stable IDs connect raw
+//! series, filters and diagnostics; presentation changes do not rewrite recorded samples.
+
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU64, Ordering},
@@ -141,6 +146,8 @@ impl SeriesStore {
         Self::default()
     }
 
+    /// Runs a read operation while holding the store mutex. Do not wait for workers or call another
+    /// store method inside the closure; copy the needed metadata and release the lock first.
     pub fn with<R>(&self, operation: impl FnOnce(&[Series]) -> R) -> R {
         let series = self
             .inner
@@ -151,6 +158,8 @@ impl SeriesStore {
         operation(&series)
     }
 
+    /// Runs a mutation under the store mutex. The closure must not reenter the store or perform
+    /// blocking channel/I/O operations; those can deadlock workers needing this same store.
     pub fn with_mut<R>(&self, operation: impl FnOnce(&mut Vec<Series>) -> R) -> R {
         let mut series = self
             .inner

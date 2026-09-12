@@ -1,105 +1,180 @@
 # com_port_reader
 
-`com_port_reader` is a desktop application for acquiring measurements from serial instruments, processing signals, running control loops, and recording an experiment. It includes Lua automation and a built-in virtual-instrument emulator, so the default demo needs no physical hardware or virtual COM driver.
-
 ## Overview
 
-Profiles configure the runtime and load Lua application scripts. Scripts define measurements, filters, controllers, control panels, and scenarios. The GUI visualizes series, logs actions, and provides a Lua console.
+A desktop laboratory application for acquiring serial measurements, plotting and filtering signals, running feedback controllers, and recording experiments. Lua profiles and scripts connect these pieces: you can start with a simulated instrument and later replace its measurements and outputs with real hardware.
 
-## Features
+Typical uses include logging a serial sensor, comparing raw and filtered signals, experimenting with PID control, and automating a heating experiment with a control panel and timed or measurement-driven stages.
 
-- Serial request/response acquisition and Metakon 5x3 support.
-- Lua-backed virtual instruments over the default in-memory transport.
-- Moving-average, median, and exponential filters.
-- PID, on/off, and model-assisted furnace controllers.
-- Safety-aware manual and automatic output ownership.
-- SQLite process history for measurements, actions, outputs, and logs.
+## Main capabilities
 
-## Architecture
+- Raw line-oriented serial requests and a typed Metakon 5X3 driver.
+- Lua-defined virtual instruments; the normal emulator uses in-process memory transport.
+- Multiple connections, independently polled series, plot panes, and acquisition failure/retry tracking.
+- Moving-average, median and time-based exponential filters.
+- PID, on/off and model-assisted Furnace controllers with fixed or ramp references.
+- Manual/automatic output arbitration and explicitly configured safe-output writes.
+- Lua console, script-defined panels, scenarios and bilingual in-app Lua reference.
+- SQLite measurements, actions, output results, configuration source and application logs.
+
+## Architecture at a glance
 
 ```text
-GUI and Lua scripts
-        |
-        v
-ApplicationRuntime ----> process recorder (SQLite)
-        |
-        +--> per-connection acquisition workers --> serial / virtual instruments
-        |
-        +--> signal-processing worker --> controllers --> output-control service --> instrument writes
+GUI / Lua commands --> ApplicationRuntime --> acquisition workers --> instruments
+                              |                       |
+                              |                 timestamped samples
+                              |                       v
+                              +--------------> processing worker
+                              |                filters / controllers
+                              |                       |
+                              |                 output arbitration --> instrument writes
+                              v
+                       SQLite writer
 ```
 
-See [architecture](docs/architecture.md) for lifecycle and ownership details.
+Hardware connections belong to acquisition workers; controller state belongs to the processing worker. Lua uses commands and bounded request/reply waits. The GUI coordinates their lifetimes. See [architecture](docs/architecture.md) for ownership and shutdown details.
 
-## Requirements
+## Requirements and building
 
-- A current stable Rust toolchain.
-- Windows for the usual COM-port workflow. The built-in memory emulator works without a port.
+Use a stable Rust toolchain supporting edition 2024 and the native C/C++ build tools for your platform. On Windows this normally means the MSVC Rust target and Visual Studio C++ Build Tools. Lua 5.4 and SQLite are built from bundled sources; no separate Lua or SQLite installation is needed.
 
-## Building
+The main supported workflow is Windows. Real serial acquisition needs an accessible port and matching instrument settings. The memory emulator needs neither hardware nor a virtual COM driver.
+
+From the repository root:
 
 ```powershell
 cargo build --release
 ```
 
-## Quick start
+This builds the GUI `com_port_reader` and the optional standalone `device_emulator` binary. The GUI is the Cargo default-run target.
 
-From the repository root, launch the supplied memory-emulator profile:
+## First run: no hardware required
 
-```powershell
-cargo run --release
-```
-
-`startup.lua` selects `emulator_scripts/sine_generator.lua` and `lua_scripts/sine_braid_demo.lua`. It starts an eight-wave memory-emulator braid with independent configurable exponential filters. No virtual COM configuration is required.
-
-To launch a specific profile, pass its path explicitly:
+Use an explicit profile when running the release executable from the source tree:
 
 ```powershell
-cargo run --release -- --config profiles/furnace_manual.lua
+cargo run --release -- --config startup.lua
 ```
 
-## Built-in emulator
+The supplied startup profile loads `emulator_scripts/sine_generator.lua` and `lua_scripts/sine_braid_demo.lua`. The script starts the memory emulator and acquisition, adds eight sine waves and eight independently configurable exponential filters, and registers a control panel. Wait for samples to appear; open the series list to change visibility and Control panel to change filter settings.
 
-Profiles with `emulator = { transport = "memory", ... }` run a Lua model in process. The optional `serial` transport is for integrations that require a serial endpoint. See [virtual instruments](docs/virtual-instruments.md).
+In the Lua console, submit with Ctrl+Enter:
 
-## Real instruments
+```lua
+local generator = app.virtual_instrument({id = 1})
+app.log(generator:name())
+for _, parameter in ipairs(generator:parameters()) do
+    app.log(parameter.key .. ": " .. parameter.value_type)
+end
+```
 
-Define a `connections` table in a profile, then use `app.metakon` or `app.send_serial` from a script. Do not configure the same COM port for both a connection and a serial emulator. See [configuration](docs/configuration.md).
+This discovers the running model and prints its parameter keys/types in the application log. For a guided exercise starting from an empty experiment, use:
 
-## Configuration profiles
+```powershell
+cargo run -- --config profiles/tutorial.lua
+```
 
-Profiles are Lua tables. The shipped examples in `profiles/` are the canonical starting points. Relative profile paths resolve from the profile file; process data and application state resolve from the application directory.
+Follow the [Lua tutorial](docs/lua-tutorial.md): start the model, read and write a value, plot a series, add a filter and controller, and build a small panel.
 
-## Lua scripting
+The packaged executable searches beside itself for `startup.lua`. An unpackaged release executable searches in `target/release`, not the repository root; this is why the command above passes `--config`. Without an explicit argument, a remembered profile selection can also take precedence. See [path selection](docs/configuration.md#selection-and-paths).
 
-The global `app` table starts and stops acquisition, defines series and filters, accesses instruments, and creates controllers. The API is asynchronous for hardware operations: commands are sent to the runtime rather than performed on the Lua thread. See [Lua API](docs/lua-api.md).
+## Working with real instruments
 
-## Controllers
+Create `profiles/hardware.lua` with a connection matching your device. This example uses a Metakon channel; change the port, address, channel and scale for your installation:
 
-PID, on/off, and furnace controllers process timestamped measurements in the background. Output control separates manual writes from automatic ownership and uses a configured safe value when entering automatic control. See [controllers](docs/controllers.md).
+```lua
+return {
+    connections = {
+        primary = {port = "COM3", baud_rate = 9600, timeout = 0.25},
+    },
+    setup = function()
+        local meter = app.metakon({connection = "primary", device = 1, channel = 0, scale = 1})
+        meter:add("measurement", {name = "temperature", interval = 1})
+        app.start()
+    end,
+}
+```
+
+Launch `cargo run -- --config profiles/hardware.lua`. This example only reads; adding an actuator requires explicit output configuration and safety review. A generic line-oriented device can use `app.add_serial("READ?", "temperature")` instead. Unsupported binary protocols require a Rust driver; `send_serial` is not a general binary protocol API.
+
+Check the [Metakon parameter reference](docs/lua-api.md#metakon-5x3) and [serial troubleshooting](docs/troubleshooting.md). Physical-port behavior cannot be verified by the emulator tests.
+
+## Configuration and Lua automation
+
+Profiles return a table with `application`, `connections`, optional `emulator`, `plot_panes`, `scripts` and `setup`. Relative model/script paths are based on the profile directory. Put side effects in `setup`, not at the profile top level: validation evaluates the profile before the runtime installs `app`. Setup runs before the listed scripts.
+
+Scripts can retain instrument/controller handles, register panels and schedule scenarios. Functions that enqueue actions return before completion; operations such as instrument reads wait for a result. Error and execution-limit behavior is described in the [Lua reference](docs/lua-api.md). Editor annotations are in `lua_types/app.d.lua`.
+
+Use Settings to select/reload a profile. Reload validates first, attempts safe controller outputs, stops the old runtime, then initializes the replacement. It is not a transaction: a failure during replacement setup does not restart the previous experiment automatically.
+
+## Signal processing and controllers
+
+Filters add derived series without changing the input. Moving-average and median windows count samples; the exponential filter uses elapsed seconds.
+
+Controller constructors install a running loop immediately. They consume an existing raw or filtered numeric series and write a compatible actuator parameter. Use `controller:add("output")` to plot a diagnostic; `add` does not install the controller.
+
+PID uses derivative on measurement and conditional-integration anti-windup. On/off uses hysteresis. Furnace combines a heat-loss model with lag prediction and PI correction. [Controller documentation](docs/controllers.md) gives equations, units, validation, reference and reset semantics.
+
+## Output safety
+
+Set `safe_output` explicitly for each controller. There is no inferred safe value. Pause and removal attempt this write; reload and normal application destruction also attempt to make registered controller outputs safe while transports are still available.
+
+Manual writes change output ownership. Resuming requests automatic ownership; the first successful automatic write completes takeover. A queued or failed write is not proof of physical actuator state. `app.stop()` stops polling; it is **not** an emergency stop or a safe-output command.
+
+Use hardware interlocks and independent shutdown mechanisms for hazardous equipment. Abrupt termination, unavailable hardware and failed writes cannot be made safe by this application. Read [output safety](docs/output-safety.md) before driving an actuator.
 
 ## Process recording
 
-Each run attempts to create an SQLite database under `processes/`. Recording failures are visible in the application log and do not stop acquisition or control. See [process recording](docs/process-recording.md).
+Each application run attempts to create a session database beneath `processes/` in the application directory. Debug builds use the repository directory; release builds use the executable directory. The recorder persists timestamped measurements, configuration snapshots, actions, output requests/results and logs on a background thread.
 
-## Project structure
+Profile reloads share the application recording session. A writer failure disables recording and reports an error but does not stop acquisition or controllers. See [schema and example SQL](docs/process-recording.md).
 
-- `src/` — application, runtime, device protocols, UI, and tests.
-- `profiles/` — ready-to-run profile configurations.
-- `lua_scripts/` — application scripts and demos.
-- `emulator_scripts/` — virtual-instrument models.
-- `docs/` — architecture and operating guides.
+## Included examples
 
-## Development
+| Entry point | Purpose |
+| --- | --- |
+| `startup.lua` / `profiles/sine_braid.lua` | Automatic eight-wave signal/filter demonstration |
+| `profiles/tutorial.lua` | Empty memory furnace experiment for the progressive tutorial |
+| `profiles/furnace_manual.lua` | Manual / PID / Furnace control panel |
+| `emulator_scripts/sine_generator.lua` | Multi-instrument sine model |
+| `emulator_scripts/furnace_plant.lua` | Thermal plant with heater lag, heat losses and configurable noise |
+| `lua_scripts/` | Application scripts loaded by the supplied profiles |
+
+Run `cargo run -- --config profiles/furnace_manual.lua` for the [furnace demo](docs/furnace-demo.md). Its tuning is illustrative: the [deterministic comparison](docs/furnace-controller-comparison.md) does not establish Furnace as superior to PID.
+
+## Repository and documentation
+
+`src/` contains the GUI, application runtime, worker services, protocols, controllers and colocated tests. `profiles/` configures experiments; `lua_scripts/` automates the application; `emulator_scripts/` runs in the separate model-side Lua environment.
+
+- [Configuration](docs/configuration.md): fields, defaults, ranges, profiles and paths.
+- [Lua tutorial](docs/lua-tutorial.md) and [complete API reference](docs/lua-api.md): progressive workflow and per-operation examples.
+- [Scenarios](docs/scenarios.md): timers, conditions, races, stages and cleanup.
+- [Virtual instruments](docs/virtual-instruments.md): model contract and memory/serial transports.
+- [Controllers](docs/controllers.md) and [output safety](docs/output-safety.md).
+- [Process recording](docs/process-recording.md) and [troubleshooting](docs/troubleshooting.md).
+- [Architecture](docs/architecture.md) and [Rust extension guides](docs/development.md).
+- [Release review](docs/release-review.md): findings, verification and remaining limitations.
+
+Help → Lua reference is the concise English/Russian function lookup; the guides above explain the longer workflows.
+
+## Development, testing and packaging
 
 ```powershell
 cargo fmt --check
 cargo test
 cargo test --doc
 cargo clippy --all-targets -- -D warnings
+cargo doc --no-deps --document-private-items
+cargo build --release
+git diff --check
 ```
 
-See [development](docs/development.md) for extension boundaries and [troubleshooting](docs/troubleshooting.md) for operational failures.
+Tests cover protocols, virtual instruments, processing/control, arbitration, scenarios, profile/runtime lifecycle and recording without real COM hardware. Documentation tests check Lua syntax and binding coverage; runtime tests exercise representative documented workflows.
 
-## Release status
+`tools/package-release.ps1` builds both binaries and packages profiles, scripts, types and documentation. Dependencies are pinned by `Cargo.lock`; review changes rather than updating them as part of an unrelated documentation task.
 
-The project includes an in-memory demo path and tested protocol/controller components. Real serial operation still requires matching hardware settings and is not exercised by automated hardware tests.
+## Known limitations
+
+This is not a real-time or safety-certified control system. GUI stalls, OS scheduling, transport failures and blocking Lua/native calls affect timing. Lua instruction limits do not interrupt native calls. Plot history can grow during a long experiment; display downsampling is not storage truncation.
+
+SQLite failure is nonfatal, and failed physical output writes require operator recovery. The optional serial emulator is an integration/debug path, not a quick-start prerequisite. Automated tests do not replace a real-hardware acceptance test.

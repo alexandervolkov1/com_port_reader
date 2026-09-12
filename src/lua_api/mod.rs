@@ -5,6 +5,8 @@
 
 mod controllers;
 mod conversion;
+#[cfg(test)]
+pub(crate) mod documentation_tests;
 mod filters;
 mod metakon;
 mod scenarios;
@@ -59,6 +61,8 @@ impl Drop for ScenarioCommandContextGuard {
     }
 }
 
+/// Tags commands issued by a callback with its scenario generation, restoring the previous context
+/// on return or unwinding. Late commands from a cancelled run can then be rejected by the runtime.
 pub(crate) fn with_scenario_command_context<T>(
     scenario_id: ScenarioId,
     run_id: ScenarioRunId,
@@ -70,6 +74,8 @@ pub(crate) fn with_scenario_command_context<T>(
     callback()
 }
 
+/// Installs the complete application API into one Lua state. Callbacks capture channel handles,
+/// not hardware or runtime ownership. Installation itself does not start acquisition.
 pub fn install(
     lua: &Lua,
     command_sender: Sender<UserCommand>,

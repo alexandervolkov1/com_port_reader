@@ -180,6 +180,66 @@ fn run_scenario(
     }
 }
 
+#[test]
+fn documented_comparison_metrics_are_current() {
+    let guide = include_str!("../../docs/furnace-controller-comparison.md");
+    let mismatched = PlantConfig {
+        max_power: 2000.0,
+        thermal_capacity: 15_000.0,
+        linear_loss: 0.45,
+        radiation_loss_1000_c: 1500.0,
+        ..PlantConfig::default()
+    };
+    for (label, plant, initial, target, step, duration, limit, unsettled) in [
+        (
+            "20→500 °C, 2 h",
+            PlantConfig::default(),
+            500.0,
+            500.0,
+            0.0,
+            7200.0,
+            70.0,
+            ">2 h",
+        ),
+        (
+            "300→500 °C after 1 h",
+            PlantConfig::default(),
+            300.0,
+            500.0,
+            3600.0,
+            7200.0,
+            70.0,
+            ">1 h",
+        ),
+        (
+            "Mismatched plant, 20→500 °C",
+            mismatched,
+            500.0,
+            500.0,
+            0.0,
+            9000.0,
+            70.0,
+            ">2.5 h",
+        ),
+    ] {
+        for (strategy, name) in [(Strategy::Pid, "PID"), (Strategy::Furnace, "Furnace")] {
+            let metrics = run_scenario(strategy, plant, initial, target, step, duration, limit);
+            let settling = metrics
+                .settling_time
+                .map(|time| format!("{time:.0} s"))
+                .unwrap_or_else(|| unsettled.to_owned());
+            let row = format!(
+                "| {label} | {name} | {:.1} | {settling} | {:.0} | {:.0} | {:.0} |",
+                metrics.overshoot,
+                metrics.integrated_absolute_error,
+                metrics.saturated_time,
+                metrics.energy
+            );
+            assert!(guide.contains(&row), "documented comparison differs: {row}");
+        }
+    }
+}
+
 fn assert_valid(metrics: Metrics, duration: f64, output_maximum: f64) {
     assert!(metrics.overshoot.is_finite() && metrics.overshoot >= 0.0);
     assert!(metrics.integrated_absolute_error.is_finite());

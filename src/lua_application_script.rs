@@ -1,3 +1,8 @@
+//! Declarative script panels and callback retention in the application Lua state.
+//!
+//! Registry tables keep callback closures alive. Widget updates are validated against registered
+//! metadata before UI events are sent; re-registering a script ID replaces its table and panels.
+
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},

@@ -1,3 +1,8 @@
+//! Processing-thread event loop for filters, controllers and diagnostics.
+//!
+//! Sample processing and configuration commands are serialized in one owner. Control outputs leave
+//! through a separate event channel for arbitration and hardware dispatch.
+
 use std::hash::Hash;
 
 use crossbeam_channel::{Receiver, Sender};
@@ -17,6 +22,8 @@ struct ControllerDiagnosticBinding<SignalId> {
     output: SignalId,
 }
 
+/// Binds a supported diagnostic to an unused signal ID. Diagnostics cannot collide with filter
+/// outputs or other diagnostic streams.
 fn add_controller_diagnostic<SignalId>(
     graph: &SignalProcessingGraph<SignalId>,
     registry: &ControllerRegistry<SignalId>,
@@ -45,6 +52,7 @@ where
     Ok(())
 }
 
+/// Finds loops consuming the removed signal or any downstream filter before graph mutation.
 fn controllers_affected_by_removal<SignalId>(
     graph: &SignalProcessingGraph<SignalId>,
     registry: &ControllerRegistry<SignalId>,
@@ -68,6 +76,8 @@ where
     controllers
 }
 
+/// Serializes graph and controller mutations with incoming samples on one owning thread.
+/// Emits computed samples and control events through separate channels; performs no hardware I/O.
 pub(super) fn run_processing<SignalId>(
     command_receiver: Receiver<ProcessingCommand<SignalId>>,
     event_sender: Sender<ProcessingEvent<SignalId>>,

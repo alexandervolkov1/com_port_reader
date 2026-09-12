@@ -1,3 +1,8 @@
+//! Acquisition routing for the current in-process virtual-instrument session.
+//!
+//! A shared optional client endpoint allows emulator restart without replacing acquisition workers.
+//! Local virtual requests remain owned by this source even when the model is stopped.
+
 use std::sync::{Arc, Mutex};
 
 use crate::{

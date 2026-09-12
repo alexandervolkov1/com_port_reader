@@ -1,3 +1,8 @@
+//! Stateful fixed/ramp reference evolution using measurement timestamps.
+//!
+//! Tracks ramp progress separately from its definition. Pause/resume resynchronization preserves
+//! progress without advancing through the paused interval; reset restarts from the configured start.
+
 use std::{error::Error, fmt};
 
 use super::{

@@ -6,6 +6,9 @@ const EXECUTION_TIMEOUT: Duration = Duration::from_millis(500);
 
 const HOOK_INSTRUCTION_INTERVAL: u32 = 10_000;
 
+/// Runs a Lua operation with a 500 ms instruction-hook deadline, removing the hook on exit.
+/// This is not a sandbox or native-call timeout: blocking Rust/C code must enforce its own limits.
+/// Do not nest this helper on the same Lua state; it owns that state's instruction hook.
 pub fn run_with_limit<T>(
     lua: &Lua,
     operation: impl FnOnce() -> mlua::Result<T>,

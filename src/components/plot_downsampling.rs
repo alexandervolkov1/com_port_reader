@@ -2,6 +2,8 @@ use egui_plot::PlotPoint;
 
 use crate::data::Sample;
 
+/// Appends an ordered min/max envelope, preserving endpoints within `max_points` new points.
+/// The caller owns/clears the reusable destination. `max_points` must be at least four.
 pub(super) fn downsample_min_max_into(
     samples: &[Sample],
     max_points: usize,
@@ -17,7 +19,7 @@ pub(super) fn downsample_min_max_into(
 
     // Each bucket can contribute a minimum and a maximum point. Reserve two further slots for
     // the first and last samples so the visible range always retains its endpoints.
-    let target_buckets = max_points.saturating_sub(2).div_ceil(2).max(1);
+    let target_buckets = (max_points.saturating_sub(2) / 2).max(1);
 
     let bucket_size = samples.len().div_ceil(target_buckets);
 
@@ -168,6 +170,25 @@ mod tests {
 
         assert_eq!(points.first().unwrap().x, 0.0);
         assert_eq!(points.last().unwrap().x, 99.0);
+    }
+
+    #[test]
+    fn respects_odd_and_even_budgets_for_nonconstant_signals() {
+        let samples = (0..1000)
+            .map(|index| Sample::new(f64::from(index), f64::from((index * 37) % 101)))
+            .collect::<Vec<_>>();
+        for budget in 4..32 {
+            let mut points = Vec::new();
+            downsample_min_max_into(&samples, budget, &mut points);
+            assert!(
+                points.len() <= budget,
+                "budget {budget}: {} points",
+                points.len()
+            );
+            assert_eq!(points.first().unwrap().x, 0.0);
+            assert_eq!(points.last().unwrap().x, 999.0);
+            assert!(points.windows(2).all(|pair| pair[0].x < pair[1].x));
+        }
     }
 
     fn point_pairs(points: &[egui_plot::PlotPoint]) -> Vec<(f64, f64)> {

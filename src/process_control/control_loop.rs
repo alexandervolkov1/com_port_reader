@@ -1,3 +1,8 @@
+//! Controller instance identity, computation state and reference ownership.
+//!
+//! The loop combines an algorithm with an optional reference and input/output identities. Pausing
+//! here only pauses computation: physical safe-output handling belongs to the application runtime.
+
 use std::{
     error::Error,
     fmt,
@@ -181,6 +186,7 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         self.resynchronize_input();
     }
 
+    /// Clears derivative/rate time history after an input discontinuity without discarding integral state.
     pub fn resynchronize_input(&mut self) {
         self.controller.resynchronize();
     }
@@ -241,6 +247,8 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
             .map_err(Into::into)
     }
 
+    /// Installs/replaces a reference source and resynchronizes the controller measurement history.
+    /// Once a source is installed, direct setpoint writes are rejected.
     pub fn set_reference(&mut self, source: ReferenceSource) {
         match &mut self.reference {
             Some(reference) => {
@@ -263,6 +271,8 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         matches!(self.state, ControlLoopState::Running)
     }
 
+    /// Combines setpoint metadata with controller-specific parameters. A reference-managed setpoint
+    /// is advertised as read-only so Lua and panels can discover the current contract.
     pub fn parameters(&self) -> Vec<ParameterDescriptor> {
         let mut setpoint = ReferenceParameter::Setpoint.descriptor();
 
@@ -324,6 +334,8 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         Ok(())
     }
 
+    /// Applies validated parameter updates atomically through the controller. Rejects any direct
+    /// setpoint update when a reference owns it, before changing other fields.
     pub fn configure<I, K>(&mut self, updates: I) -> Result<(), ControlLoopParameterError>
     where
         I: IntoIterator<Item = (K, InstrumentValue)>,
@@ -372,6 +384,8 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
             .map_err(ControlLoopExecutionError::Controller)
     }
 
+    /// Processes one measurement only while running; a paused loop returns `Ok(None)` and does not
+    /// advance its reference. This computation layer never performs actuator I/O.
     pub fn process(
         &mut self,
         timestamp: f64,
@@ -384,10 +398,13 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         self.update(timestamp, measurement).map(Some)
     }
 
+    /// Pauses computation only. Runtime callers must separately arbitrate and apply the safe output.
     pub fn pause(&mut self) {
         self.state = ControlLoopState::Paused;
     }
 
+    /// Resumes a paused loop with a fresh measurement/reference time baseline, preserving integral
+    /// state and ramp progress rather than integrating the paused wall-clock interval.
     pub fn resume(&mut self) {
         if self.state == ControlLoopState::Paused {
             self.controller.resynchronize();
@@ -404,6 +421,8 @@ impl<SignalId, OutputTarget> ControlLoop<SignalId, OutputTarget> {
         self.controller.reset_integral()
     }
 
+    /// Clears controller dynamic state and restarts an installed reference while retaining configuration
+    /// and the current running/paused state. No physical write is performed.
     pub fn reset(&mut self) {
         self.controller.reset();
 

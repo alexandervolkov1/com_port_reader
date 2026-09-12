@@ -1,3 +1,8 @@
+//! Runtime-owned scenario timers, measurement triggers, races and stages.
+//!
+//! Callback execution and action completion are distinct: transitions/finalization wait for tracked
+//! actions. Run identities reject stale callback commands after cancellation or replacement.
+
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -1037,6 +1042,8 @@ impl ScenarioService {
         self.advance_finalization(id);
     }
 
+    /// Advances cleanup only after the active callback and its tracked actions settle. Callback return
+    /// alone does not prove hardware-side actions succeeded.
     fn advance_finalization(&mut self, id: &ScenarioId) {
         let invocation = {
             let Some(scenario) = self.scenarios.get_mut(id) else {
@@ -1250,6 +1257,8 @@ impl ScenarioService {
         )
     }
 
+    /// Associates an emitted application action with the active run so stage transitions and cleanup
+    /// wait for its applied/failed event rather than just its enqueue operation.
     pub(crate) fn track_action(
         &mut self,
         id: &ScenarioId,

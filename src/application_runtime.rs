@@ -65,6 +65,9 @@ const LUA_INITIALIZATION_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const RUNTIME_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const RUNTIME_STOP_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
+/// Owns one experiment's workers and coordinates their ordered retirement.
+/// Normal destruction attempts safe controller outputs before stopping transports; a successfully
+/// replaced instance is marked retired so its later Drop cannot write over the replacement.
 pub struct ApplicationRuntime {
     lua_worker: LuaWorker,
     definition: ApplicationDefinition,
@@ -82,9 +85,12 @@ pub struct ApplicationRuntime {
     lua_command_receiver: Receiver<UserCommand>,
     lua_application_event_receiver: Receiver<LuaApplicationEvent>,
     scenario: ScenarioService,
+    retired: bool,
 }
 
 impl ApplicationRuntime {
+    /// Spawns the component graph and starts asynchronous Lua initialization. The caller must poll the
+    /// runtime so setup commands can execute, and observe the returned initialization events.
     pub(crate) fn build(
         definition: ApplicationDefinition,
         log: LogHandle,
@@ -293,6 +299,8 @@ impl ApplicationRuntime {
         Ok((runtime, lua_event_receiver))
     }
 
+    /// Builds a replacement runtime and pumps setup commands until Lua initialization succeeds.
+    /// On failure, dropping the partial runtime attempts safe cleanup of any installed controllers.
     fn build_initialized(
         definition: ApplicationDefinition,
         log: LogHandle,
@@ -309,6 +317,8 @@ impl ApplicationRuntime {
         Ok((runtime, lua_event_receiver))
     }
 
+    /// Pumps runtime commands while waiting for setup/scripts, avoiding a Lua request/reply deadlock.
+    /// A timeout reports failure, but cannot forcibly preempt arbitrary native code.
     fn wait_for_lua_initialization(
         &mut self,
         lua_event_receiver: &Receiver<LuaEvent>,
@@ -389,9 +399,12 @@ impl ApplicationRuntime {
             lua_command_receiver,
             lua_application_event_receiver,
             scenario,
+            retired: false,
         }
     }
 
+    /// Drains worker/processing events, then executes queued Lua commands and advances scenarios.
+    /// Retirement must not call this method: queued callbacks may restart acquisition or resume outputs.
     pub fn poll(&mut self) {
         // Recording is observability, not a control dependency: report its failure without
         // stopping acquisition or controller lifecycles.
@@ -584,42 +597,80 @@ impl ApplicationRuntime {
         })
     }
 
-    fn stop_active_operations(&mut self) -> Result<(), String> {
-        let has_active_operations = self.is_running() || self.device_emulator.is_running();
-
-        if !has_active_operations {
-            return Ok(());
+    /// Attempt every controller's safe pause while its transport and processing service still
+    /// exist. Aggregate failures so one unavailable actuator does not skip the remaining ones.
+    fn pause_outputs_for_shutdown(&self) -> Result<(), String> {
+        let processing = self.processing.handle();
+        let names = processing
+            .controller_names()
+            .map_err(|error| error.to_string())?;
+        let mut errors = Vec::new();
+        for name in names {
+            if let Err(error) = controller_command_handler::pause_controller_safely(
+                &self._output_handle,
+                &processing,
+                &name,
+            ) {
+                errors.push(format!("Controller '{name}': {error}"));
+            }
         }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    }
 
-        self.log.info(
-            "Stopping the active runtime before loading \
-             an application profile.",
-        );
+    /// Stop acquisition and the emulator without executing additional Lua/scenario actions.
+    /// Callers must first quiesce controllers while instrument writes are still available.
+    fn stop_active_operations(&mut self) -> Result<(), String> {
+        self.log.info("Stopping the active runtime.");
 
         let deadline = Instant::now() + RUNTIME_STOP_TIMEOUT;
 
-        if self.is_running() {
-            self.execute(UserCommand::Acquisition(AcquisitionCommand::Stop));
-        }
-
-        if self.device_emulator.is_running() {
-            self.execute(EmulatorCommand::Stop.into());
-        }
+        // Stop is also a queue barrier for a Start still being processed. The running flag alone
+        // cannot prove that all workers have closed their sources or even consumed that Start.
+        let completions = self.process_recorder.subscribe_timeline();
+        let stop_id = self.process_recorder.record_action(
+            ProcessActionOrigin::UserInterface,
+            ProcessAction::StopAcquisition,
+        );
+        self.dispatcher.execute(
+            AcquisitionCommand::Stop.into(),
+            Some(ProcessActionContext::new(stop_id)),
+            &mut self.acquisition,
+            &mut self.device_emulator,
+        );
 
         loop {
-            self.poll();
+            // A queued Lua callback may resume a controller or restart acquisition. Retirement
+            // only drains completion events; it must not run new application commands.
+            self.device_emulator.poll();
+            self.dispatcher.poll_events();
+            self.poll_processing();
 
-            if !self.is_running() && !self.device_emulator.is_running() {
-                break;
+            for completion in completions.try_iter() {
+                match completion {
+                    ProcessRecord::ActionApplied { action_id, .. } if action_id == stop_id => {
+                        if self.device_emulator.is_running() {
+                            self.execute(EmulatorCommand::Stop.into());
+                        } else {
+                            self.device_emulator.stop();
+                        }
+                        self.log.info("Active runtime stopped.");
+                        return Ok(());
+                    }
+                    ProcessRecord::ActionFailed {
+                        action_id, error, ..
+                    } if action_id == stop_id => {
+                        return Err(error);
+                    }
+                    _ => {}
+                }
             }
 
             Self::wait_for_stop_progress(deadline)?;
         }
-
-        self.log
-            .info("Active runtime stopped before profile loading.");
-
-        Ok(())
     }
 
     fn wait_for_stop_progress(deadline: Instant) -> Result<(), String> {
@@ -665,18 +716,33 @@ impl ApplicationRuntime {
         self.rebuild_from_paths(paths)
     }
 
+    /// Validates the candidate before touching the current experiment, then safely stops and replaces it.
+    /// Initialization after transport release is not transactional; errors leave the old experiment stopped.
     fn rebuild_from_paths(
         &mut self,
         paths: ApplicationPaths,
     ) -> Result<(Self, Receiver<LuaEvent>), String> {
         let startup_path = paths.startup_script().to_path_buf();
 
-        let result = self
-            .stop_active_operations()
-            .and_then(|()| self.try_rebuild_from_paths(paths));
+        // Parse before touching a healthy runtime. Setup still runs only after the old runtime
+        // has relinquished hardware, since two live profiles cannot safely share COM outputs.
+        let result = Self::load_startup_configuration(&paths).and_then(|(definition, source)| {
+            self.pause_outputs_for_shutdown()?;
+            self.stop_active_operations()?;
+            Self::build_initialized(
+                definition,
+                self.log.clone(),
+                self.process_recorder.clone(),
+                paths,
+                Some(source),
+            )
+        });
 
         match &result {
             Ok(_) => {
+                // The replacement can already own these physical addresses. Dropping the old
+                // runtime must not send another safe write over the replacement's outputs.
+                self.retired = true;
                 self.log.info(format!(
                     "Application profile loaded from '{}'.",
                     startup_path.display(),
@@ -692,21 +758,6 @@ impl ApplicationRuntime {
         }
 
         result
-    }
-
-    fn try_rebuild_from_paths(
-        &self,
-        paths: ApplicationPaths,
-    ) -> Result<(Self, Receiver<LuaEvent>), String> {
-        let (definition, source) = Self::load_startup_configuration(&paths)?;
-
-        Self::build_initialized(
-            definition,
-            self.log.clone(),
-            self.process_recorder.clone(),
-            paths,
-            Some(source),
-        )
     }
 
     fn load_startup_configuration(
@@ -802,6 +853,22 @@ impl ApplicationRuntime {
         for (connection_id, samples) in samples_by_connection {
             self.process_recorder
                 .record_measurements(connection_id, &samples, &metadata);
+        }
+    }
+}
+
+impl Drop for ApplicationRuntime {
+    /// Apply safe outputs before field destruction joins workers and disconnects transports.
+    /// Failure is logged; destruction continues and cannot guarantee a physical safe state.
+    fn drop(&mut self) {
+        if !self.retired {
+            if let Err(error) = self.pause_outputs_for_shutdown() {
+                self.log
+                    .error(format!("Runtime shutdown safe output failed: {error}"));
+            }
+            if let Err(error) = self.stop_active_operations() {
+                self.log.error(format!("Runtime shutdown failed: {error}"));
+            }
         }
     }
 }
@@ -1697,6 +1764,248 @@ mod tests {
         drop(rebuilt);
         drop(runtime);
         drop(log_model);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn shipped_quick_start_records_signals_and_closes_session() {
+        use crate::{
+            application_event::ApplicationEventHub, process_recorder::SqliteProcessRecordWriter,
+        };
+        let directory = runtime_test_directory("recorded_quick_start");
+        write_test_profile(
+            &directory,
+            "model.lua",
+            include_str!("../emulator_scripts/sine_generator.lua"),
+        );
+        write_test_profile(
+            &directory,
+            "demo.lua",
+            include_str!("../lua_scripts/sine_braid_demo.lua"),
+        );
+        let source = include_str!("../startup.lua")
+            .replace("emulator_scripts/sine_generator.lua", "model.lua")
+            .replace("lua_scripts/sine_braid_demo.lua", "demo.lua");
+        let profile = write_test_profile(&directory, "startup.lua", &source);
+        let paths = ApplicationPaths::from_startup_script(profile).unwrap();
+        let (definition, source) = ApplicationRuntime::load_startup_configuration(&paths).unwrap();
+        let database = directory.join("process.sqlite3");
+        let recorder = ProcessRecorder::spawn_with_events(
+            SqliteProcessRecordWriter::create(&database).unwrap(),
+            ApplicationEventHub::new(),
+        )
+        .unwrap();
+        let (log_model, log) = LogModel::new(directory.join("logs"), recorder.clone());
+        let (mut runtime, events) = ApplicationRuntime::build_initialized(
+            definition,
+            log,
+            recorder.clone(),
+            paths,
+            Some(source),
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !runtime.series.with(|series| {
+            series.len() == 16 && series.iter().all(|series| !series.samples.is_empty())
+        }) {
+            runtime.poll();
+            assert!(
+                Instant::now() < deadline,
+                "quick start did not produce all 16 signals"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        run_memory_test_script(
+            &mut runtime,
+            &events,
+            "local device = app.virtual_instrument({id = 1}); assert(#device:parameters() > 0); app.log(device:name())",
+        );
+        drop(runtime);
+        drop(log_model);
+        drop(recorder);
+        let connection = rusqlite::Connection::open(&database).unwrap();
+        let count: i64 = connection
+            .query_row(
+                "SELECT count(DISTINCT series_id) FROM measurements",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 16);
+        let ended: Option<f64> = connection
+            .query_row("SELECT ended_at FROM session", [], |row| row.get(0))
+            .unwrap();
+        assert!(ended.is_some());
+        let failures: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM actions WHERE status = 'failed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(failures, 0);
+        drop(connection);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn shutdown_stop_is_a_barrier_for_queued_start() {
+        let directory = runtime_test_directory("queued_start_shutdown");
+        let profile = write_test_profile(&directory, "empty.lua", "return {}");
+        let (mut runtime, log, _events) = build_test_runtime(&profile);
+        runtime.execute(AcquisitionCommand::Start.into());
+        runtime.stop_active_operations().unwrap();
+        assert!(!runtime.is_running());
+        drop(runtime);
+        drop(log);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    fn lifecycle_profile(directory: &Path, reject_safe: bool) -> PathBuf {
+        let journal = directory.join("writes.txt");
+        let model = r#"
+            local power = 0
+            instruments = {{name = "Lifecycle probe", parameters = {
+                {key = "temperature", type = "number", access = "read_only", series = true},
+                {key = "power", type = "number", access = "read_write", min = 0, max = 100},
+            }}}
+            function read(id, key, time)
+                if key == "temperature" then return 20 end
+                return power
+            end
+            function write(id, key, value, time)
+                if REJECT_SAFE and value == 7 then error("safe write rejected") end
+                power = value
+                local file = assert(io.open(JOURNAL, "a"))
+                file:write(tostring(value), "\n")
+                file:close()
+                return power
+            end
+        "#
+        .replace("REJECT_SAFE", if reject_safe { "true" } else { "false" })
+        .replace("JOURNAL", &format!("{:?}", journal.to_string_lossy()));
+        write_test_profile(directory, "model.lua", &model);
+        write_test_profile(
+            directory,
+            "lifecycle.lua",
+            r#"
+            return {
+                emulator = {script = "model.lua"},
+                setup = function()
+                    app.start_emu()
+                    instrument = app.virtual_instrument()
+                    instrument:add("temperature", "temperature")
+                    controller = instrument:on_off("power", {
+                        name = "heater", input = "temperature", setpoint = 80,
+                        hysteresis = 2, output_off = 0, output_on = 60, safe_output = 7,
+                    })
+                    instrument:write("power", 33)
+                end,
+            }
+        "#,
+        )
+    }
+
+    #[test]
+    fn shutdown_applies_safe_output_before_stopping_emulator() {
+        let directory = runtime_test_directory("shutdown_safe_output");
+        let profile = lifecycle_profile(&directory, false);
+        let (mut runtime, log, events) = build_test_runtime(&profile);
+        run_memory_test_script(
+            &mut runtime,
+            &events,
+            "assert(instrument:read('power') == 33)",
+        );
+        drop(runtime);
+        let writes = fs::read_to_string(directory.join("writes.txt")).unwrap();
+        assert_eq!(writes.lines().last().unwrap().parse::<f64>().unwrap(), 7.0);
+        drop(log);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn retired_runtime_does_not_write_over_replacement_output() {
+        let directory = runtime_test_directory("reload_safe_output");
+        let profile = lifecycle_profile(&directory, false);
+        let (mut runtime, log, events) = build_test_runtime(&profile);
+        run_memory_test_script(
+            &mut runtime,
+            &events,
+            "assert(instrument:read('power') == 33)",
+        );
+        let (mut replacement, replacement_events) = runtime.rebuild_from_profile(&profile).unwrap();
+        let before_drop = fs::read_to_string(directory.join("writes.txt")).unwrap();
+        assert!(
+            before_drop
+                .lines()
+                .any(|line| line.parse::<f64>() == Ok(7.0))
+        );
+        drop(runtime);
+        assert_eq!(
+            fs::read_to_string(directory.join("writes.txt")).unwrap(),
+            before_drop
+        );
+        run_memory_test_script(
+            &mut replacement,
+            &replacement_events,
+            "assert(instrument:read('power') == 33)",
+        );
+        drop(replacement);
+        drop(log);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn failed_safe_output_aborts_reload_and_keeps_transport_for_recovery() {
+        let directory = runtime_test_directory("reload_failed_safe_output");
+        let profile = lifecycle_profile(&directory, true);
+        let (mut runtime, log, events) = build_test_runtime(&profile);
+        run_memory_test_script(
+            &mut runtime,
+            &events,
+            "assert(instrument:read('power') == 33)",
+        );
+        let error = runtime
+            .rebuild_from_profile(&profile)
+            .err()
+            .expect("reload must fail");
+        assert!(error.contains("safe write rejected"), "{error}");
+        assert!(runtime.device_emulator.is_running());
+        run_memory_test_script(
+            &mut runtime,
+            &events,
+            "assert(controller:state() == 'paused'); assert(instrument:read('power') == 33)",
+        );
+        drop(runtime);
+        drop(log);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn documented_tutorial_runs_against_memory_furnace() {
+        let directory = runtime_test_directory("documented_tutorial");
+        write_test_profile(
+            &directory,
+            "model.lua",
+            include_str!("../emulator_scripts/furnace_plant.lua"),
+        );
+        let profile = write_test_profile(
+            &directory,
+            "tutorial.lua",
+            &include_str!("../profiles/tutorial.lua")
+                .replace("../emulator_scripts/furnace_plant.lua", "model.lua"),
+        );
+        let (mut runtime, log, events) = build_test_runtime(&profile);
+        let tutorial = include_str!("../docs/lua-tutorial.md").replace("\r\n", "\n");
+        for block in crate::lua_api::documentation_tests::fenced_blocks(&tutorial, "lua")
+            .into_iter()
+            .skip(1)
+        {
+            run_memory_test_script(&mut runtime, &events, block);
+        }
+        assert!(!runtime.device_emulator.is_running());
+        drop(runtime);
+        drop(log);
         fs::remove_dir_all(directory).unwrap();
     }
 

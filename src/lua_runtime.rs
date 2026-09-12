@@ -1,3 +1,8 @@
+//! Persistent application Lua execution, REPL formatting and callback dispatch.
+//!
+//! Console chunks share globals with startup/setup and registered scripts. Execution errors are
+//! returned to the worker; they do not reset the state or undo commands already sent.
+
 use crossbeam_channel::Sender;
 use mlua::{FromLua, Function, Lua, MultiValue, Table};
 
@@ -56,6 +61,8 @@ impl LuaRuntime {
         run_with_limit(&self.lua, || self.lua.load(source).eval())
     }
 
+    /// Evaluates a chunk and formats all returned values with Lua `tostring` under the execution hook.
+    /// Tables are not recursively pretty-printed; scripts should return fields or log array entries.
     pub fn evaluate_for_repl(&self, source: &str) -> mlua::Result<Vec<String>> {
         run_with_limit(&self.lua, || {
             let values: MultiValue = self.lua.load(source).eval()?;
@@ -92,6 +99,8 @@ impl LuaRuntime {
         )
     }
 
+    /// Reevaluates the profile in the application Lua state and calls its optional setup function.
+    /// Runs only after installing the application API; registered application scripts run afterward.
     pub(crate) fn execute_startup(&self, source: &str) -> mlua::Result<()> {
         run_with_limit(&self.lua, || {
             let definition = self.lua.load(source).eval::<Table>()?;

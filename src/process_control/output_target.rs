@@ -1,3 +1,8 @@
+//! Validated controller actuator identity, range and optional safe value.
+//!
+//! A safe value is explicit configuration, not a device-derived default. The target is shared by
+//! registry compatibility checks and output arbitration.
+
 use std::fmt;
 
 use super::ControlOutputConversionError;

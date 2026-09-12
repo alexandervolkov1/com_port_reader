@@ -1,3 +1,8 @@
+//! Transport-independent virtual instrument request dispatch.
+//!
+//! Access, value type and range are checked around model calls. Model failures become error responses
+//! rather than terminating an otherwise valid protocol session.
+
 use std::time::Duration;
 
 use super::VirtualInstrumentMessage;
@@ -18,9 +23,15 @@ pub const ERROR_INVALID_VALUE: u16 = 6;
 pub const ERROR_OUT_OF_RANGE: u16 = 7;
 pub const ERROR_MODEL_FAILURE: u16 = 100;
 
+/// Stateful model contract called sequentially by the emulator server.
+///
+/// Catalog IDs must remain stable for the server lifetime. The server validates descriptors and
+/// values around calls; implementations return the stored value from writes, not an acknowledgement.
 pub trait VirtualInstrumentModel {
+    /// Returns the catalog used for discovery and access/range validation.
     fn instruments(&self) -> &[VirtualInstrumentDescriptor];
 
+    /// Reads a parameter at elapsed time since session startup, not a Unix timestamp.
     fn read(
         &mut self,
         instrument: VirtualInstrumentId,
@@ -28,6 +39,7 @@ pub trait VirtualInstrumentModel {
         elapsed: Duration,
     ) -> Result<InstrumentValue, VirtualInstrumentModelError>;
 
+    /// Applies a validated input and returns the actual stored value in descriptor units.
     fn write(
         &mut self,
         instrument: VirtualInstrumentId,

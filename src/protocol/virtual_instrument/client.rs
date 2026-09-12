@@ -1,3 +1,8 @@
+//! Typed virtual-instrument transactions over a framing transport.
+//!
+//! Validates response kinds and surfaces server errors distinctly from framing/I/O failures. Memory
+//! transport can recover late responses; writes are not automatically replayed.
+
 use std::io::{Read, Write};
 
 use super::{

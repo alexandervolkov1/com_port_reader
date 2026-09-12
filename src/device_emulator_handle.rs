@@ -1,3 +1,8 @@
+//! Owned emulator server thread for either serial or local transport.
+//!
+//! Startup reports model initialization before returning a handle. Stop requests are observed between
+//! transport/model operations, then joined; custom transports must provide bounded blocking reads.
+
 use std::{
     fs,
     io::Read,
@@ -75,6 +80,8 @@ impl DeviceEmulatorHandle {
         )
     }
 
+    /// Starts the model server using a caller-provided byte stream and waits for initialization.
+    /// The stream must eventually return from reads (normally via timeout) so stop/join can finish.
     pub fn start_with_transport<T>(
         transport: T,
         script_path: PathBuf,

@@ -1,3 +1,8 @@
+//! Validated measurement predicates and their temporal state.
+//!
+//! Leaf conditions implement thresholds, hysteresis, holds, rates and freshness. Composite all/any
+//! conditions preserve bounded depth/width and evaluate their children without Lua polling loops.
+
 use std::{
     collections::VecDeque,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},

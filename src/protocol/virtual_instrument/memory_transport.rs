@@ -1,3 +1,8 @@
+//! Paired in-memory byte-stream endpoints for the normal emulator workflow.
+//!
+//! Read deadlines and disconnection behavior let the same framing server run without physical or
+//! virtual COM ports. Endpoints are session-scoped and are replaced on restart.
+
 use std::{
     collections::VecDeque,
     io,

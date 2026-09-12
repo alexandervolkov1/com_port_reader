@@ -47,6 +47,8 @@ pub enum ProcessingEvent<SignalId> {
     Error(SignalProcessingError<SignalId>),
 }
 
+/// Owns the processing worker and its result channels. Dropping requests shutdown and joins.
+/// Control-event consumers must be stopped in an order that leaves actuator dispatch available.
 pub struct ProcessingService<SignalId> {
     handle: ProcessingHandle<SignalId>,
     event_receiver: Receiver<ProcessingEvent<SignalId>>,
@@ -88,10 +90,12 @@ impl<SignalId> ProcessingService<SignalId> {
         self.handle.clone()
     }
 
+    /// Clones the same result queue, not a broadcast subscription. Multiple receivers compete for events.
     pub fn event_receiver(&self) -> Receiver<ProcessingEvent<SignalId>> {
         self.event_receiver.clone()
     }
 
+    /// Clones the controller-output queue. Use one dispatcher consumer; additional receivers steal events.
     pub fn control_event_receiver(&self) -> Receiver<ControlEvent<SignalId>> {
         self.control_event_receiver.clone()
     }

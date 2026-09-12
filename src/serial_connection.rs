@@ -210,6 +210,8 @@ impl SerialConnection {
         Ok(())
     }
 
+    /// Clears pending input, writes a nonempty binary request, and fills the exact response buffer.
+    /// Length/protocol validation belongs to the caller. Partial I/O and serial timeout errors propagate.
     pub fn exchange_exact(
         &mut self,
         request: &[u8],
@@ -235,6 +237,8 @@ impl SerialConnection {
         Ok(())
     }
 
+    /// Sends one newline-terminated command and returns trimmed, nonempty UTF-8 through the next LF.
+    /// Embedded request newlines and oversized responses are rejected; CR bytes in the reply are ignored.
     pub fn request_text(&mut self, command: &str) -> Result<String, SerialConnectionError> {
         if command.trim().is_empty() {
             return Err(SerialConnectionError::from(
@@ -278,6 +282,7 @@ impl SerialConnection {
         parse_text_response(&response)
     }
 
+    /// Performs a text transaction and requires a finite numeric response suitable for acquisition.
     pub fn request_f64(&mut self, command: &str) -> Result<f64, SerialConnectionError> {
         let response = self.request_text(command.trim())?;
 

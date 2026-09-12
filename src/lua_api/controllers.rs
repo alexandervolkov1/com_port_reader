@@ -22,6 +22,8 @@ use crate::{
 
 const CONTROLLER_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Validates Lua PID options and queues a running loop definition. The returned handle does not
+/// prove registration succeeded; runtime validation still checks input existence and output ownership.
 pub(super) fn add_pid_loop(
     command_sender: &Sender<UserCommand>,
     output_target: ControlOutputTarget,
@@ -93,6 +95,8 @@ pub(super) fn add_pid_loop(
     })
 }
 
+/// Builds a thermal controller from strict Lua options, validates explicit safe output, and queues
+/// installation. Model temperatures use Celsius; actuator output represents percent power.
 pub(super) fn add_furnace_loop(
     command_sender: &Sender<UserCommand>,
     output_target: ControlOutputTarget,
@@ -189,6 +193,8 @@ fn configure_safe_output(
     })
 }
 
+/// Validates hysteresis and output settings before enqueueing an on/off loop. Safe-output
+/// configuration is separate from the two switching outputs.
 pub(super) fn add_on_off_loop(
     command_sender: &Sender<UserCommand>,
     output_target: ControlOutputTarget,

@@ -11,7 +11,16 @@ use crate::instrument::{
 #[derive(Clone, Copy, Debug, PartialEq)]
 /// Proportional, integral, and derivative gains for [`PidController`].
 ///
-/// All gains must be finite; integral and derivative actions use elapsed measurement time.
+/// All gains must be finite and non-negative; integral and derivative actions use elapsed
+/// measurement time. Integral gain is per second, not an integral-time parameter.
+///
+/// ```
+/// use com_port_reader::process_control::PidGains;
+/// let gains = PidGains::new(2.0, 0.1, 0.0)?;
+/// assert_eq!(gains.integral(), 0.1);
+/// assert!(PidGains::new(-1.0, 0.0, 0.0).is_err());
+/// # Ok::<(), com_port_reader::process_control::PidGainsError>(())
+/// ```
 pub struct PidGains {
     proportional: f64,
     integral: f64,
@@ -280,6 +289,9 @@ impl PidController {
         self.integral
     }
 
+    /// Calculates one PID sample with derivative on measurement and conditional-integration anti-windup.
+    /// Timestamp and measurement must be finite, and timestamps must increase after the first sample.
+    /// The first sample has no derivative/integral increment; failures preserve all dynamic state.
     pub fn update(
         &mut self,
         timestamp: f64,
@@ -594,6 +606,8 @@ impl PidController {
         Ok(InstrumentValue::Number(value))
     }
 
+    /// Validates a complete configuration candidate before changing live settings. Successful changes
+    /// preserve integral and prior-sample history; callers resynchronize explicitly when input changes.
     pub fn configure_parameters<I, K>(&mut self, updates: I) -> Result<(), ControllerParameterError>
     where
         I: IntoIterator<Item = (K, InstrumentValue)>,

@@ -1,3 +1,8 @@
+//! Model-side Lua catalog and typed read/write adaptation.
+//!
+//! This Lua state is separate from application automation and lives on the emulator server thread.
+//! Descriptor order supplies stable one-based IDs for a model session.
+
 use std::time::Duration;
 
 use mlua::{Function, Lua, Table, Value};
@@ -20,6 +25,8 @@ pub struct LuaVirtualInstrumentModel {
 }
 
 impl LuaVirtualInstrumentModel {
+    /// Creates an isolated model Lua state, evaluates its catalog, and checks required read/write handlers.
+    /// All model calls use the execution hook; no application-side `app` API is installed.
     pub fn from_source(source: &str) -> Result<Self, VirtualInstrumentModelError> {
         let lua = Lua::new();
 

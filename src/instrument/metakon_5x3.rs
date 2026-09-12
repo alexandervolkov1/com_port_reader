@@ -1,3 +1,8 @@
+//! Typed Metakon 5X3 register semantics over the binary protocol.
+//!
+//! Keeps channel-type checks, scaled numeric values, measurement fault decoding and register-specific
+//! units separate from Lua bindings and plotting. See `parameters` for the supported register set.
+
 use super::{ParameterAccess, ParameterDescriptor, ParameterRange, ParameterValueType};
 use crate::{
     protocol::metakon::{

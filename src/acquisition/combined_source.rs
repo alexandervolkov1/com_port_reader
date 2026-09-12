@@ -1,3 +1,9 @@
+//! Priority-ordered acquisition-source composition.
+//!
+//! Only `Ok(None)` permits fallback. A source error is terminal for that request, preventing a failed
+//! local virtual request from accidentally reaching a serial device. Start rolls back earlier sources;
+//! stop attempts every source in reverse order.
+
 use super::{AcquisitionError, AcquisitionSource};
 use crate::{
     data::{Sample, SeriesMetadata},

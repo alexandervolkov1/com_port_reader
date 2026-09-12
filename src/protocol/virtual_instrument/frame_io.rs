@@ -1,3 +1,8 @@
+//! Incremental virtual-protocol framing and stream I/O.
+//!
+//! The decoder retains incomplete input across reads and validates bounded frames before decoding
+//! messages. Transport-specific timeout/recovery policy belongs to the client adapter.
+
 use std::io::{Read, Write};
 
 use super::{

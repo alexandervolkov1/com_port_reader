@@ -1,3 +1,8 @@
+//! Late-response recovery for one outstanding local protocol request.
+//!
+//! A timed-out caller must not let its eventual response satisfy the next request. The adapter drains
+//! a complete pending response before clearing input and starting another exchange.
+
 use std::io::{self, Read, Write};
 
 use super::{MemoryEndpoint, VirtualFrameDecoder, VirtualInstrumentTransport};

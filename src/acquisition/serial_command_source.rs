@@ -1,3 +1,8 @@
+//! Worker-owned serial acquisition and typed instrument dispatch.
+//!
+//! Opens connections lazily for raw/Metakon/virtual transactions, converts readable values into
+//! samples, and preserves typed protocol errors for per-series polling health.
+
 use std::collections::HashSet;
 
 use super::{AcquisitionError, AcquisitionSource};

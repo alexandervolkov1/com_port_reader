@@ -1,3 +1,8 @@
+//! Separates application data paths from selected-profile resource paths.
+//!
+//! Explicit CLI selection wins over remembered selection. Debug data is rooted at the manifest;
+//! release data is rooted beside the executable. Model/script paths follow the profile directory.
+
 use std::{
     env,
     error::Error,
@@ -19,6 +24,8 @@ pub struct ApplicationPaths {
 }
 
 impl ApplicationPaths {
+    /// Resolves explicit CLI, remembered or default profile selection without loading Lua.
+    /// Data remains rooted at the application directory even when the profile is elsewhere.
     pub fn discover() -> Result<Self, ApplicationPathsError> {
         let application_directory = default_application_directory()?;
 
@@ -34,6 +41,8 @@ impl ApplicationPaths {
         Self::new(application_directory, startup_script)
     }
 
+    /// Creates an isolated path layout rooted beside the supplied profile, useful for embedded use
+    /// and tests. Unlike `discover`, this intentionally puts data beside that profile.
     pub fn from_startup_script(
         startup_script: impl Into<PathBuf>,
     ) -> Result<Self, ApplicationPathsError> {

@@ -384,6 +384,8 @@ impl Drop for AsyncProcessRecordSink {
     }
 }
 
+/// Drains records on the writer thread until shutdown or disconnection. The first write failure disables further
+/// persistence and is retained for the application to report; shutdown still closes the writer.
 fn run_process_recorder(
     receiver: Receiver<ProcessRecorderCommand>,
     mut writer: Box<dyn ProcessRecordWriter>,
@@ -460,6 +462,8 @@ impl ProcessRecorder {
         receiver
     }
 
+    /// Publishes application/timeline events before handing the record to the persistence sink.
+    /// Events therefore remain available even when SQLite is disabled or its writer has failed.
     pub fn record(&self, record: ProcessRecord) {
         if let Some(event) =
             crate::application_event::ApplicationEvent::from_process_record(&record)

@@ -1,3 +1,8 @@
+//! Closed controller-kind dispatch shared by loops and Lua-facing metadata.
+//!
+//! Adding a controller kind requires explicit branches for parameter validation/configuration,
+//! updates, diagnostics, reset and output-range preview; see the development guide.
+
 use std::{error::Error, fmt};
 
 use super::{

@@ -1,8 +1,9 @@
 //! Safety-sensitive arbitration of manual and controller output writes.
 //!
-//! The service tracks ownership per physical output. Moving into automatic control first writes
-//! the configured safe value; only a successful completion grants the controller ownership.
-//! Failed writes retain or restore a safe state instead of silently changing ownership.
+//! The service tracks ownership per connected parameter. Registration starts in automatic mode;
+//! resuming after a manual write enters a pending mode until an automatic write is acknowledged.
+//! Manual and safety requests enter manual mode after enqueueing, even if hardware later fails.
+//! Ownership is a software permission, not a guarantee of the physical actuator's state.
 
 use std::{collections::HashMap, error::Error, fmt};
 
@@ -167,6 +168,7 @@ impl OutputArbiter {
         self.outputs.contains_key(&target)
     }
 
+    /// Start a new takeover generation from manual mode without dispatching a hardware write.
     pub(crate) fn request_automatic(&mut self, controller: &str) -> Result<(), OutputArbiterError> {
         let state = self
             .outputs
@@ -200,6 +202,8 @@ impl OutputArbiter {
         Ok(())
     }
 
+    /// Accept only the current controller instance and takeover generation; stale completions
+    /// must not restore automatic ownership after a manual override or controller replacement.
     pub(crate) fn complete_automatic_transition(
         &mut self,
         target: ConnectedParameterAddress,

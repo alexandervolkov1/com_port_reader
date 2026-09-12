@@ -55,8 +55,9 @@
 ---@field timeout? number Read timeout in seconds. Default: 0.25.
 
 ---@class EmulatorDefinition
----@field connection string Name of the client connection whose serial-line settings are used.
----@field port string Server side of the virtual COM-port pair.
+---@field transport? '"memory"'|'"serial"' Defaults to memory unless connection or port is supplied. Memory needs no COM driver.
+---@field connection? string Required for serial: client connection whose serial settings are used.
+---@field port? string Required for serial: server side of the virtual COM-port pair.
 ---@field script string Path to the Lua virtual-instrument model.
 
 ---@class ApplicationDefinition
@@ -178,6 +179,12 @@ function Metakon5x3:pid(parameter, options) end
 ---@return Controller
 function Metakon5x3:on_off(parameter, options) end
 
+---Creates a running model-assisted thermal controller.
+---@param parameter MetakonParameter
+---@param options FurnaceControllerOptions
+---@return Controller
+function Metakon5x3:furnace(parameter, options) end
+
 ---@class VirtualInstrumentOptions
 ---@field connection? string Serial connection name. Default: "primary".
 ---@field id? integer One-based virtual instrument ID. Default: 1.
@@ -239,6 +246,12 @@ function VirtualInstrument:pid(parameter, options) end
 ---@param options OnOffControllerOptions
 ---@return Controller
 function VirtualInstrument:on_off(parameter, options) end
+
+---Creates a running model-assisted thermal controller.
+---@param parameter string Writable numeric parameter key.
+---@param options FurnaceControllerOptions
+---@return Controller
+function VirtualInstrument:furnace(parameter, options) end
 
 ---@class ExponentialFilterSeriesOptions
 ---@field name string Unique output series name.
@@ -307,6 +320,9 @@ function VirtualInstrument:on_off(parameter, options) end
 ---@field safe_output? number Value written when the controller is paused.
 
 ---@alias ControllerDiagnostic
+---| '"feed_forward"'
+---| '"predicted_measurement"'
+---| '"measurement_rate"'
 ---| '"setpoint"'
 ---| '"proportional"'
 ---| '"integral"'
@@ -401,6 +417,25 @@ function Controller:pause() end
 function Controller:resume() end
 function Controller:reset_integral() end
 function Controller:reset() end
+
+---Waits for safe pause, releases ownership and detaches diagnostics; history remains.
+---Failure leaves the controller registered. Do not use a successfully removed handle.
+function Controller:remove() end
+
+---@class FurnaceControllerOptions
+---@field name string Unique controller name.
+---@field input string Existing temperature series in degrees Celsius.
+---@field setpoint number Temperature in degrees Celsius, at least -273.15.
+---@field kp number Finite non-negative proportional gain.
+---@field ki? number Finite non-negative integral gain, default zero.
+---@field output_min number Minimum output; strictly below output_max.
+---@field output_max number Maximum output.
+---@field ambient_temperature number Ambient degrees Celsius, at least -273.15.
+---@field max_power number Positive heater power in watts at 100% output.
+---@field heater_lag number Non-negative lag in seconds.
+---@field linear_loss number Non-negative heat loss in watts per degree Celsius.
+---@field radiation_loss_1000c number Non-negative radiative loss in watts at 1000 degrees Celsius relative to 20 degrees Celsius.
+---@field safe_output? number Explicit safe output; no inferred default. Required for successful safe pause/removal.
 
 ---@class ControlReadoutDefinition
 ---@field kind '"readout"'

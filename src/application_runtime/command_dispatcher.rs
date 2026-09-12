@@ -74,6 +74,8 @@ enum AcquisitionActionEventOutcome {
     },
 }
 
+/// Counts one matching acknowledgement per connection. A start failure aborts the aggregate action
+/// and returns the set requiring rollback; duplicate or unrelated events cannot complete an action.
 fn update_pending_acquisition_action(
     pending_actions: &mut HashMap<ProcessActionId, PendingAcquisitionAction>,
     connection_event: &ConnectionWorkerEvent,

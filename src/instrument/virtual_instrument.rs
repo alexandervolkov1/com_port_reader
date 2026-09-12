@@ -1,3 +1,8 @@
+//! Validated virtual-instrument IDs and discoverable parameter catalogs.
+//!
+//! Descriptors carry type, access, optional numeric range and series capability. Application bindings
+//! and the model server use the same metadata to validate requests.
+
 use std::collections::HashSet;
 
 use super::{ParameterAccess, ParameterRange, ParameterValueType};

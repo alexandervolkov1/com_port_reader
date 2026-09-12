@@ -1,3 +1,8 @@
+//! Metakon binary request/response codec and serial transaction helpers.
+//!
+//! Frame length, CRC, address and command checks precede value conversion. Transactions retain their
+//! bounded protocol retries; they are separate from per-series acquisition suspension/retry.
+
 use crate::serial_connection::{SerialConnection, SerialConnectionError};
 
 const READ_COMMAND: u8 = 0x00;

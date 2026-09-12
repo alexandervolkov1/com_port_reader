@@ -1,3 +1,8 @@
+//! Conversion of finite controller outputs into typed actuator writes.
+//!
+//! Rounding and target range checks happen before a write enters output arbitration. Numeric output
+//! cannot bypass the descriptor's integer/number constraints.
+
 use std::fmt;
 
 use super::{ControlOutputParameter, ControlOutputTarget};

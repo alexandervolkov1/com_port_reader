@@ -1,3 +1,8 @@
+//! GUI-only plot layout, follow mode and reusable per-line display buffers.
+//!
+//! Pane keys come from profile definitions; missing/removed pane assignments fall back to the first
+//! pane, which cannot be removed.
+
 use egui_plot::PlotPoint;
 
 use crate::data::SeriesColor;

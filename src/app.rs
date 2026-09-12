@@ -1,3 +1,8 @@
+//! GUI composition and presentation state.
+//!
+//! Owns the application runtime and the application-wide log/recorder. Profile replacement resets
+//! plot/panel state only after runtime initialization succeeds; the recording session is retained.
+
 use std::path::Path;
 
 use eframe::egui;
@@ -466,7 +471,11 @@ impl eframe::App for MyApp {
             self.settings.set_reload_result(result);
         }
 
-        help_view::show_window(ui.ctx(), &mut self.help);
+        help_view::show_window(
+            ui.ctx(),
+            &mut self.help,
+            &self.runtime.paths().resolve_data("docs"),
+        );
 
         ui.ctx()
             .request_repaint_after(self.runtime.definition().runtime().repaint_interval());

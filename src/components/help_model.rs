@@ -9,6 +9,62 @@ pub enum HelpLanguage {
 pub struct HelpModel {
     command_reference_open: bool,
     language: HelpLanguage,
+    pub(super) search: String,
+    pub(super) category: HelpCategory,
+    pub(super) document_error: Option<String>,
+}
+
+impl HelpLanguage {
+    pub(super) fn choose<'a>(self, english: &'a str, russian: &'a str) -> &'a str {
+        match self {
+            Self::English => english,
+            Self::Russian => russian,
+        }
+    }
+}
+
+/// Stable categories shared by catalog filtering and the bilingual navigation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(super) enum HelpCategory {
+    #[default]
+    All,
+    Application,
+    Series,
+    Instruments,
+    Controllers,
+    References,
+    Panels,
+    Scenarios,
+    Setup,
+}
+
+impl HelpCategory {
+    pub const ALL: [Self; 9] = [
+        Self::All,
+        Self::Application,
+        Self::Series,
+        Self::Instruments,
+        Self::Controllers,
+        Self::References,
+        Self::Panels,
+        Self::Scenarios,
+        Self::Setup,
+    ];
+
+    pub fn label(self, language: HelpLanguage) -> &'static str {
+        let (en, ru) = match self {
+            Self::All => ("All", "Все"),
+            Self::Application => ("Application", "Приложение"),
+            Self::Series => ("Series & filters", "Серии и фильтры"),
+            Self::Instruments => ("Instruments", "Приборы"),
+            Self::Controllers => ("Controllers", "Регуляторы"),
+            Self::References => ("References & diagnostics", "Уставки и диагностики"),
+            Self::Panels => ("Panels", "Панели"),
+            Self::Scenarios => ("Scenarios", "Сценарии"),
+            Self::Setup => ("Profiles & models", "Профили и модели"),
+        };
+        language.choose(en, ru)
+    }
 }
 
 impl HelpModel {

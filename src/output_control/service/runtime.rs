@@ -254,8 +254,8 @@ fn handle_write_completion(
                 return;
             }
 
-            // Automatic ownership is granted only after the tracked write is acknowledged. A
-            // dispatched safe request alone is not evidence that hardware reached a safe value.
+            // This completion belongs to an automatic write, not a safety request. Generation
+            // checking prevents an older successful write from undoing a newer manual override.
             if let Some(transition_id) = pending.automatic_transition_id {
                 let _ = arbiter.complete_automatic_transition(
                     pending.target,

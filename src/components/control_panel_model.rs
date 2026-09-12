@@ -1,3 +1,8 @@
+//! GUI-side state for script-declared controls and callback progress.
+//!
+//! Application events replace definitions/update values. Pending callbacks and disabled controls are
+//! interaction guards, not actuator-safety enforcement.
+
 use std::{error::Error, fmt};
 
 use crate::control_panel::{ControlDefinition, ControlPanelDefinition};

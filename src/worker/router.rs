@@ -12,6 +12,8 @@ pub struct ConnectionRouter {
 }
 
 impl ConnectionRouter {
+    /// Clones the registered worker endpoint while holding only a short read lock. Callers perform
+    /// blocking request/reply operations after this lock has been released.
     pub fn handle(&self, connection_id: ConnectionId) -> Option<WorkerHandle> {
         self.handles
             .read()

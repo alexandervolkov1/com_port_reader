@@ -1,3 +1,8 @@
+//! Application log projection and daily text files.
+//!
+//! The timeline is independent of SQLite. The GUI drains it during frames, and final destruction
+//! drains already-queued shutdown messages after the application runtime has released its workers.
+
 use std::{
     collections::{HashMap, VecDeque},
     fs::{self, File, OpenOptions},
@@ -200,6 +205,14 @@ impl LogModel {
                 ),
             ));
         }
+    }
+}
+
+impl Drop for LogModel {
+    fn drop(&mut self) {
+        // Runtime shutdown happens before this model is destroyed, after the last GUI frame.
+        // Preserve safe-output failures and stop completions in the text log as well as SQLite.
+        self.poll();
     }
 }
 
@@ -708,6 +721,31 @@ mod tests {
 
         assert_eq!(contents, "test entry\n");
 
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn destruction_drains_shutdown_messages_without_another_gui_frame() {
+        let directory = std::env::temp_dir().join(format!(
+            "com_port_reader_shutdown_log_{}_{}",
+            std::process::id(),
+            NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed),
+        ));
+        let (model, log) = super::LogModel::new(&directory, ProcessRecorder::default());
+        log.error("Shutdown safe output failed: test actuator");
+        drop(model);
+        let path = fs::read_dir(&directory)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .contains("Shutdown safe output failed: test actuator")
+        );
+        drop(log);
         fs::remove_dir_all(directory).unwrap();
     }
 

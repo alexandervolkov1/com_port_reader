@@ -1,53 +1,104 @@
-# Virtual instruments
+# Virtual instruments and emulator models
 
-Virtual instruments are Lua models exposed through the same acquisition and controller paths as real instruments. Memory transport is the normal development and demonstration mode; it runs entirely in process and does not need a virtual COM driver.
+Virtual instruments exercise the same acquisition, processing and output-control paths as real instruments, using a model-defined parameter catalog. Normal operation uses an in-process memory byte stream. Serial emulation is an optional integration/debug mode.
 
-## Model contract
+## Two Lua environments
 
-An emulator script defines a global `instruments` array and global `read` and `write` functions. Instrument and parameter identifiers are assigned from their array positions, starting at 1. Parameter keys are stable strings used by the callbacks.
+Application Lua owns orchestration: `app.start_emu`, handles, plotted series, controllers, scenarios and panels. Model Lua owns simulated device state: the `instruments` catalog and `read/write` functions. They are separate Lua states on separate threads; a model cannot call `app`, and an application script cannot directly access model locals.
+
+The catalog is discovered through the virtual-instrument protocol. Its numeric addresses are translated back into parameter keys before the Rust model adapter calls Lua. Values cross as typed number/integer/boolean values, not as shared Lua objects.
+
+## Minimal complete model
+
+Save this as `emulator_scripts/example.lua` and point a profile at it:
 
 ```lua
-instruments = {
-  {
-    name = "demo source",
-    parameters = {
-      { key = "value", name = "Value", type = "number", access = "read_only", series = true, unit = "V", min = -10, max = 10 },
-      { key = "enabled", type = "boolean", access = "read_write" },
-    },
-  },
+local value = 20
+instruments = {{
+    name = "Example",
+    parameters = {{
+        key = "value", name = "Value", type = "number",
+        access = "read_write", series = true,
+        unit = "units", min = 0, max = 100,
+    }},
+}}
+
+function read(instrument_id, parameter, time)
+    assert(instrument_id == 1 and parameter == "value")
+    return value
+end
+
+function write(instrument_id, parameter, requested, time)
+    assert(instrument_id == 1 and parameter == "value")
+    value = requested
+    return value
+end
+```
+
+A profile saved in the repository root:
+
+```lua
+return {
+    emulator = {transport = "memory", script = "emulator_scripts/example.lua"},
+    setup = function()
+        app.start_emu()
+        device = app.virtual_instrument({id = 1})
+        device:add("value", {name = "example", interval = 0.5})
+        app.start()
+    end,
 }
-
-local enabled = true
-
-function read(instrument_id, key, elapsed_seconds)
-  if key == "value" then return enabled and math.sin(elapsed_seconds) or 0 end
-  if key == "enabled" then return enabled end
-  error("unknown key: " .. key)
-end
-
-function write(instrument_id, key, value, elapsed_seconds)
-  if key == "enabled" then enabled = value; return enabled end
-  error("parameter is not writable")
-end
 ```
 
-`type` is `number`, `integer`, or `boolean`. `access` is `read_only`, `write_only`, or `read_write` and defaults to `read_only`. `series` defaults to `false`; only readable series parameters can be sampled. `name`, `unit`, `min`, and `max` are optional, but range bounds must match the value type.
+The example paths describe files to create; the ready-made [tutorial profile](../profiles/tutorial.lua) instead uses the supplied furnace model.
 
-The elapsed time passed to `read` and `write` is measured from emulator start. Model calls are bounded by the Lua execution limit; an error is reported to the caller instead of terminating the application.
+## Catalog schema
 
-## Starting and using an emulator
+`instruments` is a global contiguous array. Positions are one-based instrument IDs; parameter array positions become one-based parameter IDs. Each instrument requires a nonempty name and a nonempty parameter array. Keep order stable across model revisions when reusing existing handles/series.
 
-```lua
-app.start_emu()
-local source = app.virtual_instrument({ id = 1 })
-source:add("value", { name = "virtual_value", interval = 0.5 })
-app.start()
-```
+| Parameter field | Type | Required / default | Meaning |
+| --- | --- | --- | --- |
+| `key` | string | required | Unique key within the instrument; used in Lua reads/writes. |
+| `name` | string | optional / key | Display name. |
+| `type` | string | required | `number`, `integer` or `boolean`. |
+| `access` | string | optional / `read_only` | `read_only`, `write_only` or `read_write`. |
+| `series` | boolean | optional / false | Whether the parameter can become a periodic series; requires readable access. |
+| `unit` | string | optional | Informational unit label. |
+| `min`, `max` | numeric, matching type | optional, both or neither | Inclusive finite ordered range; boolean parameters cannot declare numeric bounds. |
 
-`app.virtual_instrument` accepts optional `connection` and `id` (default `1`). The returned handle supports `parameters()`, `read(key)`, `write(key, value)`, `add(key, options)`, and controller constructors. Consult `emulator_scripts/sine_generator.lua` for the eight-generator model and `furnace_plant.lua` for a stateful thermal plant.
+Descriptor validation rejects duplicate/invalid keys and incompatible access/range combinations. The server checks input values before write and validates returned model values against the descriptor; do not return a string for a number or a fractional number for an integer.
 
-## Lifecycle and transport
+`read(instrument_id, parameter, time)` is required if any parameter is readable. `write(instrument_id, parameter, value, time)` is required if any parameter is writable. A write must return the **actual stored value**, which may differ from the request if the model intentionally changes it within allowed bounds.
 
-`app.stop_emu()` ends the active session. Starting again creates a fresh model/session. In memory mode, the local source opens a request session only while the emulator is running. After a timeout, it closes and discards that session so delayed bytes cannot be reused by the next request.
+## Time and state
 
-Serial transport uses the same framed virtual-instrument protocol but requires a configured emulator COM port and a separate application connection. It is optional and is intended for external serial integrations, not the normal quick-start path.
+`time` is elapsed seconds since the emulator session started, not Unix time. Store previous time/model state in Lua locals captured by read/write. Advance the simulation according to elapsed time, not the number of reads. Several parameter reads may occur close together; avoid applying the same elapsed interval repeatedly.
+
+No periodic model callback is scheduled independently. Reads/writes advance the shipped furnace model lazily. Application plotted timestamps are acquisition timestamps, so they serve a different purpose from the model's elapsed argument.
+
+Each model load/read/write uses the Lua instruction-hook execution limit. A model error returns a protocol error to the caller. Native blocking code cannot be forcibly preempted by that hook.
+
+## Transport and lifecycle
+
+`app.start_emu()` loads/validates the model, spawns the server and publishes the session only after startup succeeds. Starting an already running model is idempotent. Memory endpoints require no COM driver and ignore serial baud/parity settings.
+
+`app.stop_emu()` requests stop, joins the server and clears the shared local endpoint. Restart loads a fresh Lua state with initial values and fresh elapsed time. It does not preserve heater power, random-generator state or script locals. Existing application series remain; restart acquisition/retry suspended series as appropriate.
+
+The local source claims virtual operations even while stopped: a stopped local emulator produces `Local emulator is stopped` rather than falling through to a COM source. Real Metakon and text commands still route to serial on the same worker.
+
+The local client allows one outstanding request. After a timeout, it drains the previous complete response before sending another request, avoiding a stale reply being interpreted as the new result. It never automatically replays a timed-out write. Protocol corruption/nonrecoverable transport errors close the session and require restart; a model-level error keeps a usable session.
+
+Profile reload safely pauses controllers before stopping transports and builds a fresh model when requested by the new profile. Normal shutdown also attempts controller safe outputs while the emulator is alive. Explicitly stopping a model yourself does not automatically pause its controllers; pause/remove first.
+
+## Optional serial mode
+
+Serial mode requires an application client port and a different server port connected physically or by a configured virtual pair. Set `emulator.transport = "serial"`, `connection` and `port` as described in [configuration](configuration.md). The model protocol is the same framed protocol used by memory mode. This mode is for compatibility/testing, not the normal first-run path.
+
+The standalone `device_emulator` binary also serves a model over serial; inspect its arguments in [development](development.md) before using it. It is not required for the in-process memory emulator.
+
+## Included models
+
+[The sine generator](../emulator_scripts/sine_generator.lua) exposes eight independent instruments. Each has readable `value` and writable `amplitude`, `noise_amplitude`, `period` and `phase`. Only `value` is series-enabled. Period uses seconds and phase radians; deterministic per-instrument random state supplies noise.
+
+[The furnace](../emulator_scripts/furnace_plant.lua) exposes instrument 1. Readable series include `temperature` (°C), `heater_power` (%) and `effective_power` (W). Model settings include ambient temperature, maximum power, heater lag, thermal capacity, linear/radiative losses and measurement noise.
+
+It integrates first-order heater lag and a heat balance in bounded time steps. The emulator's thermal capacity and effective heater-power state are physical-model state; the furnace controller uses a smaller prediction/feed-forward model and does not share these locals. The [furnace demo](furnace-demo.md) shows how to change model and controller settings independently.

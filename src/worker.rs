@@ -266,8 +266,6 @@ impl Worker {
 
                     series_schedules.clear();
 
-                    thread_running.store(false, Ordering::Release);
-
                     if let Err(stop_error) = source.stop() {
                         error = format!(
                             "{error}; additionally \
@@ -277,6 +275,7 @@ impl Worker {
                         .into();
                     }
 
+                    thread_running.store(false, Ordering::Release);
                     let _ = event_sender.send(WorkerEvent::AcquisitionFailed(error));
 
                     continue;
@@ -358,9 +357,10 @@ impl Worker {
 
                             series_schedules.clear();
 
+                            let stop_result = source.stop();
+                            // Publish stopped only after transport cleanup, not before it starts.
                             thread_running.store(false, Ordering::Release);
-
-                            match source.stop() {
+                            match stop_result {
                                 Ok(()) => {
                                     let _ = event_sender.send_for_action(
                                         action_id,
@@ -452,6 +452,8 @@ impl Drop for Worker {
     }
 }
 
+/// Reconciles active series with per-series monotonic deadlines. Only new or changed intervals
+/// receive a new deadline; removed/offline series lose their schedule and failure count.
 fn synchronize_series_schedules(
     schedules: &mut HashMap<SeriesId, SeriesSchedule>,
     series: &[SeriesMetadata],
@@ -508,6 +510,7 @@ fn due_series_metadata(
         .collect()
 }
 
+/// Advances due polls without accumulating a burst of catch-up work after a slow transaction.
 fn advance_series_schedules(
     schedules: &mut HashMap<SeriesId, SeriesSchedule>,
     polled_series: &[SeriesMetadata],
@@ -528,6 +531,8 @@ fn advance_series_schedules(
     }
 }
 
+/// Suspends only series reaching the consecutive-failure threshold and emits one suspension event.
+/// Successful polls reset their counter; retry reintroduces a fresh schedule.
 fn update_series_polling_health(
     schedules: &mut HashMap<SeriesId, SeriesSchedule>,
     series_store: &SeriesStore,
@@ -736,6 +741,8 @@ fn handle_connection_command(
     }
 }
 
+/// Closes a source opened only for a one-shot request, preserving request and cleanup failures.
+/// An actively polling source remains open for its worker.
 fn close_source_after_one_shot<T>(
     mut result: Result<T, AcquisitionError>,
     acquisition_running: bool,
@@ -831,6 +838,70 @@ mod tests {
             SeriesSource, SeriesStore,
         },
     };
+
+    #[test]
+    fn stopped_flag_and_ack_wait_for_source_cleanup() {
+        use crate::{
+            acquisition::AcquisitionSource,
+            process_recorder::ProcessRecorder,
+            signal_processing::ProcessingService,
+            worker::{Worker, WorkerConfig, WorkerHandle, WorkerServices},
+        };
+        struct BlockingStop {
+            entered: crossbeam_channel::Sender<()>,
+            release: crossbeam_channel::Receiver<()>,
+        }
+        impl AcquisitionSource for BlockingStop {
+            fn stop(&mut self) -> Result<(), AcquisitionError> {
+                self.entered.send(()).unwrap();
+                self.release.recv_timeout(Duration::from_secs(2)).unwrap();
+                Ok(())
+            }
+        }
+        let (entered_tx, entered_rx) = unbounded();
+        let (release_tx, release_rx) = unbounded();
+        let (commands, receiver) = unbounded();
+        let (events_tx, events_rx) = unbounded();
+        let processing = ProcessingService::<SeriesId>::spawn().unwrap();
+        let worker = Worker::spawn(
+            WorkerHandle::new(ConnectionId::PRIMARY, commands),
+            receiver,
+            events_tx,
+            WorkerServices::new(
+                SeriesStore::new(),
+                ProcessRecorder::default(),
+                processing.handle(),
+            ),
+            Box::new(BlockingStop {
+                entered: entered_tx,
+                release: release_rx,
+            }),
+            WorkerConfig::default(),
+        );
+        worker.start(None).unwrap();
+        assert!(matches!(
+            events_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .event(),
+            WorkerEvent::AcquisitionStarted
+        ));
+        worker.stop(None).unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let running_during_cleanup = worker.is_running();
+        let acknowledged_early = events_rx.try_recv().is_ok();
+        release_tx.send(()).unwrap();
+        assert!(matches!(
+            events_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .event(),
+            WorkerEvent::AcquisitionStopped
+        ));
+        assert!(running_during_cleanup);
+        assert!(!acknowledged_early);
+        assert!(!worker.is_running());
+    }
 
     fn metadata(id: u64, sampling_interval: Option<SamplingInterval>) -> SeriesMetadata {
         SeriesMetadata {

@@ -1,3 +1,8 @@
+//! SQLite schema and process-record persistence for a single application session.
+//!
+//! Stores configuration snapshots, action lifecycles, logs, measurements and controller output results.
+//! The owning recorder thread serializes writes; writer destruction marks session completion.
+
 use std::{
     fmt::Display,
     fs,
@@ -1069,6 +1074,21 @@ mod tests {
         let _ = fs::remove_file(&path);
 
         assert_eq!(row, ("requested".to_owned(), None, None,),);
+    }
+
+    #[test]
+    fn documented_sql_queries_match_the_actual_schema() {
+        let path = temporary_database_path();
+        let writer = SqliteProcessRecordWriter::create(&path).unwrap();
+        let guide = include_str!("../../docs/process-recording.md").replace("\r\n", "\n");
+        for query in crate::lua_api::documentation_tests::fenced_blocks(&guide, "sql") {
+            writer
+                .connection
+                .prepare(query)
+                .unwrap_or_else(|error| panic!("{query}: {error}"));
+        }
+        drop(writer);
+        fs::remove_file(path).unwrap();
     }
 
     fn temporary_database_path() -> PathBuf {
