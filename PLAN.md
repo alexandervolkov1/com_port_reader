@@ -1,44 +1,78 @@
-# План завершения Lua-сценариев
+Нужно мягко убрать обязательную зависимость эмулятора от внешней пары виртуальных COM-портов.
 
-## Цель этапа
+## Цель
 
-Довести событийные Lua-сценарии до законченного инструмента для многоэтапных лабораторных процессов, который можно полностью проверить на эмуляторе и синтетических измерениях без реальных приборов.
+Сейчас схема примерно такая:
 
-После выполнения плана сценарий должен:
+```text
+application
+    ↓
+SerialConnection
+    ↓
+virtual COM A
+    ⇅
+virtual COM B
+    ↓
+DeviceEmulator
+    ↓
+VirtualInstrumentServer
+    ↓
+Lua model
+```
 
-- описывать именованные этапы процесса;
-- переходить между этапами по времени, измерениям и ошибкам;
-- атомарно выбирать один переход из нескольких альтернатив;
-- передавать Lua callback контекст причины срабатывания;
-- ждать `ActionApplied` перед продолжением и останавливаться при `ActionFailed`;
-- выполнять единый обработчик штатной остановки или ошибки;
-- показывать текущее состояние в read-only GUI;
-- оставлять в process log и SQLite однозначно восстанавливаемую историю выполнения.
+Нужно получить основной режим:
 
-Когда все критерии выполнены, подсистема сценариев считается завершённой для текущего масштаба проекта. Дальнейшие изменения должны быть расширениями под конкретные эксперименты, а не устранением архитектурных пробелов.
+```text
+application
+    ↓
+AcquisitionSource
+    ↓
+in-memory transport
+    ↓
+VirtualInstrumentServer
+    ↓
+Lua model
+```
 
-## Текущая база
+без установки com0com/VSPE/другого virtual COM driver.
 
-Уже реализованы:
+При этом старый serial-emulator mode желательно сохранить как optional integration-test mode.
 
-- `ApplicationEventHub` с измерениями и lifecycle действий `Requested/Applied/Failed`;
-- `ScenarioService`, изолированный от GUI и Lua worker;
-- `app.scenario({ id = ... })`;
-- относительные `scenario:after(...)` и абсолютные `scenario:at(...)` таймеры;
-- `scenario:when(...)` с `above`/`below`, `for_seconds`, `hysteresis` и `edge = "rising"`;
-- `scenario:cancel()` и `scenario:id()`;
-- короткие global/application-script callbacks;
-- последовательное выполнение callback одного сценария;
-- корреляция команд callback с action ID: продолжение после `Applied`, остановка после `Failed`;
-- отмена заданий при смене профиля и запись основных событий в process log;
-- сквозной тест `Measurements → ScenarioService → Lua callback → UserCommand → ActionApplied`;
-- актуальные `lua_types/app.d.lua` и встроенная справка.
+## Главные ограничения
 
-Исходная точка нового этапа — коммит `12cd2be docs: document presentation and scenarios`. Перед работой на другом ПК сначала синхронизировать ветку через Git.
+Это не должен быть общий rewrite acquisition architecture.
 
-## Правила работы
+Не менять без необходимости:
 
-Один логический пункт плана — один Git-коммит. После каждого пункта выполнять:
+* real COM/RS-485 behavior;
+* Metakon driver;
+* controller/output-control semantics;
+* Lua API;
+* series semantics;
+* process recorder;
+* worker scheduling;
+* polling failure/retry logic;
+* VirtualInstrument Lua model format.
+
+Особенно не трогать рабочий путь:
+
+```text
+Metakon
+    ↓
+SerialCommandSource
+    ↓
+SerialConnection
+    ↓
+real COM
+```
+
+Правило работы:
+
+```text
+1 логический шаг = 1 commit
+```
+
+После каждого шага:
 
 ```powershell
 cargo fmt
@@ -47,214 +81,566 @@ cargo clippy --all-targets -- -D warnings
 git diff --check
 ```
 
-Перед изменениями изучать существующий путь данных и не дублировать механизмы. Сохранять совместимость существующего Lua API, если ниже явно не указано обратное. Архитектурный недостаток исправлять отдельным локальным refactor-коммитом только тогда, когда он действительно блокирует функцию.
+Перед началом:
 
-Не строить универсальный workflow framework. Предпочитать небольшие Rust enum и статическую диспетчеризацию. Lua callback остаются короткими: условия, таймеры, конкуренцию переходов и состояние выполняет Rust.
-
-## Неизменяемые safety-инварианты
-
-Критичная цепочка управления:
-
-```text
-Series
-  ↓
-Signal processing / filters
-  ↓
-ControlLoop
-  ↓
-Controller enum (PID / OnOff / Furnace)
-  ↓
-OutputControl / arbiter
-  ↓
-Instrument output
+```powershell
+git status
+git log --oneline -15
 ```
 
-- Обычная manual-запись в контролируемый параметр переводит output в `Manual`.
-- `controller:pause()` применяет `safe_output`, переводит output в `Manual`, затем ставит processing controller в `Paused`.
-- `controller:resume()` проходит через `AutomaticPending`, переводит output в `Automatic` только после успешной записи и выполняет rollback при ошибке.
-- GUI-состояние `enabled` — только UX-защита; критичные ограничения остаются в `process_control` и `output_control`.
-- Сценарий выдаёт обычные `UserCommand` и не получает обходного пути к output или приборам.
-- Не менять без отдельной причины semantics acquisition, recording, references и output arbitration.
+---
 
-## Новый план
+# Шаг 1. Изучить существующую границу AcquisitionSource
 
-### 1. Контекст срабатывания callback
+Сначала не писать код.
 
-Передавать callback одну Lua-таблицу `event`. Существующие функции без параметров остаются совместимыми: Lua игнорирует лишний аргумент.
+Проверить:
 
-Контекст должен содержать общие поля:
+* `AcquisitionSource`;
+* `CombinedSource`;
+* `SerialCommandSource`;
+* worker construction;
+* `VirtualInstrumentClient`;
+* `VirtualInstrumentServer`;
+* `DeviceEmulatorHandle`;
+* `DeviceEmulatorService`;
+* emulator configuration parsing.
+
+Сейчас `CombinedSource` уже умеет последовательно маршрутизировать:
 
 ```text
-scenario_id
-callback
-trigger              timer | absolute_time | measurement | stage | stop | error
-fired_at             Unix timestamp
+sample_series
+describe_virtual_instruments
+read_instrument
+write_instrument
+request_text
 ```
 
-Для измерения дополнительно передавать `series`, `value`, `timestamp`, описание условия и порог. Для таймера — запланированное время или относительную задержку. Контекст формируется типизированной Rust-структурой; произвольные внутренние объекты в Lua не передавать.
+между несколькими `AcquisitionSource`.
 
-Критерии:
+Использовать эту существующую архитектуру, а не создавать параллельную систему.
 
-- одинаковый формат для global и application-script callback;
-- тесты преобразования каждого вида события в Lua;
-- ошибка формирования или выполнения callback останавливает сценарий и записывается в журнал.
+Определить минимальную точку, куда можно добавить:
 
-### 2. Альтернативные переходы и тайм-ауты
+```text
+LocalVirtualInstrumentSource
+```
 
-Добавить атомарную группу ожиданий, в которой срабатывание одного варианта отменяет остальные. Предварительная форма API:
+или эквивалент.
+
+На этом шаге код не менять.
+
+---
+
+# Шаг 2. Добавить локальный источник виртуальных приборов
+
+Создать отдельный `AcquisitionSource`, отвечающий только за virtual instruments.
+
+Примерная ответственность:
+
+```text
+LocalVirtualInstrumentSource
+
+supports:
+    VirtualInstrument series
+    describe_virtual_instruments
+    VirtualInstrument read
+    VirtualInstrument write
+
+does not support:
+    raw serial text commands
+    Metakon requests
+    unrelated series
+```
+
+Для неподдерживаемых операций возвращать `Ok(None)`, как принято в `AcquisitionSource`.
+
+Не переносить virtual-instrument-specific knowledge обратно в generic worker.
+
+Commit:
+
+```text
+feat: add local virtual instrument source
+```
+
+На этом этапе источник можно тестировать отдельно, ещё не включая его в normal runtime.
+
+---
+
+# Шаг 3. Добавить in-memory duplex transport
+
+Нужен внутренний transport между virtual-instrument client и emulator server.
+
+Не пытаться создавать настоящий Windows COM-port.
+
+Сделать примерно:
+
+```text
+MemoryEndpoint A
+    ⇅
+MemoryEndpoint B
+```
+
+где:
+
+```text
+A.write → B.read
+B.write → A.read
+```
+
+Предпочтительно передавать блоки байтов, а не отдельные `u8`.
+
+Transport должен корректно поддерживать:
+
+* ordered delivery;
+* partial reads;
+* buffering;
+* timeout;
+* clean close/disconnect;
+* repeated request/response traffic.
+
+Не требуется эмулировать бессмысленные serial settings вроде parity/baud внутри memory mode.
+
+Если существующий `VirtualInstrumentClient` слишком сильно зависит от `SerialConnection`, вынести **минимальный transport interface**, нужный только virtual-instrument protocol.
+
+Например концептуально:
+
+```rust
+trait ByteTransport {
+    fn read(...);
+    fn write_all(...);
+}
+```
+
+Не пытаться абстрагировать весь serial subsystem.
+
+SerialConnection должен остаться одним implementation/adapter для real serial mode.
+
+Commit:
+
+```text
+feat: add in-memory virtual instrument transport
+```
+
+Обязательные unit tests:
+
+```text
+client → server bytes
+server → client bytes
+large message split across reads
+multiple sequential messages
+timeout
+disconnect
+```
+
+---
+
+# Шаг 4. Перевести DeviceEmulator на transport abstraction
+
+Сейчас emulator loop концептуально делает:
+
+```text
+read bytes
+    ↓
+frame decoder
+    ↓
+VirtualInstrumentMessage
+    ↓
+VirtualInstrumentServer
+    ↓
+response
+    ↓
+encode frame
+    ↓
+write bytes
+```
+
+Эту логику сохранить.
+
+Она не должна знать, является transport:
+
+```text
+COM port
+```
+
+или:
+
+```text
+memory endpoint
+```
+
+Нужно получить примерно:
+
+```text
+run_emulator(transport, model)
+```
+
+вместо жёсткой зависимости от:
+
+```text
+Box<dyn SerialPort>
+```
+
+Старый serial start path пока сохранить.
+
+То есть:
+
+```text
+DeviceEmulator
+    ├── serial transport
+    └── memory transport
+```
+
+Commit:
+
+```text
+refactor: decouple device emulator from serial port
+```
+
+Поведение serial emulator после этого commit должно остаться прежним.
+
+---
+
+# Шаг 5. Подключить LocalVirtualInstrumentSource через CombinedSource
+
+Сейчас worker получает примерно:
+
+```text
+CombinedSource
+    └── SerialCommandSource
+```
+
+Нужно для local emulator mode получить:
+
+```text
+CombinedSource
+    ├── LocalVirtualInstrumentSource
+    └── SerialCommandSource
+```
+
+Порядок важен.
+
+Local source должен первым обрабатывать virtual-instrument requests, чтобы они не уходили в `SerialCommandSource`.
+
+Metakon и обычные serial commands должны продолжать попадать в `SerialCommandSource`.
+
+То есть одновременно должно работать:
+
+```text
+local virtual furnace
+        +
+real Metakon on COM3
+```
+
+в одном приложении.
+
+Не переносить эту маршрутизацию в Lua API.
+
+Commit:
+
+```text
+feat: route local emulator through acquisition source
+```
+
+---
+
+# Шаг 6. Продумать lifecycle start/stop/restart
+
+Это критичный кусок.
+
+Текущий API:
 
 ```lua
-scenario:race({
-    {
-        when = {
-            series = "temperature",
-            above = 150.0,
-            for_seconds = 5.0,
-        },
-        callback = "switch_to_hold",
-    },
-    {
-        after = 1800.0,
-        callback = "heating_timeout",
-    },
-})
+app.start_emu()
+app.stop_emu()
 ```
 
-Выбор победителя выполняется внутри одного `ScenarioService::poll`, до отправки callback в Lua. В один момент может победить только один вариант. Старые `after`, `at` и `when` остаются самостоятельными одноразовыми заданиями.
+оставить без изменений.
 
-Критерии:
-
-- проверка конфликтных/пустых определений при регистрации;
-- детерминированное правило при одновременной готовности нескольких вариантов;
-- отменённый вариант никогда не вызывает callback позднее;
-- победитель и причина выбора попадают в журнал.
-
-### 3. Явные этапы сценария
-
-Добавить именованные stages поверх существующих событий, не создавая второго runtime. Предварительная форма API:
-
-```lua
-scenario:stage("heating", {
-    enter = "start_heating",
-    transitions = {
-        {
-            when = { series = "temperature", above = 150.0 },
-            next = "holding",
-        },
-        {
-            after = 1800.0,
-            next = "failed",
-            reason = "Heating timeout",
-        },
-    },
-})
-
-scenario:start("heating")
-```
-
-Переход должен иметь порядок:
+Memory mode должен корректно поддерживать:
 
 ```text
-выбран переход
-  → записана причина
-  → выполнен enter callback нового этапа
-  → все созданные им actions получили Applied
-  → активированы ожидания нового этапа
+start
+stop
+start again
+profile reload
+application shutdown
 ```
 
-При `Failed` ожидания нового этапа не активируются. Повторное имя этапа, неизвестный `next`, недостижимая стартовая стадия и повторный `start` должны давать понятную ошибку.
+После `app.stop_emu()` virtual-instrument access должен выдавать понятную ошибку, а не зависать.
 
-Сохранить низкоуровневые `after/at/when` для простых сценариев и обратной совместимости.
+После повторного `app.start_emu()` новый Lua model должен начинать с нового состояния.
 
-### 4. Расширенные измерительные условия
+Не оставлять background thread или channel, который пережил старый emulator instance случайно.
 
-Последовательно добавить декларативные условия:
-
-- `inside = { min, max }` и `outside = { min, max }`;
-- стабильность внутри допуска: `stable = { target, tolerance }` вместе с `for_seconds`;
-- скорость изменения: `rate_above` и `rate_below` с явно заданным окном;
-- отсутствие свежих данных: `stale_for_seconds`;
-- композиция `all` и `any` для небольших наборов условий.
-
-Правила:
-
-- не вызывать произвольный Lua predicate на каждом измерении;
-- использовать timestamp измерений для скорости и свежести, монотонные часы — для внутренних выдержек;
-- ограничить объём хранимой истории минимальным окном, необходимым условию;
-- валидировать несовместимые поля и не принимать `NaN`/infinity;
-- каждое условие покрыть тестами границ, гистерезиса и нерегулярных интервалов измерений.
-
-### 5. Штатная остановка и обработка ошибки
-
-Развести состояния `cancelled`, `completed` и `failed`. Добавить явные операции и однократные обработчики:
-
-```lua
-scenario:on_stop("make_outputs_safe")
-scenario:on_error("make_outputs_safe")
-
-scenario:complete("Cycle finished")
-scenario:stop("Operator request")
-```
-
-Обработчики используют только существующий Lua API и обычные `UserCommand`. Они не обходят safety-логику. Ошибка внутри error-handler записывается, но не запускает его повторно. `cancel()` сохранить как совместимый немедленный способ отменить ожидающие задания; точно описать его отличие от `stop()`.
-
-Критерии:
-
-- cleanup callback запускается не более одного раза;
-- исходная ошибка не теряется при ошибке cleanup;
-- остановленный сценарий не принимает поздние результаты старых callback/actions как новые переходы;
-- причина и финальный статус записываются в process log и SQLite.
-
-### 6. Наблюдаемое состояние и read-only GUI
-
-Сформировать независимый от egui snapshot состояния сценариев:
+Добавить tests для:
 
 ```text
-id
-status              running | completed | stopped | failed
-current_stage
-started_at
-stage_started_at
-pending_trigger summaries
-last_transition
-last_error
+start → read → stop
+start → stop → start → read
+drop runtime while emulator runs
+profile reload while emulator runs
 ```
 
-Показать snapshot в отдельном read-only окне или секции GUI. Интерфейс ничего не исполняет и не является источником истины. Закрытие окна не влияет на сценарии.
+Этот шаг можно включить в предыдущий commit, если lifecycle естественно является частью integration. Не создавать искусственный commit ради количества.
 
-Критерии:
+---
 
-- GUI получает данные через событие/модель, а не блокирует `ScenarioService` mutex-ом;
-- время и статусы понятны на русском и английском;
-- пустое состояние и удаление сценария корректно отображаются;
-- тесты модели не требуют запуска native window.
+# Шаг 7. Убрать обязательный emulator COM port из configuration
 
-### 7. Детерминированный многоэтапный сквозной тест
+Сейчас emulator configuration требует server-side virtual COM port.
 
-Добавить сценарий эмулированного нагрева минимум с этапами `idle → heating → holding → completed` и отдельными ветками timeout/error.
+Нужно сделать memory mode основным.
+
+Желаемый пользовательский вариант:
+
+```lua
+emulator = {
+    script = "emulator_scripts/furnace_plant.lua",
+}
+```
+
+или, если нужен явный transport:
+
+```lua
+emulator = {
+    transport = "memory",
+    script = "emulator_scripts/furnace_plant.lua",
+}
+```
+
+Memory желательно сделать default.
+
+Старый integration mode можно сохранить:
+
+```lua
+emulator = {
+    transport = "serial",
+    connection = "primary",
+    port = "COM4",
+    script = "emulator_scripts/furnace_plant.lua",
+}
+```
+
+Не сохранять обязательное поле `port` в memory mode.
+
+Также проверить вопрос logical connection.
+
+Emulator-only profile не должен требовать фиктивный системный COM-port только ради создания worker.
+
+Перед изменением архитектуры connection definitions посмотреть, нельзя ли использовать уже существующую возможность `SerialConfigStore` жить без открытого порта и создать logical worker минимальным изменением.
+
+Не вводить большой новый `Connection` framework, если задача решается меньшим изменением.
+
+Commit:
+
+```text
+feat: make in-memory emulator transport the default
+```
+
+---
+
+# Шаг 8. Emulator-only profile без COM
+
+Добавить end-to-end test/profile, который запускает virtual furnace без единого virtual COM port.
+
+Например смысл профиля:
+
+```lua
+return {
+    emulator = {
+        script = "emulator_scripts/furnace_plant.lua",
+    },
+
+    setup = function()
+        app.start_emu()
+
+        local furnace =
+            app.virtual_instrument({ id = 1 })
+
+        furnace:add("temperature", {
+            name = "temperature",
+            interval = 0.1,
+        })
+
+        app.start()
+    end,
+}
+```
 
 Тест должен доказать:
 
-- передачу контекста измерения в Lua;
-- атомарную победу measurement над timeout и обратный случай;
-- ожидание `ActionApplied` перед входом в следующий этап;
-- остановку при `ActionFailed`;
-- однократный cleanup;
-- правильный финальный snapshot;
-- достаточную запись переходов для восстановления хода процесса по журналу.
+```text
+profile loads
+emulator starts
+instrument discovery works
+read works
+write works
+periodic acquisition works
+controller output can write heater_power
+shutdown is clean
+```
 
-Если тесты времени становятся нестабильными, добавить небольшой внедряемый источник времени только внутри scenario subsystem. Не вводить глобальную абстракцию времени для всего приложения.
+В тесте не должно быть:
 
-### 8. Финализация API и документации
+```text
+COM255
+COM3
+COM4
+com0com
+```
 
-После стабилизации поведения обновить:
+Commit при необходимости:
 
-- `lua_types/app.d.lua`;
-- встроенную справку English/Russian;
-- примеры startup/application scripts;
-- `PLAN.md` с фактическим итогом и commit IDs.
+```text
+test: cover emulator without serial ports
+```
 
-Финально выполнить:
+Если тест естественно входит в feature commit, отдельный commit не нужен.
+
+---
+
+# Шаг 9. Сохранить serial emulator как integration path
+
+Не удалять текущий serial emulator сразу.
+
+Он полезен для проверки:
+
+```text
+framing
+serial I/O
+VirtualInstrumentClient
+VirtualInstrumentServer
+real Windows virtual COM behavior
+```
+
+Но он больше не должен быть нужен обычному пользователю.
+
+Можно оставить:
+
+```text
+src/bin/device_emulator.rs
+```
+
+как standalone integration/debug tool.
+
+Итог:
+
+```text
+normal development:
+    memory emulator
+
+serial protocol integration test:
+    virtual COM pair
+
+real laboratory:
+    physical COM / RS-485
+```
+
+---
+
+# Шаг 10. Обновить profiles/help
+
+Перевести demo profiles:
+
+```text
+furnace
+PID thermal
+on/off thermal
+virtual sine
+```
+
+на memory emulator mode.
+
+Удалить из обычной документации требование заранее создавать virtual COM pair.
+
+Serial emulator описать отдельно как advanced/testing mode.
+
+Не менять Lua device-model format:
+
+```text
+instruments
+read()
+write()
+```
+
+остаётся тем же.
+
+Commit:
+
+```text
+docs: update emulator transport configuration
+```
+
+---
+
+# Финальная архитектура
+
+Цель:
+
+```text
+                         Acquisition worker
+                                │
+                                ▼
+                         CombinedSource
+                         /            \
+                        /              \
+       LocalVirtualInstrumentSource   SerialCommandSource
+                    │                       │
+                    ▼                       ▼
+             memory transport          SerialConnection
+                    │                       │
+                    ▼                       ▼
+        VirtualInstrumentServer          real COM
+                    │                       │
+                    ▼                       ▼
+               Lua model                 Metakon
+```
+
+При этом верхние subsystems не должны знать, откуда пришёл прибор:
+
+```text
+Lua application API
+Series
+Filters
+Controllers
+OutputControl
+Recorder
+Plots
+```
+
+для них local virtual instrument должен выглядеть так же, как сейчас virtual instrument через serial transport.
+
+---
+
+# Что не делать
+
+Не:
+
+```text
+писать Windows virtual COM driver
+создавать kernel device
+тащить serialport::SerialPort abstraction во все subsystems
+делать generic transport framework для будущих TCP/USB/Bluetooth "на всякий случай"
+переписывать worker
+переписывать Lua API
+удалять serial emulator до появления memory-mode tests
+```
+
+Решаем одну конкретную задачу:
+
+```text
+virtual instrument emulator
+не должен требовать внешний virtual COM driver
+```
+
+и используем уже существующие architectural seams.
+
+---
+
+# Финальная проверка
+
+После завершения:
 
 ```powershell
 cargo fmt
@@ -262,20 +648,28 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 git diff --check
 cargo build --release
-cargo test --release
 ```
 
-Ручную проверку с реальными приборами не проводить до появления доступа. Для этого этапа достаточны эмулятор, синтетические события и автоматические тесты.
+Ручная проверка:
 
-## Не входит в этот этап
+```text
+furnace demo without virtual COM
+PID demo
+on/off demo
+emulator stop/start
+profile reload
+manual read/write
+periodic acquisition
+controller writes
+process recording
+clean shutdown
+real COM/Metakon smoke test
+```
 
-- автоматическое возобновление сценария после перезапуска приложения;
-- запись runtime checkpoint для опасного автоматического восстановления;
-- визуальный редактор сценариев;
-- произвольные Lua predicates на каждом измерении;
-- параллельное выполнение callback одного сценария;
-- автоматические повторы неизвестно безопасных действий;
-- Modbus RTU и интеграция с реальными приборами;
-- общий workflow engine, корутины и `sleep` в Lua worker.
+Основной критерий готовности:
 
-После завершения этапа сначала оценить удобство API на примерах, затем выбирать следующую подсистему проекта.
+```text
+чистая Windows-машина без virtual COM software
+должна запускать все emulator demos
+сразу после установки приложения.
+```

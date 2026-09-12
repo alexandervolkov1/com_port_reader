@@ -7,6 +7,7 @@ use crate::{
 };
 
 mod combined_source;
+mod local_virtual_instrument_source;
 mod serial_command_source;
 
 pub use combined_source::CombinedSource;
