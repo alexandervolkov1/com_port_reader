@@ -68,16 +68,42 @@ impl DeviceEmulatorHandle {
 
         port.clear(ClearBuffer::All)?;
 
+        Self::start_transport(
+            port,
+            script_path,
+            format!("device-emulator-{}", config.port_name),
+        )
+    }
+
+    pub fn start_with_transport<T>(
+        transport: T,
+        script_path: PathBuf,
+    ) -> Result<Self, DeviceEmulatorHandleError>
+    where
+        T: Read + std::io::Write + Send + 'static,
+    {
+        Self::start_transport(transport, script_path, "device-emulator-local".to_owned())
+    }
+
+    fn start_transport<T>(
+        transport: T,
+        script_path: PathBuf,
+        thread_name: String,
+    ) -> Result<Self, DeviceEmulatorHandleError>
+    where
+        T: Read + std::io::Write + Send + 'static,
+    {
         let stop_requested = Arc::new(AtomicBool::new(false));
-
         let thread_stop_requested = Arc::clone(&stop_requested);
-
-        let thread_name = format!("device-emulator-{}", config.port_name,);
-
         let (startup_sender, startup_receiver) = mpsc::sync_channel(1);
 
         let thread = thread::Builder::new().name(thread_name).spawn(move || {
-            run_emulator(port, thread_stop_requested, script_path, startup_sender)
+            run_emulator(
+                transport,
+                thread_stop_requested,
+                script_path,
+                startup_sender,
+            )
         })?;
 
         match startup_receiver.recv() {
@@ -148,7 +174,7 @@ fn run_emulator<T>(
     startup_sender: SyncSender<Result<(), DeviceEmulatorHandleError>>,
 ) -> Result<(), DeviceEmulatorHandleError>
 where
-    T: Read + std::io::Write,
+    T: Read + std::io::Write + Send + 'static,
 {
     let model = match create_device_model(script_path) {
         Ok(model) => model,
@@ -293,5 +319,47 @@ impl From<&str> for DeviceEmulatorHandleError {
         Self {
             message: message.to_owned(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::DeviceEmulatorHandle;
+    use crate::protocol::virtual_instrument::{MemoryEndpoint, VirtualInstrumentClient};
+
+    fn model_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("emulator_scripts")
+            .join("sine_generator.lua")
+    }
+
+    #[test]
+    fn local_transport_supports_stop_and_restart() {
+        let (mut client, server_transport) = MemoryEndpoint::new();
+        let mut handle = DeviceEmulatorHandle::start_with_transport(server_transport, model_path())
+            .expect("local emulator must start");
+
+        let instruments = VirtualInstrumentClient::new(&mut client)
+            .describe()
+            .expect("local emulator must answer discovery");
+        assert!(!instruments.is_empty());
+        assert!(handle.is_running());
+
+        handle.stop().expect("local emulator must stop cleanly");
+        assert!(!handle.is_running());
+
+        let (mut client, server_transport) = MemoryEndpoint::new();
+        let mut restarted =
+            DeviceEmulatorHandle::start_with_transport(server_transport, model_path())
+                .expect("local emulator must restart");
+        let instruments = VirtualInstrumentClient::new(&mut client)
+            .describe()
+            .expect("restarted emulator must answer discovery");
+        assert!(!instruments.is_empty());
+        restarted
+            .stop()
+            .expect("restarted emulator must stop cleanly");
     }
 }
