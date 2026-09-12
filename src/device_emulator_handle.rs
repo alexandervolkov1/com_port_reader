@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serialport::{ClearBuffer, DataBits, FlowControl, Parity, SerialPort, StopBits};
+use serialport::{ClearBuffer, DataBits, FlowControl, Parity, StopBits};
 
 use crate::{
     lua_virtual_instrument_model::LuaVirtualInstrumentModel,
@@ -141,12 +141,15 @@ impl Drop for DeviceEmulatorHandle {
     }
 }
 
-fn run_emulator(
-    mut port: Box<dyn SerialPort>,
+fn run_emulator<T>(
+    mut transport: T,
     stop_requested: Arc<AtomicBool>,
     script_path: PathBuf,
     startup_sender: SyncSender<Result<(), DeviceEmulatorHandleError>>,
-) -> Result<(), DeviceEmulatorHandleError> {
+) -> Result<(), DeviceEmulatorHandleError>
+where
+    T: Read + std::io::Write,
+{
     let model = match create_device_model(script_path) {
         Ok(model) => model,
 
@@ -170,7 +173,7 @@ fn run_emulator(
     let mut read_buffer = [0_u8; 256];
 
     while !stop_requested.load(Ordering::Acquire) {
-        match port.read(&mut read_buffer) {
+        match transport.read(&mut read_buffer) {
             Ok(0) => {}
 
             Ok(bytes_read) => {
@@ -183,7 +186,7 @@ fn run_emulator(
 
                     let response_frame = response.encode_frame()?;
 
-                    write_frame(port.as_mut(), &response_frame)?;
+                    write_frame(&mut transport, &response_frame)?;
                 }
             }
 
