@@ -1581,6 +1581,167 @@ mod tests {
     }
 
     #[test]
+    fn scenario_process_completes_and_records_timeout_and_error_paths() {
+        let directory = runtime_test_directory("scenario_process_paths");
+        let source = r#"
+            local definition = {
+                connections = { primary = { port = "COM247" } },
+            }
+
+            local normal
+            local timeout
+            local failed
+
+            function normal_cleanup(event)
+                assert(event.trigger == "stop")
+                assert(event.status == "completed")
+                assert(event.reason == "Cycle finished")
+                app.add_serial("normal cleanup", { name = "normal_cleanup_marker", interval = 1.0 })
+            end
+
+            function timeout_cleanup(event)
+                assert(event.trigger == "stop")
+                assert(event.status == "stopped")
+                app.add_serial("timeout cleanup", { name = "timeout_cleanup_marker", interval = 1.0 })
+            end
+
+            function error_cleanup(event)
+                assert(event.trigger == "error")
+                assert(event.status == "failed")
+                assert(string.find(event.error, "intentional process failure") ~= nil)
+                app.add_serial("error cleanup", { name = "error_cleanup_marker", interval = 1.0 })
+            end
+
+            function enter_idle(event)
+                assert(event.stage == "idle")
+            end
+
+            function enter_heating(event)
+                assert(event.stage == "heating")
+                app.add_serial("heating", { name = "heating_marker", interval = 1.0 })
+            end
+
+            function enter_holding(event)
+                assert(event.stage == "holding")
+                app.add_serial("holding", { name = "holding_marker", interval = 1.0 })
+                normal:complete("Cycle finished")
+            end
+
+            function timeout_process()
+                timeout:stop("Heating timeout")
+            end
+
+            function failed_process()
+                error("intentional process failure")
+            end
+
+            function definition.setup()
+                app.add_serial("temperature", { name = "temperature", interval = 1.0 })
+
+                normal = app.scenario({ id = "normal_cycle" })
+                normal:on_stop("normal_cleanup")
+                normal:stage("idle", {
+                    enter = "enter_idle",
+                    transitions = {{ after = 0.01, next = "heating" }},
+                })
+                normal:stage("heating", {
+                    enter = "enter_heating",
+                    transitions = {{
+                        when = { series = "temperature", above = 150.0 },
+                        next = "holding",
+                    }},
+                })
+                normal:stage("holding", { enter = "enter_holding" })
+                normal:start("idle")
+
+                timeout = app.scenario({ id = "timeout_cycle" })
+                timeout:on_stop("timeout_cleanup")
+                timeout:after(0.02, "timeout_process")
+
+                failed = app.scenario({ id = "error_cycle" })
+                failed:on_error("error_cleanup")
+                failed:after(0.02, "failed_process")
+            end
+
+            return definition
+        "#;
+        let profile = write_test_profile(&directory, "startup.lua", source);
+        let (mut runtime, mut log_model, _lua_events) = build_test_runtime(&profile);
+
+        wait_for_series(&mut runtime, "temperature");
+        wait_for_series(&mut runtime, "heating_marker");
+
+        let metadata = runtime.series().metadata();
+        let temperature = metadata
+            .iter()
+            .find(|series| series.name == "temperature")
+            .unwrap();
+        runtime.process_recorder.record_measurements(
+            temperature.connection_id,
+            &[SeriesSample::new(temperature.id, Sample::new(1.0, 151.0))],
+            &metadata,
+        );
+
+        wait_for_series(&mut runtime, "holding_marker");
+        wait_for_series(&mut runtime, "normal_cleanup_marker");
+        wait_for_series(&mut runtime, "timeout_cleanup_marker");
+        wait_for_series(&mut runtime, "error_cleanup_marker");
+        runtime.poll();
+        log_model.poll();
+
+        let snapshots = runtime.scenario_snapshots();
+        let normal = snapshots
+            .iter()
+            .find(|snapshot| snapshot.id == "normal_cycle")
+            .unwrap();
+        assert_eq!(normal.status, crate::scenario::ScenarioStatus::Completed);
+        assert_eq!(normal.current_stage.as_deref(), Some("holding"));
+        assert_eq!(
+            normal.last_transition.as_deref(),
+            Some("heating -> holding: measurement 'temperature'=151 satisfied condition 'above'")
+        );
+
+        let timeout = snapshots
+            .iter()
+            .find(|snapshot| snapshot.id == "timeout_cycle")
+            .unwrap();
+        assert_eq!(timeout.status, crate::scenario::ScenarioStatus::Stopped);
+
+        let failed = snapshots
+            .iter()
+            .find(|snapshot| snapshot.id == "error_cycle")
+            .unwrap();
+        assert_eq!(failed.status, crate::scenario::ScenarioStatus::Failed);
+        assert!(
+            failed
+                .last_error
+                .as_deref()
+                .unwrap()
+                .contains("intentional process failure")
+        );
+
+        let logs = log_model
+            .entries()
+            .iter()
+            .map(|entry| entry.text())
+            .collect::<Vec<_>>();
+        assert!(logs.iter().any(|text| text.contains(
+            "Scenario 'normal_cycle' finalized: status=completed; reason=Cycle finished."
+        )));
+        assert!(logs.iter().any(|text| text.contains(
+            "Scenario 'timeout_cycle' finalized: status=stopped; reason=Heating timeout."
+        )));
+        assert!(
+            logs.iter()
+                .any(|text| text.contains("Scenario 'error_cycle' finalized: status=failed;"))
+        );
+
+        drop(runtime);
+        drop(log_model);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn rebuilds_runtime_from_another_profile() {
         let directory = runtime_test_directory("profile_rebuild");
 
