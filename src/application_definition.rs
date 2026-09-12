@@ -18,7 +18,7 @@ const MIN_PLOT_POINTS_PER_SERIES: usize = 4;
 const MAX_PLOT_POINTS_PER_SERIES: usize = 100_000;
 
 #[derive(Clone, Debug, PartialEq)]
-/// Validated configuration used to construct an [`crate::application_runtime::ApplicationRuntime`].
+/// Validated configuration used to construct an application runtime.
 ///
 /// A definition is assembled before it replaces a live runtime, so invalid profiles cannot leave
 /// a partially reconfigured application behind.
