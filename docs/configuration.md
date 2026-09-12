@@ -6,7 +6,7 @@ A profile is a Lua file that returns a table. `startup.lua` is used by default; 
 return {
   application = { fps = 20, poll_interval = 1.0, plot_window = 3600, max_plot_points_per_series = 1000 },
   emulator = { transport = "memory", script = "emulator_scripts/sine_generator.lua" },
-  scripts = { "lua_scripts/demo_virtual_sine.lua" },
+  scripts = { "lua_scripts/sine_braid_demo.lua" },
 }
 ```
 
@@ -52,7 +52,7 @@ connections = {
 `script` is required. `transport` is `memory` by default when no serial fields are supplied.
 
 ```lua
-emulator = { transport = "memory", script = "../emulator_scripts/pid_thermal_plant.lua" }
+emulator = { transport = "memory", script = "../emulator_scripts/furnace_plant.lua" }
 ```
 
 For serial integration, set `transport = "serial"`, `connection` to a configured connection name, and `port` to the emulator endpoint. The emulator port must not be used by any connection.

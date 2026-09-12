@@ -11,7 +11,7 @@ local s = {
 
     max_power = 2500.0,
     heater_lag = 90.0,
-    thermal_capacity = 12000.0,
+    thermal_capacity = 4000.0,
     linear_loss = 0.35,
     radiation_loss_1000c = 1200.0,
 

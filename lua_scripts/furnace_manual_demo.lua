@@ -17,7 +17,7 @@ local settings = {
 
 local model = {
     ambient_temperature = 20, max_power = 2500, heater_lag = 90,
-    thermal_capacity = 12000, linear_loss = 0.35,
+    thermal_capacity = 4000, linear_loss = 0.35,
     radiation_loss_1000c = 1200, noise_amplitude = 0.2,
 }
 

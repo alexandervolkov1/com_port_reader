@@ -12,7 +12,7 @@ local definition = {
     },
 
     scripts = {
-        "lua_scripts/demo_virtual_sine.lua",
+        "lua_scripts/sine_braid_demo.lua",
     },
 }
 

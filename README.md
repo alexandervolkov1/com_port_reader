@@ -49,12 +49,12 @@ From the repository root, launch the supplied memory-emulator profile:
 cargo run --release
 ```
 
-`startup.lua` selects `emulator_scripts/sine_generator.lua` and `lua_scripts/demo_virtual_sine.lua`. Use the demo panel to start the emulator and acquisition. No virtual COM configuration is required.
+`startup.lua` selects `emulator_scripts/sine_generator.lua` and `lua_scripts/sine_braid_demo.lua`. It starts an eight-wave memory-emulator braid with independent configurable exponential filters. No virtual COM configuration is required.
 
 To launch a specific profile, pass its path explicitly:
 
 ```powershell
-cargo run --release -- --config profiles/pid_thermal.lua
+cargo run --release -- --config profiles/furnace_manual.lua
 ```
 
 ## Built-in emulator

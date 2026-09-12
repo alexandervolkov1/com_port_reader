@@ -44,7 +44,7 @@ source:add("value", { name = "virtual_value", interval = 0.5 })
 app.start()
 ```
 
-`app.virtual_instrument` accepts optional `connection` and `id` (default `1`). The returned handle supports `parameters()`, `read(key)`, `write(key, value)`, `add(key, options)`, and controller constructors. Consult `emulator_scripts/sine_generator.lua` for a minimal model and `emulator_scripts/pid_thermal_plant.lua` or `furnace_plant.lua` for stateful plants.
+`app.virtual_instrument` accepts optional `connection` and `id` (default `1`). The returned handle supports `parameters()`, `read(key)`, `write(key, value)`, `add(key, options)`, and controller constructors. Consult `emulator_scripts/sine_generator.lua` for the eight-generator model and `furnace_plant.lua` for a stateful thermal plant.
 
 ## Lifecycle and transport
 

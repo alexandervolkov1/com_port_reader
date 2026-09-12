@@ -37,12 +37,15 @@ local function create(kind, options)
         return value
     end
     function controller:diagnostics()
-        return self.kind == "Furnace" and { "output", "feed_forward", "predicted_measurement", "measurement_rate" } or { "output", "setpoint" }
+        return self.kind == "Furnace"
+            and { "output", "feed_forward", "predicted_measurement", "measurement_rate" }
+            or { "output", "setpoint" }
     end
     function controller:add(key) series[self.options.name .. "_" .. key] = true end
     function controller:reset_integral() self.integral_reset = true end
     return controller
 end
+
 function plant:pid(_, options) return create("PID", options) end
 function plant:furnace(_, options) return create("Furnace", options) end
 

@@ -235,11 +235,9 @@ fn furnace_diagnostics_reach_processing_series() {
 #[test]
 fn furnace_demo_switches_modes_and_handles_failures() {
     let lua = Lua::new();
-    lua.load(include_str!(
-        "../../lua_scripts/tests/furnace_manual_demo.lua"
-    ))
-    .exec()
-    .unwrap();
+    lua.load(include_str!("furnace_demo_test.lua"))
+        .exec()
+        .unwrap();
     let app: Table = lua.globals().get("app").unwrap();
     let mock_register: mlua::Function = app.get("register_script").unwrap();
     let (events, _event_receiver) = unbounded();

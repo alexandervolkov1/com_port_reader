@@ -8,16 +8,16 @@ local definition = {
 
     emulator = {
         transport = "memory",
-        script = "../emulator_scripts/pid_thermal_plant.lua",
+        script = "../emulator_scripts/sine_generator.lua",
     },
 
     scripts = {
-        "../lua_scripts/on_off_thermal_demo.lua",
+        "../lua_scripts/sine_braid_demo.lua",
     },
 }
 
 function definition.setup()
-    app.log("Thermal on/off test profile initialized.")
+    app.log("Eight-wave sine braid initialized.")
 end
 
 return definition
