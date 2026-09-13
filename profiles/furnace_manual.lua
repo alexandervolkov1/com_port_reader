@@ -1,4 +1,10 @@
 local definition = {
+    plot_panes = {
+        { id = "temperature", title = "Temperature / target, °C", weight = 2 },
+        { id = "command", title = "Heater command / controller terms, %" },
+        { id = "watts", title = "Delivered heating power, W" },
+        { id = "rate", title = "Temperature change, °C/s" },
+    },
     application = {
         fps = 20,
         poll_interval = 0.5,

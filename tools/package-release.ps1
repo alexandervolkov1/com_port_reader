@@ -4,177 +4,106 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-
-$projectRoot = Split-Path -Parent $PSScriptRoot
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $distDirectory = Join-Path $projectRoot "dist"
-
 Set-Location $projectRoot
 
-if ([string]::IsNullOrWhiteSpace($Version)) {
-    $metadata = & cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "cargo metadata failed"
-    }
-
-    $Version = $metadata.packages |
-        Select-Object -ExpandProperty version
-
-    if ([string]::IsNullOrWhiteSpace($Version)) {
-        throw "Could not determine the package version from Cargo.toml"
-    }
+# This bundle contains native MSVC x64 executables, not cross-platform binaries.
+$compiler = & rustc -vV
+if ($LASTEXITCODE -ne 0 -or $compiler -notcontains "host: x86_64-pc-windows-msvc") {
+    throw "Packaging requires the x86_64-pc-windows-msvc Rust toolchain."
 }
 
-if ($Version -notmatch "^[0-9A-Za-z._-]+$") {
-    throw "Version contains invalid characters: $Version"
+$metadataJson = & cargo metadata --locked --no-deps --format-version 1
+if ($LASTEXITCODE -ne 0) { throw "cargo metadata failed" }
+$metadata = $metadataJson | ConvertFrom-Json
+$package = @($metadata.packages | Where-Object name -eq "com_port_reader")
+if ($package.Count -ne 1) { throw "Could not identify the com_port_reader package." }
+if ([string]::IsNullOrWhiteSpace($Version)) { $Version = $package[0].version }
+if ($Version -ne $package[0].version) {
+    throw "Version must match Cargo.toml ($($package[0].version)); update Cargo.toml and Cargo.lock first."
 }
-
-$packageName =
-    "com_port_reader-$Version-windows-x86_64"
-
-$packageDirectory =
-    Join-Path $distDirectory $packageName
-
-$archivePath =
-    Join-Path $distDirectory "$packageName.zip"
+if ($Version -notmatch "^[0-9A-Za-z._-]+$") { throw "Invalid package version: $Version" }
 
 if (-not $SkipChecks) {
-    & cargo fmt --check
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "cargo fmt --check failed"
-    }
-
-    & cargo test
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "cargo test failed"
-    }
-
-    & cargo test --doc
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "cargo test --doc failed"
-    }
-
-    & cargo clippy --all-targets -- -D warnings
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "cargo clippy failed"
-    }
+    & cargo fmt --all -- --check
+    if ($LASTEXITCODE -ne 0) { throw "cargo fmt failed" }
+    & cargo test --locked
+    if ($LASTEXITCODE -ne 0) { throw "cargo test failed" }
+    & cargo clippy --locked --all-targets -- -D warnings
+    if ($LASTEXITCODE -ne 0) { throw "cargo clippy failed" }
 }
 
-& cargo build `
-    --release `
-    --bins
-
-if ($LASTEXITCODE -ne 0) {
-    throw "cargo build failed"
-}
+& cargo build --locked --release --bins
+if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 
 $requiredPaths = @(
     "target\release\com_port_reader.exe",
     "target\release\device_emulator.exe",
-    "startup.lua",
-    "lua_scripts",
-    "emulator_scripts",
-    "lua_types",
-    "profiles",
-    "docs"
+    "startup.lua", "README.md", "CHANGELOG.md",
+    "lua_scripts", "emulator_scripts", "lua_types", "profiles", "docs"
 )
-
 foreach ($relativePath in $requiredPaths) {
-    $sourcePath =
-        Join-Path $projectRoot $relativePath
-
-    if (-not (Test-Path $sourcePath)) {
+    $sourcePath = Join-Path $projectRoot $relativePath
+    if (-not (Test-Path -LiteralPath $sourcePath)) {
         throw "Required release file is missing: $sourcePath"
     }
 }
 
-New-Item `
-    -ItemType Directory `
-    -Path $distDirectory `
-    -Force |
-    Out-Null
-
-if (Test-Path $packageDirectory) {
-    Remove-Item `
-        -Path $packageDirectory `
-        -Recurse `
-        -Force
-}
-
-if (Test-Path $archivePath) {
-    Remove-Item `
-        -Path $archivePath `
-        -Force
-}
-
-New-Item `
-    -ItemType Directory `
-    -Path $packageDirectory |
-    Out-Null
-
-Copy-Item `
-    (Join-Path `
-        $projectRoot `
-        "target\release\com_port_reader.exe") `
-    $packageDirectory
-
-Copy-Item `
-    (Join-Path `
-        $projectRoot `
-        "target\release\device_emulator.exe") `
-    $packageDirectory
-
-Copy-Item `
-    (Join-Path $projectRoot "startup.lua") `
-    $packageDirectory
-
-Copy-Item `
-    (Join-Path $projectRoot "lua_scripts") `
-    $packageDirectory `
-    -Recurse
-
-Copy-Item `
-    (Join-Path $projectRoot "docs") `
-    $packageDirectory `
-    -Recurse
-
-Copy-Item `
-    (Join-Path $projectRoot "emulator_scripts") `
-    $packageDirectory `
-    -Recurse
-
-Copy-Item `
-    (Join-Path $projectRoot "lua_types") `
-    $packageDirectory `
-    -Recurse
-
-Copy-Item `
-    (Join-Path $projectRoot "profiles") `
-    $packageDirectory `
-    -Recurse
-
-foreach ($optionalFile in @(
-    "README.md",
-    "LICENSE"
-)) {
-    $sourcePath =
-        Join-Path $projectRoot $optionalFile
-
-    if (Test-Path $sourcePath) {
-        Copy-Item `
-            $sourcePath `
-            $packageDirectory
+New-Item -ItemType Directory -Path $distDirectory -Force | Out-Null
+$distDirectory = (Resolve-Path -LiteralPath $distDirectory).Path
+function Assert-DistChild([string]$Path) {
+    $absolute = [IO.Path]::GetFullPath($Path)
+    if (-not [string]::Equals([IO.Path]::GetDirectoryName($absolute), $distDirectory,
+            [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to modify a path outside the distribution directory: $absolute"
     }
 }
 
-Compress-Archive `
-    -Path $packageDirectory `
-    -DestinationPath $archivePath
+$packageName = "com_port_reader-$Version-windows-x86_64"
+$packageDirectory = Join-Path $distDirectory $packageName
+$archivePath = Join-Path $distDirectory "$packageName.zip"
+$checksumPath = "$archivePath.sha256"
+$stagingDirectory = Join-Path $distDirectory (".staging-" + [guid]::NewGuid().ToString("N"))
+Assert-DistChild $stagingDirectory
+New-Item -ItemType Directory -Path $stagingDirectory | Out-Null
+$stagedPackage = Join-Path $stagingDirectory $packageName
+New-Item -ItemType Directory -Path $stagedPackage | Out-Null
 
-Write-Host ""
-Write-Host "Release package created:"
-Write-Host $archivePath
+# Copy only shipped resources, never previous recordings, logs or remembered profiles.
+foreach ($relativePath in $requiredPaths) {
+    Copy-Item -LiteralPath (Join-Path $projectRoot $relativePath) -Destination $stagedPackage -Recurse
+}
+if (Test-Path -LiteralPath (Join-Path $projectRoot "LICENSE")) {
+    Copy-Item -LiteralPath (Join-Path $projectRoot "LICENSE") -Destination $stagedPackage
+}
+
+$stagedArchive = Join-Path $stagingDirectory "$packageName.zip"
+Compress-Archive -LiteralPath $stagedPackage -DestinationPath $stagedArchive
+$checksum = (Get-FileHash -LiteralPath $stagedArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+[IO.File]::WriteAllText("$stagedArchive.sha256", "$checksum  $packageName.zip" + [Environment]::NewLine,
+    [Text.Encoding]::ASCII)
+
+# Preserve the old package, including any user measurements inside it.
+$previousOutputs = @($packageDirectory, $archivePath, $checksumPath)
+foreach ($output in $previousOutputs) { Assert-DistChild $output }
+$existingOutputs = @($previousOutputs | Where-Object { Test-Path -LiteralPath $_ })
+if ($existingOutputs.Count -gt 0) {
+    $backupDirectory = Join-Path $distDirectory (".previous-" + [guid]::NewGuid().ToString("N"))
+    Assert-DistChild $backupDirectory
+    New-Item -ItemType Directory -Path $backupDirectory | Out-Null
+    foreach ($output in $existingOutputs) {
+        Move-Item -LiteralPath $output -Destination $backupDirectory
+    }
+    Write-Host "Previous release files preserved in: $backupDirectory"
+}
+Move-Item -LiteralPath $stagedPackage -Destination $packageDirectory
+Move-Item -LiteralPath $stagedArchive -Destination $archivePath
+Move-Item -LiteralPath "$stagedArchive.sha256" -Destination $checksumPath
+# This is the freshly created, now empty staging directory; no recursive deletion.
+Assert-DistChild $stagingDirectory
+Remove-Item -LiteralPath $stagingDirectory
+
+Write-Host "Release package: $archivePath"
+Write-Host "SHA-256: $checksum"
+Write-Host "Upload the ZIP and its .sha256 file. Packaging does not publish or create a Git tag."

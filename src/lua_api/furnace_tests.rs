@@ -240,8 +240,19 @@ fn furnace_demo_switches_modes_and_handles_failures() {
         .unwrap();
     let app: Table = lua.globals().get("app").unwrap();
     let mock_register: mlua::Function = app.get("register_script").unwrap();
+    let mock_enabled: mlua::Function = app.get("set_control_enabled").unwrap();
     let (events, _event_receiver) = unbounded();
     crate::lua_application_script::install(&lua, &app, events).unwrap();
+    let real_enabled: mlua::Function = app.get("set_control_enabled").unwrap();
+    app.set(
+        "set_control_enabled",
+        lua.create_function(move |_, args: mlua::MultiValue| {
+            real_enabled.call::<()>(args.clone())?;
+            mock_enabled.call::<()>(args)
+        })
+        .unwrap(),
+    )
+    .unwrap();
     let real_register: mlua::Function = app.get("register_script").unwrap();
     app.set(
         "register_script",
@@ -256,4 +267,16 @@ fn furnace_demo_switches_modes_and_handles_failures() {
         .exec()
         .unwrap();
     lua.load("test_furnace_demo()").exec().unwrap();
+}
+
+#[test]
+fn furnace_scenarios_cover_presets_guards_and_safe_recovery() {
+    let lua = Lua::new();
+    lua.load(include_str!("furnace_scenarios_test.lua"))
+        .exec()
+        .unwrap();
+    lua.load(include_str!("../../lua_scripts/furnace_scenarios_demo.lua"))
+        .exec()
+        .unwrap();
+    lua.load("test_furnace_scenarios()").exec().unwrap();
 }

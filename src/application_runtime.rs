@@ -2009,6 +2009,167 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
+    fn invoke_demo_button(
+        runtime: &mut ApplicationRuntime,
+        script: &str,
+        panel: &str,
+        button: &str,
+        callback: &str,
+    ) {
+        use crate::lua_application_script::{LuaApplicationEvent, LuaControlInvocation};
+
+        let invocation = LuaControlInvocation::new(script, panel, button, callback, None);
+        runtime.invoke_control_callback(invocation.clone()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            runtime.poll();
+            for event in runtime.take_lua_application_events() {
+                match event {
+                    LuaApplicationEvent::ControlCallbackSucceeded { invocation: actual }
+                        if actual == invocation =>
+                    {
+                        return;
+                    }
+                    LuaApplicationEvent::ControlCallbackFailed { error, .. } => {
+                        panic!("demo callback failed: {error}")
+                    }
+                    _ => {}
+                }
+            }
+            assert!(Instant::now() < deadline, "demo callback timed out");
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn shipped_furnace_manual_profile_runs_all_modes() {
+        let directory = runtime_test_directory("furnace_manual_profile");
+        write_test_profile(
+            &directory,
+            "model.lua",
+            include_str!("../emulator_scripts/furnace_plant.lua"),
+        );
+        write_test_profile(
+            &directory,
+            "demo.lua",
+            include_str!("../lua_scripts/furnace_manual_demo.lua"),
+        );
+        let source = include_str!("../profiles/furnace_manual.lua")
+            .replace("../emulator_scripts/furnace_plant.lua", "model.lua")
+            .replace("../lua_scripts/furnace_manual_demo.lua", "demo.lua");
+        let profile = write_test_profile(&directory, "startup.lua", &source);
+        let (mut runtime, log, events) = build_test_runtime(&profile);
+        run_memory_test_script(&mut runtime, &events, "assert(app ~= nil)");
+        for button in ["pid", "manual", "furnace", "power_off", "stop", "run"] {
+            invoke_demo_button(
+                &mut runtime,
+                "furnace_manual_demo",
+                "controls",
+                button,
+                button,
+            );
+        }
+        run_memory_test_script(
+            &mut runtime,
+            &events,
+            "assert(app.virtual_instrument({id = 1}):read('heater_power') == 0)",
+        );
+        drop(runtime);
+        drop(log);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "Runs three unmodified furnace demonstrations in real time (about 2 minutes)"]
+    fn shipped_furnace_scenarios_complete_in_real_time() {
+        run_shipped_furnace_scenarios(true);
+    }
+
+    #[test]
+    fn shipped_furnace_scenarios_stop_and_switch_presets() {
+        run_shipped_furnace_scenarios(false);
+    }
+
+    fn run_shipped_furnace_scenarios(complete: bool) {
+        let directory = runtime_test_directory("furnace_scenario_profile");
+        write_test_profile(
+            &directory,
+            "model.lua",
+            include_str!("../emulator_scripts/furnace_plant.lua"),
+        );
+        write_test_profile(
+            &directory,
+            "demo.lua",
+            include_str!("../lua_scripts/furnace_scenarios_demo.lua"),
+        );
+        let source = include_str!("../profiles/furnace_scenarios.lua")
+            .replace("../emulator_scripts/furnace_plant.lua", "model.lua")
+            .replace("../lua_scripts/furnace_scenarios_demo.lua", "demo.lua");
+        let profile = write_test_profile(&directory, "startup.lua", &source);
+        let (mut runtime, log, events) = build_test_runtime(&profile);
+        run_memory_test_script(&mut runtime, &events, "assert(app ~= nil)");
+        for preset in ["steps", "recipe", "guard"] {
+            invoke_demo_button(
+                &mut runtime,
+                "furnace_scenarios_demo",
+                "choose",
+                preset,
+                &format!("choose_{preset}"),
+            );
+            invoke_demo_button(
+                &mut runtime,
+                "furnace_scenarios_demo",
+                "operation",
+                "start",
+                "start",
+            );
+            if !complete {
+                invoke_demo_button(
+                    &mut runtime,
+                    "furnace_scenarios_demo",
+                    "operation",
+                    "stop",
+                    "stop",
+                );
+            }
+            let deadline = Instant::now() + Duration::from_secs(160);
+            loop {
+                runtime.poll();
+                let snapshots = runtime.scenario_snapshots();
+                if let Some(snapshot) = snapshots.first()
+                    && snapshot.status != crate::scenario::ScenarioStatus::Running
+                {
+                    assert_eq!(
+                        snapshot.status,
+                        if complete {
+                            crate::scenario::ScenarioStatus::Completed
+                        } else {
+                            crate::scenario::ScenarioStatus::Stopped
+                        },
+                        "{preset}: {snapshot:?}"
+                    );
+                    break;
+                }
+                assert!(Instant::now() < deadline, "{preset} did not finish");
+                thread::sleep(Duration::from_millis(10));
+            }
+            run_memory_test_script(
+                &mut runtime,
+                &events,
+                "assert(app.virtual_instrument({id = 1}):read('heater_power') == 0)",
+            );
+            assert!(
+                !complete
+                    || runtime
+                        .series
+                        .with(|series| series.iter().all(|series| !series.samples.is_empty()))
+            );
+        }
+        drop(runtime);
+        drop(log);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
     fn run_memory_test_script(
         runtime: &mut ApplicationRuntime,
         events: &crossbeam_channel::Receiver<LuaEvent>,

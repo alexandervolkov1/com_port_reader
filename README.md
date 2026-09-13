@@ -135,12 +135,18 @@ Profile reloads share the application recording session. A writer failure disabl
 | --- | --- |
 | `startup.lua` / `profiles/sine_braid.lua` | Automatic eight-wave signal/filter demonstration |
 | `profiles/tutorial.lua` | Empty memory furnace experiment for the progressive tutorial |
-| `profiles/furnace_manual.lua` | Manual / PID / Furnace control panel |
+| `profiles/furnace_manual.lua` | Grouped Manual / PID / Furnace controls and diagnostic plots |
+| `profiles/furnace_scenarios.lua` | Guided power steps, ramp/hold and temperature-guard experiments |
 | `emulator_scripts/sine_generator.lua` | Multi-instrument sine model |
 | `emulator_scripts/furnace_plant.lua` | Thermal plant with heater lag, heat losses and configurable noise |
 | `lua_scripts/` | Application scripts loaded by the supplied profiles |
 
 Run `cargo run -- --config profiles/furnace_manual.lua` for the [furnace demo](docs/furnace-demo.md). Its tuning is illustrative: the [deterministic comparison](docs/furnace-controller-comparison.md) does not establish Furnace as superior to PID.
+
+New to the application? Run `cargo run -- --config profiles/furnace_scenarios.lua`,
+open Control panel, and press Run selected for a 50-second guided experiment.
+The [tutorial](docs/lua-tutorial.md#try-the-furnace-first-no-lua-typing) starts with
+this no-code tour before introducing Lua.
 
 ## Repository and documentation
 
@@ -153,7 +159,6 @@ Run `cargo run -- --config profiles/furnace_manual.lua` for the [furnace demo](d
 - [Controllers](docs/controllers.md) and [output safety](docs/output-safety.md).
 - [Process recording](docs/process-recording.md) and [troubleshooting](docs/troubleshooting.md).
 - [Architecture](docs/architecture.md) and [Rust extension guides](docs/development.md).
-- [Release review](docs/release-review.md): findings, verification and remaining limitations.
 
 Help → Lua reference is the concise English/Russian function lookup; the guides above explain the longer workflows.
 
@@ -171,7 +176,10 @@ git diff --check
 
 Tests cover protocols, virtual instruments, processing/control, arbitration, scenarios, profile/runtime lifecycle and recording without real COM hardware. Documentation tests check Lua syntax and binding coverage; runtime tests exercise representative documented workflows.
 
-`tools/package-release.ps1` builds both binaries and packages profiles, scripts, types and documentation. Dependencies are pinned by `Cargo.lock`; review changes rather than updating them as part of an unrelated documentation task.
+`tools/package-release.ps1` builds both binaries with the locked dependencies,
+packages profiles, scripts, types and documentation, and creates a ZIP plus
+SHA-256 checksum. See the [release checklist](docs/development.md#github-release-checklist)
+and [changelog](CHANGELOG.md). Previous local packages are preserved under `dist`.
 
 ## Known limitations
 

@@ -144,7 +144,7 @@ The top level is evaluated during validation without the `app` API and again in 
 
 The worker reads application script files, installs the API, executes the profile's `setup()`, then runs `scripts` in order. A failed setup prevents scripts from running; a failed script prevents later scripts. Commands already dispatched can have effects. Profile initialization is therefore not a hardware transaction.
 
-Ready-to-run examples are [sine braid](../profiles/sine_braid.lua), [furnace panel](../profiles/furnace_manual.lua), and [tutorial](../profiles/tutorial.lua). The furnace demo's detailed controls are described in [furnace demo](furnace-demo.md).
+Ready-to-run examples are [sine braid](../profiles/sine_braid.lua), [furnace panel](../profiles/furnace_manual.lua), [guided furnace scenarios](../profiles/furnace_scenarios.lua), and [tutorial](../profiles/tutorial.lua). The furnace demo's detailed controls are described in [furnace demo](furnace-demo.md).
 
 ## Reload and recovery
 

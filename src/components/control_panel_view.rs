@@ -34,7 +34,7 @@ pub(crate) fn show_viewport(
         egui::ViewportId::from_hash_of(VIEWPORT_ID),
         egui::ViewportBuilder::default()
             .with_title("Control panel")
-            .with_inner_size([360.0, 500.0])
+            .with_inner_size([520.0, 700.0])
             .with_min_inner_size([280.0, 240.0]),
         |ui, viewport_class| {
             if viewport_class == egui::ViewportClass::EmbeddedWindow {
@@ -89,6 +89,7 @@ fn show_contents(
                 panel_id.as_str(),
             ))
             .num_columns(2)
+            .max_col_width((ui.available_width() - 12.0) / 2.0)
             .spacing([12.0, 8.0])
             .show(ui, |ui| {
                 for control in panel.controls_mut() {

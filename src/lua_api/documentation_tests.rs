@@ -175,6 +175,23 @@ fn documentation_and_editor_types_cover_userdata_methods() {
 }
 
 #[test]
+fn metakon_controller_editor_annotations_use_the_declared_parameter_alias() {
+    let declarations = include_str!("../../lua_types/app.d.lua");
+    assert!(declarations.contains("---@alias Metakon5x3Parameter"));
+    for constructor in ["pid", "on_off", "furnace"] {
+        let signature = format!("function Metakon5x3:{constructor}(");
+        let prefix = declarations.split(&signature).next().unwrap();
+        assert!(declarations.contains(&signature), "missing {signature}");
+        let annotation = prefix.rsplit("---@param parameter ").next().unwrap();
+        assert_eq!(
+            annotation.split_whitespace().next(),
+            Some("Metakon5x3Parameter"),
+            "{constructor}: unknown parameter alias"
+        );
+    }
+}
+
+#[test]
 fn documented_virtual_model_preserves_written_state() {
     use crate::{
         instrument::InstrumentValue, lua_virtual_instrument_model::LuaVirtualInstrumentModel,

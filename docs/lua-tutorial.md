@@ -1,6 +1,32 @@
 # Lua tutorial: a first experiment
 
-This path needs no physical instrument or virtual COM driver. Start from the repository root. Save this as `profiles/tutorial.lua` (the supplied file already contains it):
+This path needs no physical instrument or virtual COM driver.
+
+## Try the furnace first (no Lua typing)
+
+1. From the repository root, run `cargo run -- --config profiles/furnace_scenarios.lua`.
+2. Open **Control panel**. Power steps is already selected; press **Run selected**.
+3. Open **Scenarios**. Watch low power change to high power after 15 seconds, then
+   heater OFF after another 15 seconds. Compare the command (%), delivered power
+   (W), and temperature (°C) plots. Their different shapes show thermal inertia.
+4. After 50 seconds the result reports completion. Recording continues, so you
+   can inspect cooling. Choose **Ramp and hold**, then Run; this resets the model
+   and plot. Watch the green target ramp and the red smoothed temperature.
+5. After completion, try **Temperature guard**. Heating stops when the measured
+   temperature exceeds 30 °C (or the 20-second timeout wins). This is intentional.
+6. Start any preset again and use **Stop experiment / heater OFF**. Run and preset
+   selection become available only after cleanup. A disabled button's tooltip
+   explains why it cannot be used.
+
+The [furnace guide](furnace-demo.md) explains settings, failure recovery, and a
+second profile for Manual / PID / Furnace comparison. The automatic demo uses a
+faster configuration of the same emulator, so it does not require a long warm-up.
+For the following coding exercises, close the demo and launch the empty tutorial
+profile instead; do not paste these exercises into an active demo.
+
+## Build the experiment yourself
+
+Start from the repository root. Save this as `profiles/tutorial.lua` (the supplied file already contains it):
 
 ```lua
 return {

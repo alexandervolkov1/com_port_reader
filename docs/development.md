@@ -20,7 +20,33 @@ Tests live alongside owning modules; protocol/model tests do not require hardwar
 
 Generate private-item rustdoc because much of the application's important API is internal. Start at `target/doc/com_port_reader/index.html` and follow module pages. Keep rustdoc on important private functions as well as public types.
 
-`tools/package-release.ps1` builds both release binaries and copies startup, profiles, scripts, models, editor declarations and docs into `dist`. Its optional `-Version` labels the package; otherwise Cargo metadata supplies the version. `-SkipChecks` skips its pre-build checks. Packaging replaces the matching output package/archive, so inspect the version/target before rerunning it.
+`tools/package-release.ps1` builds both release binaries with `--locked` and copies
+startup, profiles, scripts, models, editor declarations, changelog and docs into
+`dist`. It requires an x86-64 MSVC host toolchain. The optional `-Version` must
+match Cargo.toml; otherwise Cargo metadata supplies the version. `-SkipChecks`
+skips its pre-build checks. An existing matching package/archive/checksum is moved
+into a `.previous-*` directory under `dist`, preserving its measurements and logs.
+The new ZIP excludes runtime data and has a companion SHA-256 file.
+
+### GitHub release checklist
+
+1. Keep Cargo.toml, Cargo.lock and [CHANGELOG](../CHANGELOG.md) on the same version.
+   Review licensing and the hardware limitations before publishing.
+2. Run the checks above and the real-time furnace acceptance test:
+   `cargo test --locked shipped_furnace_scenarios_complete -- --ignored`.
+3. Run `powershell -File tools/package-release.ps1`. Do not use `-SkipChecks`
+   for the final release unless the same source has already passed the checks.
+4. Extract the ZIP into a new writable folder. Launch `com_port_reader.exe`
+   without arguments from a different working directory; verify the startup
+   signals, Help links and normal closing. Try both furnace profiles via
+   `--config` with an absolute profile path.
+5. Commit the verified source. On GitHub, create a release for that commit using
+   the matching `v<version>` tag, use the changelog as release notes, and attach
+   the ZIP and `.zip.sha256`. The packaging script does not push, tag or publish.
+
+After downloading, compare `Get-FileHash -Algorithm SHA256 <archive.zip>` with
+the companion checksum. Keep the entire extracted directory together; the
+executables need the supplied Lua resources and documentation.
 
 Standalone serial emulator example:
 

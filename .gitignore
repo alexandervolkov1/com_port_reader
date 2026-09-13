@@ -3,6 +3,7 @@
 /logs
 /dist
 /processes
+/state
 rust_code.md
 src.zip
 com_port_reader.md

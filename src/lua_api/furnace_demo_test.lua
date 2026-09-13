@@ -1,6 +1,6 @@
 local owner, script, fail_pause, fail_resume
 local power, created, cleared = 0, {}, 0
-local series, controls = {}, {}
+local series, controls, enabled = {}, {}, {}
 local plant = {}
 
 function plant:read(key) return key == "heater_power" and power or 20 end
@@ -58,25 +58,32 @@ app = {
     filter = function(_, options) series[options.name] = true end,
     set_filter = function(name) assert(series[name]) end,
     set_control = function(_, _, id, value) controls[id] = value end,
+    set_control_enabled = function(_, _, id, value) enabled[id] = value end,
     register_script = function(value)
         script = value
         local ids = {}
-        for _, control in ipairs(script.panels[1].controls) do
-            assert(not ids[control.id], "duplicate control id")
-            ids[control.id] = true
-            local callback = control.on_click or control.on_change
-            if callback then assert(type(script[callback]) == "function") end
+        for _, panel in ipairs(script.panels) do
+            for _, control in ipairs(panel.controls) do
+                assert(not ids[control.id], "duplicate control id")
+                ids[control.id] = true
+                local callback = control.on_click or control.on_change
+                if callback then assert(type(script[callback]) == "function") end
+            end
         end
     end,
 }
 
 function test_furnace_demo()
     assert(power == 0 and #created == 0)
+    assert(#script.panels == 5)
+    assert(not enabled.manual and enabled.pid and enabled.heater_power)
+    assert(not enabled.reset_integral)
     local initial_clears = cleared
     script.set_heater_power(25)
     assert(power == 25)
     script.pid()
     assert(owner.kind == "PID" and power == 42)
+    assert(not enabled.pid and not enabled.heater_power and enabled.reset_integral)
     script.set_heater_power(80)
     assert(power == 42, "manual writes must be blocked in automatic mode")
     script.set_pid_kp(0.6)
@@ -101,6 +108,9 @@ function test_furnace_demo()
     fail_pause = true
     assert(not pcall(script.pid))
     assert(owner.kind == "Furnace" and not owner.removed and #created == 2)
+    assert(not enabled.heater_power and not enabled.manual and enabled.power_off)
+    assert(not pcall(script.power_off))
+    assert(not enabled.heater_power)
     script.set_heater_power(90)
     assert(power == 42, "failed pause must not enable manual writes")
     fail_pause = false
@@ -120,4 +130,11 @@ function test_furnace_demo()
     assert(owner.options.kp == 0.3)
     script.stop()
     assert(power == 0 and not owner)
+    assert(not enabled.pid and not enabled.stop and not enabled.power_off)
+    assert(not enabled.ma_window and not enabled.heater_power)
+    script.pid()
+    script.set_heater_power(99)
+    assert(power == 0 and not owner)
+    script.run()
+    assert(enabled.pid and enabled.heater_power)
 end

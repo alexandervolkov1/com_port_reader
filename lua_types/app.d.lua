@@ -180,7 +180,7 @@ function Metakon5x3:pid(parameter, options) end
 function Metakon5x3:on_off(parameter, options) end
 
 ---Creates a running model-assisted thermal controller.
----@param parameter MetakonParameter
+---@param parameter Metakon5x3Parameter
 ---@param options FurnaceControllerOptions
 ---@return Controller
 function Metakon5x3:furnace(parameter, options) end
