@@ -6,6 +6,45 @@ A desktop laboratory application for acquiring serial measurements, plotting and
 
 Typical uses include logging a serial sensor, comparing raw and filtered signals, experimenting with PID control, and automating a heating experiment with a control panel and timed or measurement-driven stages.
 
+## Download and run (Windows x64)
+
+No Rust, C++ build tools, separate Lua installation or physical instrument is
+needed to try the ready-made application.
+
+1. Open [GitHub Releases](https://github.com/alexandervolkov1/com_port_reader/releases)
+   and choose the newest published release.
+2. Under **Assets**, download `com_port_reader-<version>-windows-x86_64.zip`.
+   **Source code (zip)** and **Source code (tar.gz)** contain source files, not
+   the ready-to-run application.
+3. Extract the **entire ZIP** into a writable folder, for example
+   `Documents\COM Port Reader`. Do not run the executable inside the ZIP or move
+   it away from its accompanying folders.
+4. Open the extracted folder and double-click `com_port_reader.exe`.
+   The first launch starts the simulated sine-braid experiment automatically.
+   No COM-port configuration is required.
+5. Open **Control panel** to adjust all eight waves, or **Help → Lua reference**
+   to explore the scripting functions.
+
+The application needs an OpenGL-capable graphics driver and the
+[Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
+If Windows reports a missing `VCRUNTIME140.dll`, install that runtime.
+The separate `device_emulator.exe` is an optional serial-testing tool; it is not
+needed for the built-in demos.
+
+For an optional integrity check, also download the matching `.zip.sha256` file
+and compare its hash with `Get-FileHash -Algorithm SHA256 <archive.zip>` in
+PowerShell. Logs and recordings are saved beside the application; keep them when
+upgrading by extracting a newer release into a separate folder.
+
+To try the guided furnace experiments, open PowerShell in the extracted folder:
+
+```powershell
+.\com_port_reader.exe --config profiles/furnace_scenarios.lua
+```
+
+Then open **Control panel → Run selected**. See the [furnace guide](docs/furnace-demo.md)
+for the experiments and safe stopping.
+
 ## Main capabilities
 
 - Raw line-oriented serial requests and a typed Metakon 5X3 driver.
@@ -40,12 +79,6 @@ Use a stable Rust toolchain supporting edition 2024 and the native C/C++ build t
 
 The main supported workflow is Windows. Real serial acquisition needs an accessible port and matching instrument settings. The memory emulator needs neither hardware nor a virtual COM driver.
 
-The prebuilt Windows x64 ZIP does not need Rust or C++ build tools. It needs an
-OpenGL-capable graphics driver and the
-[Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
-If Windows reports a missing `VCRUNTIME140.dll`, install that runtime.
-Extract the entire ZIP into a writable folder before launching the application.
-
 From the repository root:
 
 ```powershell
@@ -62,7 +95,7 @@ Use an explicit profile when running the release executable from the source tree
 cargo run --release -- --config startup.lua
 ```
 
-The supplied startup profile loads `emulator_scripts/sine_generator.lua` and `lua_scripts/sine_braid_demo.lua`. The script starts the memory emulator and acquisition, adds eight sine waves and eight independently configurable exponential filters, and registers a control panel. Wait for samples to appear; open the series list to change visibility and Control panel to change filter settings.
+The supplied startup profile loads `emulator_scripts/sine_generator.lua` and `lua_scripts/sine_braid_demo.lua`. The script starts the memory emulator and acquisition, adds eight sine waves and eight exponential filters, and registers a control panel. Wait for samples to appear; open the series list to change visibility and Control panel to adjust shared amplitude, noise, period and filter time constant. Each filtered curve can be enabled separately.
 
 In the Lua console, submit with Ctrl+Enter:
 
@@ -189,7 +222,7 @@ and [changelog](CHANGELOG.md). Previous local packages are preserved under `dist
 
 The sine-braid Control panel adjusts noise, outer amplitude, period and EMA time
 constant for all eight waves. Amplitude keeps their original proportions and
-blends over two seconds, as does the noise envelope. Period changes preserve the
+blends over twenty seconds, as does the noise envelope. Period changes preserve the
 current phase; EMA retuning preserves accumulated output. Random noise still
 varies sample by sample. Individual toggles show/hide each filtered curve.
 

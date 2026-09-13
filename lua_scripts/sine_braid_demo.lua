@@ -51,7 +51,7 @@ local filter_controls = {}
 local controls = {
     { kind = "readout", id = "status", label = "Status", initial = "Starting sine braid." },
     { kind = "readout", id = "hint", label = "All eight curves",
-      initial = "Amplitude keeps braid proportions; amplitude/noise blend over 2 s. Period keeps phase; EMA keeps history." },
+      initial = "Amplitude keeps braid proportions; amplitude/noise blend over 20 s. Period keeps phase; EMA keeps history." },
     { kind = "number", id = "amplitude", label = "Outer amplitude (all waves)", initial = amplitude,
       min = 0.0, max = 1000.0, step = 1.0, on_change = "set_amplitude" },
     { kind = "number", id = "filter_time_constant", label = "Filter time constant, s (all)", initial = filter_time_constant,
@@ -93,7 +93,7 @@ function script.set_noise(value)
     then error("noise amplitude must be a non-negative finite number") end
     noise_amplitude = value
     for _, generator in ipairs(generators) do generator:write("noise_amplitude", value) end
-    set_status("Noise amplitude updated for all curves (2 s transition).")
+    set_status("Noise amplitude updated for all curves (20 s transition).")
 end
 
 for index = 1, #AMPLITUDES do
@@ -118,7 +118,7 @@ function script.set_amplitude(value)
         generator:write("amplitude", value * AMPLITUDES[index] / 100.0)
     end
     amplitude = value
-    set_status("Amplitude updated for all curves (2 s transition).")
+    set_status("Amplitude updated for all curves (20 s transition).")
 end
 
 function script.set_filter_time_constant(value)
@@ -144,7 +144,7 @@ function script.run()
     app.start_emu()
     for index, base_amplitude in ipairs(AMPLITUDES) do
         local generator = app.virtual_instrument({ id = index })
-        generator:write("transition_seconds", 2.0)
+        generator:write("transition_seconds", 20.0)
         generator:write("amplitude", amplitude * base_amplitude / 100.0)
         generator:write("noise_amplitude", noise_amplitude)
         generator:write("period", period)

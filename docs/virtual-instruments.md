@@ -103,7 +103,7 @@ instruments. Each has readable `value` and writable `amplitude`, `noise_amplitud
 Period uses seconds and phase radians; deterministic per-instrument random state
 supplies noise. Period changes preserve the current angle once sampling starts.
 The transition duration (0–60 seconds, default zero) blends amplitude and noise
-envelopes with smoothstep; the braid sets it to two seconds. Readback returns
+envelopes with smoothstep; the braid sets it to twenty seconds. Readback returns
 the requested target, not the intermediate envelope. A new change starts from
 the current envelope, including during an unfinished transition. Initial setup
 before the first value sample is immediate. Explicit phase writes remain immediate.

@@ -293,7 +293,7 @@ fn sine_braid_controls_update_all_waves_and_restart_with_saved_settings() {
                 assert(devices[i].amplitude == 200 * proportions[i])
                 assert(devices[i].noise_amplitude == 15 and devices[i].period == 40)
                 assert(filters["braid_" .. i .. "_ema"] == 12)
-                assert(devices[i].transition_seconds == 2)
+                assert(devices[i].transition_seconds == 20)
             end
             script.set_filter_enabled_3(false)
             script.set_filter_time_constant(8)

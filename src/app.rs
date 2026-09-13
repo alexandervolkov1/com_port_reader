@@ -36,7 +36,6 @@ use crate::{
     scenario::{ScenarioSnapshot, ScenarioStatus},
 };
 
-const SERIES_PANEL_WIDTH: f32 = 150.0;
 const TOGGLE_WIDTH: f32 = 22.0;
 
 pub struct MyApp {
@@ -352,72 +351,40 @@ impl eframe::App for MyApp {
             ui.separator();
 
             if self.series_panel_open {
-                StripBuilder::new(ui)
-                    .size(Size::remainder())
-                    .size(Size::exact(TOGGLE_WIDTH))
-                    .size(Size::exact(SERIES_PANEL_WIDTH))
-                    .horizontal(|mut strip| {
-                        strip.cell(|ui| {
-                            plot_view::show(
-                                ui,
-                                &mut self.plot,
-                                self.runtime.series(),
-                                self.runtime
-                                    .definition()
-                                    .runtime()
-                                    .max_plot_points_per_series(),
-                                self.runtime
-                                    .definition()
-                                    .runtime()
-                                    .plot_window()
-                                    .as_secs_f64(),
-                            );
-                        });
-
-                        strip.cell(|ui| {
-                            if ui.button("◀").clicked() {
-                                self.series_panel_open = false;
-                            }
-                        });
-
-                        strip.cell(|ui| {
-                            series_view::show(
-                                ui,
-                                self.runtime.series(),
-                                &self.runtime,
-                                &mut self.plot,
-                            );
-                        });
-                    });
-            } else {
-                StripBuilder::new(ui)
-                    .size(Size::remainder())
-                    .size(Size::exact(TOGGLE_WIDTH))
-                    .horizontal(|mut strip| {
-                        strip.cell(|ui| {
-                            plot_view::show(
-                                ui,
-                                &mut self.plot,
-                                self.runtime.series(),
-                                self.runtime
-                                    .definition()
-                                    .runtime()
-                                    .max_plot_points_per_series(),
-                                self.runtime
-                                    .definition()
-                                    .runtime()
-                                    .plot_window()
-                                    .as_secs_f64(),
-                            );
-                        });
-
-                        strip.cell(|ui| {
-                            if ui.button("▶").clicked() {
-                                self.series_panel_open = true;
-                            }
-                        });
-                    });
+                series_view::show(ui, self.runtime.series(), &self.runtime, &mut self.plot);
             }
+
+            StripBuilder::new(ui)
+                .size(Size::remainder())
+                .size(Size::exact(TOGGLE_WIDTH))
+                .horizontal(|mut strip| {
+                    strip.cell(|ui| {
+                        plot_view::show(
+                            ui,
+                            &mut self.plot,
+                            self.runtime.series(),
+                            self.runtime
+                                .definition()
+                                .runtime()
+                                .max_plot_points_per_series(),
+                            self.runtime
+                                .definition()
+                                .runtime()
+                                .plot_window()
+                                .as_secs_f64(),
+                        );
+                    });
+                    strip.cell(|ui| {
+                        let symbol = if self.series_panel_open { "◀" } else { "▶" };
+                        if ui
+                            .button(symbol)
+                            .on_hover_text("Show / hide signals")
+                            .clicked()
+                        {
+                            self.series_panel_open = !self.series_panel_open;
+                        }
+                    });
+                });
         });
 
         let invocations = control_panel_view::show_viewport(
