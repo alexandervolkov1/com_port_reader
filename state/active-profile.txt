@@ -1,1 +1,0 @@
-D:\rust_projects\com_port_reader\profiles\furnace_manual.lua

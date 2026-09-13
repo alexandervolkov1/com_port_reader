@@ -244,8 +244,8 @@ pub(super) const ENTRIES: &[Entry] = &[
             r###"Изменить настройки существующего фильтра."###,
         ],
         details: [
-            r###"definition: {kind, window} or {kind, time_constant}. Clears this and downstream filter history; controller time history is resynchronized."###,
-            r###"definition: {kind, window} или {kind, time_constant}. Сбрасывает историю фильтра и зависимых фильтров; временная история регулятора синхронизируется заново."###,
+            r###"definition: {kind, window} or {kind, time_constant}. EMA time-constant changes preserve output and timing. Other replacements clear filter history and resynchronize downstream controllers."###,
+            r###"definition: {kind, window} или {kind, time_constant}. Смена постоянной EMA сохраняет значение и время. Другие замены сбрасывают историю фильтров и синхронизируют зависимые регуляторы."###,
         ],
         example: r###"app.set_filter("temperature_smooth", {kind = "median", window = 5})"###,
     },

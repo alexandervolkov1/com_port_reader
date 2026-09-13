@@ -97,7 +97,16 @@ The standalone `device_emulator` binary also serves a model over serial; inspect
 
 ## Included models
 
-[The sine generator](../emulator_scripts/sine_generator.lua) exposes eight independent instruments. Each has readable `value` and writable `amplitude`, `noise_amplitude`, `period` and `phase`. Only `value` is series-enabled. Period uses seconds and phase radians; deterministic per-instrument random state supplies noise.
+[The sine generator](../emulator_scripts/sine_generator.lua) exposes eight independent
+instruments. Each has readable `value` and writable `amplitude`, `noise_amplitude`,
+`period`, `phase` and `transition_seconds`. Only `value` is series-enabled.
+Period uses seconds and phase radians; deterministic per-instrument random state
+supplies noise. Period changes preserve the current angle once sampling starts.
+The transition duration (0–60 seconds, default zero) blends amplitude and noise
+envelopes with smoothstep; the braid sets it to two seconds. Readback returns
+the requested target, not the intermediate envelope. A new change starts from
+the current envelope, including during an unfinished transition. Initial setup
+before the first value sample is immediate. Explicit phase writes remain immediate.
 
 [The furnace](../emulator_scripts/furnace_plant.lua) exposes instrument 1. Readable series include `temperature` (°C), `heater_power` (%) and `effective_power` (W). Model settings include ambient temperature, maximum power, heater lag, thermal capacity, linear/radiative losses and measurement noise.
 

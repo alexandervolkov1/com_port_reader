@@ -111,13 +111,13 @@ pub(super) fn run_processing<SignalId>(
 
                 let result = graph.replace_filter(output, definition);
 
-                if result.is_ok() {
+                if matches!(result, Ok(false)) {
                     for signal_id in affected_signals {
                         registry.resynchronize_from(signal_id);
                     }
                 }
 
-                let _ = response_sender.send(result);
+                let _ = response_sender.send(result.map(|_| ()));
             }
 
             ProcessingCommand::AddControlLoop {

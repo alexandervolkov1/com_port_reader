@@ -225,6 +225,23 @@ impl SignalFilter {
         self.definition
     }
 
+    /// Retunes an EMA without losing its output or sample clock. Other replacements reset.
+    /// Returns true when state was preserved.
+    pub fn reconfigure(&mut self, definition: SignalFilterDefinition) -> bool {
+        if let SignalFilterState::Exponential {
+            time_constant_seconds,
+            ..
+        } = &mut self.state
+            && let Some(value) = definition.time_constant_seconds()
+        {
+            *time_constant_seconds = value;
+            self.definition = definition;
+            return true;
+        }
+        *self = Self::new(definition);
+        false
+    }
+
     pub fn process(&mut self, timestamp: f64, value: f64) -> Result<f64, SignalFilterError> {
         if !timestamp.is_finite() {
             return Err(SignalFilterError::NonFiniteTimestamp);
@@ -410,6 +427,23 @@ mod tests {
                 Err(SignalFilterDefinitionError::InvalidTimeConstant),
             );
         }
+    }
+
+    #[test]
+    fn exponential_retuning_preserves_value_and_clock() {
+        let mut filter = SignalFilter::new(SignalFilterDefinition::exponential(2.0).unwrap());
+        filter.process(0.0, 0.0).unwrap();
+        let previous = filter.process(1.0, 10.0).unwrap();
+        assert!(filter.reconfigure(SignalFilterDefinition::exponential(20.0).unwrap()));
+        assert!(
+            filter.process(1.0, 10.0).is_err(),
+            "retuning must preserve sample time"
+        );
+        let actual = filter.process(2.0, 10.0).unwrap();
+        let expected = previous + (1.0 - (-0.05_f64).exp()) * (10.0 - previous);
+        assert!((actual - expected).abs() < 1e-12);
+        assert!(!filter.reconfigure(SignalFilterDefinition::moving_average(3).unwrap()));
+        assert_eq!(filter.process(0.0, 50.0).unwrap(), 50.0);
     }
 
     #[test]

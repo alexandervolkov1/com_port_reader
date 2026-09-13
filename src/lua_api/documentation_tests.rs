@@ -215,3 +215,102 @@ fn documented_virtual_model_preserves_written_state() {
         value
     );
 }
+
+#[test]
+fn sine_model_retuning_is_continuous_and_reaches_requested_amplitude() {
+    let lua = Lua::new();
+    lua.load(include_str!("../../emulator_scripts/sine_generator.lua"))
+        .exec()
+        .unwrap();
+    lua.load(r#"
+        local function near(a, b) assert(math.abs(a - b) < 1e-9, tostring(a) .. " ~= " .. tostring(b)) end
+        write(1, "amplitude", 100, 0)
+        write(1, "period", 10, 0)
+        write(1, "phase", 0.4, 0)
+        write(1, "transition_seconds", 2, 0)
+        local before = read(1, "value", 3)
+        write(1, "period", 1, 3)
+        near(read(1, "value", 3), before)
+        write(1, "amplitude", 10, 3)
+        near(read(1, "value", 3), before)
+        near(read(1, "amplitude", 3), 10) -- readback is the target, not the ramp.
+        near(read(1, "value", 5), before / 10)
+        write(1, "amplitude", 80, 5)
+        before = read(1, "value", 5.7)
+        write(1, "amplitude", 0, 5.7)
+        near(read(1, "value", 5.7), before)
+        near(read(1, "value", 7.7), 0)
+        write(1, "noise_amplitude", 100, 7.7)
+        near(read(1, "value", 7.7), 0)
+        assert(math.abs(read(1, "value", 8.7)) <= 50.000001)
+        write(1, "noise_amplitude", 0, 8.7)
+        near(read(1, "value", 10.7), 0)
+        for _, key in ipairs({"amplitude", "period", "noise_amplitude", "transition_seconds"}) do
+            assert(not pcall(write, 1, key, -1, 11))
+            assert(not pcall(write, 1, key, 0/0, 11))
+        end
+        -- A long-running generator keeps its angle across repeated period changes.
+        write(2, "period", 13, 0)
+        before = read(2, "value", 1000000)
+        for _, period in ipairs({1, 300, 0.5, 80}) do
+            write(2, "period", period, 1000000)
+            near(read(2, "value", 1000000), before)
+        end
+    "#).exec().unwrap();
+}
+
+#[test]
+fn sine_braid_controls_update_all_waves_and_restart_with_saved_settings() {
+    let lua = Lua::new();
+    lua.load(r#"
+        local devices, filters, script = {}, {}, nil
+        app = {
+            stop = function() end, stop_emu = function() end,
+            start = function() end, start_emu = function() end,
+            clear = function() devices = {}; filters = {} end,
+            unregister_script = function() end,
+            register_script = function(value) script = value end,
+            set_control = function() end, set_control_enabled = function() end,
+            virtual_instrument = function(options)
+                local device = {}
+                function device:write(key, value) self[key] = value; return value end
+                function device:add() end
+                devices[options.id] = device
+                return device
+            end,
+            filter = function(_, options) filters[options.name] = options.time_constant end,
+            set_filter = function(name, options) assert(filters[name]); filters[name] = options.time_constant end,
+            delete = function(name) filters[name] = nil end,
+        }
+        function verify_braid()
+            assert(#script.panels == 2 and #devices == 8)
+            script.set_amplitude(200)
+            script.set_noise(15)
+            script.set_period(40)
+            script.set_filter_time_constant(12)
+            local proportions = {1, .9, .8, .7, .7, .8, .9, 1}
+            for i = 1, 8 do
+                assert(devices[i].amplitude == 200 * proportions[i])
+                assert(devices[i].noise_amplitude == 15 and devices[i].period == 40)
+                assert(filters["braid_" .. i .. "_ema"] == 12)
+                assert(devices[i].transition_seconds == 2)
+            end
+            script.set_filter_enabled_3(false)
+            script.set_filter_time_constant(8)
+            assert(not filters.braid_3_ema)
+            script.set_filter_enabled_3(true)
+            assert(filters.braid_3_ema == 8)
+            script.stop()
+            script.set_amplitude(50)
+            script.run()
+            for i = 1, 8 do
+                assert(devices[i].amplitude == 50 * proportions[i])
+                assert(filters["braid_" .. i .. "_ema"] == 8)
+            end
+        end
+    "#).exec().unwrap();
+    lua.load(include_str!("../../lua_scripts/sine_braid_demo.lua"))
+        .exec()
+        .unwrap();
+    lua.load("verify_braid()").exec().unwrap();
+}

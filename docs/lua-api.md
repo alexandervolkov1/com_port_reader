@@ -113,7 +113,11 @@ app.filter("temperature", {name = "temperature_smooth", kind = "exponential", ti
 app.set_filter("temperature_smooth", {kind = "exponential", time_constant = 5})
 ```
 
-The replacement resets this filter and resynchronizes downstream controller timing. It does not change the input or presentation. Creation also accepts `color`, `visible` and `pane`. Unknown keys are errors.
+Changing an exponential filter's time constant preserves its current output,
+sample clock and downstream state. Other replacements reset this filter and its
+downstream filters and resynchronize downstream controller timing. Input and
+presentation do not change. Creation also accepts `color`, `visible` and `pane`.
+Unknown keys are errors.
 
 ## Virtual instruments
 

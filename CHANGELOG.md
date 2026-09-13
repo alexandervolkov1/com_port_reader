@@ -6,6 +6,8 @@ Initial Windows x86-64 release.
 
 - Serial acquisition, Metakon 5X3 support and Lua-defined virtual instruments.
 - Hardware-free startup demo with raw and filtered signal plots.
+- Shared sine-braid controls with phase-continuous period changes, smooth
+  amplitude/noise transitions and state-preserving EMA retuning.
 - PID, on/off and predictive Furnace controllers with references and diagnostics.
 - Grouped furnace controls plus guided power-step, ramp/hold and temperature-guard experiments.
 - Lua scenarios with timers, measurement conditions, races and staged workflows.

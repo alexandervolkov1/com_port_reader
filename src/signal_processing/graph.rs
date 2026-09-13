@@ -92,22 +92,25 @@ where
         Ok(())
     }
 
-    /// Replaces a filter definition and clears its state plus downstream filter history, leaving graph
-    /// connections unchanged. The service separately resynchronizes affected controllers.
+    /// Returns true for an EMA retune preserving state and downstream timing.
+    /// Other replacements clear filter history; the service resynchronizes controllers.
     pub fn replace_filter(
         &mut self,
         output: SignalId,
         definition: SignalFilterDefinition,
-    ) -> Result<(), SignalProcessingGraphUpdateError<SignalId>> {
+    ) -> Result<bool, SignalProcessingGraphUpdateError<SignalId>> {
         let Some(node) = self.nodes.get_mut(&output) else {
             return Err(SignalProcessingGraphUpdateError::UnknownOutput { output });
         };
 
-        node.processor = SignalProcessor::Filter(SignalFilter::new(definition));
+        let SignalProcessor::Filter(filter) = &mut node.processor;
+        let preserved = filter.reconfigure(definition);
 
-        self.reset_from(output);
+        if !preserved {
+            self.reset_from(output);
+        }
 
-        Ok(())
+        Ok(preserved)
     }
 
     pub fn process(
@@ -710,6 +713,30 @@ mod tests {
 
         assert_eq!(graph.remove_from(1), vec![2, 3, 4]);
         assert!(graph.remove_from(1).is_empty());
+    }
+
+    #[test]
+    fn retuning_exponential_preserves_downstream_history() {
+        let mut graph = SignalProcessingGraph::new();
+        graph
+            .add_filter(1_u64, 2, SignalFilterDefinition::exponential(2.0).unwrap())
+            .unwrap();
+        graph
+            .add_filter(2, 3, SignalFilterDefinition::moving_average(2).unwrap())
+            .unwrap();
+        graph.process(1, 0.0, 0.0).unwrap();
+        let previous = graph.process(1, 1.0, 10.0).unwrap()[0].value;
+        assert!(
+            graph
+                .replace_filter(2, SignalFilterDefinition::exponential(20.0).unwrap())
+                .unwrap()
+        );
+        let output = graph.process(1, 2.0, 10.0).unwrap();
+        assert!(
+            output[0].value < 5.0,
+            "EMA output must not snap to raw input"
+        );
+        assert!((output[1].value - (previous + output[0].value) / 2.0).abs() < 1e-12);
     }
 
     #[test]

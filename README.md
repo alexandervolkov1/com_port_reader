@@ -40,6 +40,12 @@ Use a stable Rust toolchain supporting edition 2024 and the native C/C++ build t
 
 The main supported workflow is Windows. Real serial acquisition needs an accessible port and matching instrument settings. The memory emulator needs neither hardware nor a virtual COM driver.
 
+The prebuilt Windows x64 ZIP does not need Rust or C++ build tools. It needs an
+OpenGL-capable graphics driver and the
+[Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
+If Windows reports a missing `VCRUNTIME140.dll`, install that runtime.
+Extract the entire ZIP into a writable folder before launching the application.
+
 From the repository root:
 
 ```powershell
@@ -180,6 +186,12 @@ Tests cover protocols, virtual instruments, processing/control, arbitration, sce
 packages profiles, scripts, types and documentation, and creates a ZIP plus
 SHA-256 checksum. See the [release checklist](docs/development.md#github-release-checklist)
 and [changelog](CHANGELOG.md). Previous local packages are preserved under `dist`.
+
+The sine-braid Control panel adjusts noise, outer amplitude, period and EMA time
+constant for all eight waves. Amplitude keeps their original proportions and
+blends over two seconds, as does the noise envelope. Period changes preserve the
+current phase; EMA retuning preserves accumulated output. Random noise still
+varies sample by sample. Individual toggles show/hide each filtered curve.
 
 ## Known limitations
 

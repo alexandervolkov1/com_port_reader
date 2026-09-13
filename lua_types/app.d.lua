@@ -683,7 +683,7 @@ end
 ---@param options FilterSeriesOptions
 function app.filter(input_name, options) end
 
----Replaces an existing filtered series definition and resets its filter state.
+---Retunes an EMA without resetting its output/timing; other replacements reset filter state.
 ---@param name string Existing filtered series name.
 ---@param definition SignalFilterDefinition
 function app.set_filter(name, definition) end
